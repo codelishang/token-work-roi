@@ -1,0 +1,39 @@
+name: update-pricing
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub cron uses UTC; this is Monday 00:01 in Asia/Shanghai.
+    - cron: '1 16 * * 0'
+
+permissions:
+  contents: write
+
+jobs:
+  update-pricing:
+    name: Refresh official model pricing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Refresh official pricing
+        run: npm run pricing:update
+
+      - run: npm test
+
+      - run: npm run build
+
+      - run: git diff --check
+
+      - name: Commit pricing updates
+        uses: stefanzweifel/git-auto-commit-action@v6
+        with:
+          commit_message: "chore: refresh official model pricing"
+          file_pattern: "src/pricing.mjs data/official-pricing.json"

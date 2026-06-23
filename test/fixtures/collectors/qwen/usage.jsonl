@@ -1,0 +1,2 @@
+{"eventId":"qwen-1","sessionId":"qwen-session-1","timestamp":"2026-06-17T02:06:00Z","model":"qwen3-coder","project":"token-work-roi","usage":{"inputTokens":1500,"outputTokens":420,"reasoningTokens":60},"toolCategory":"research","fileExtension":".json"}
+{"eventId":"qwen-skip-no-tokens","sessionId":"qwen-session-2","timestamp":"2026-06-17T02:07:00Z","model":"qwen3-coder","project":"token-work-roi"}

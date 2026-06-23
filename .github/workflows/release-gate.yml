@@ -1,0 +1,57 @@
+name: release-gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-gate:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        node: ['24.x']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - run: node src/cli.mjs privacy-check --include-untracked
+
+      - run: npm run build
+
+      - run: npm run privacy:check
+
+      - run: npm audit --audit-level=low
+
+      - run: npm run smoke:npx
+
+      - name: Install Chrome for browser smoke
+        if: matrix.os == 'ubuntu-latest'
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Browser console smoke
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run smoke:browser
+
+      - run: npm run desktop:smoke
+
+      - run: npm pack --dry-run
+
+      - run: git diff --check

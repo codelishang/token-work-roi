@@ -1,0 +1,2 @@
+{"eventId":"copilot-1","sessionId":"copilot-session-1","timestamp":"2026-06-17T02:04:00Z","model":"gpt-5.3-codex","project":"token-work-roi","input_tokens":900,"output_tokens":210,"cache_read_tokens":120,"toolCategory":"terminal","fileExtension":".md"}
+{"eventId":"copilot-skip-no-tokens","sessionId":"copilot-session-2","timestamp":"2026-06-17T02:05:00Z","model":"gpt-5.3-codex","project":"token-work-roi"}

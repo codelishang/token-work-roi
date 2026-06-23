@@ -1,0 +1,21 @@
+{
+  "id": "/?app=token-work-roi",
+  "name": "Token Work ROI",
+  "short_name": "Token Work",
+  "description": "Local AI coding ROI review for trusted token usage, evidence, and model strategy.",
+  "start_url": "/?app=token-work-roi",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#faf7ef",
+  "theme_color": "#faf7ef",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/token-work-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "developer", "utilities"]
+}

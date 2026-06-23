@@ -1,0 +1,1027 @@
+#!/usr/bin/env node
+
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline/promises';
+import { stdin as input, stdout as output } from 'node:process';
+import { createServer } from 'node:net';
+import { dirname, resolve } from 'node:path';
+import { hostname } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { seedDemoDatabase } from './demo-seed.mjs';
+import { auditExperimentalCollectors, detectCollectors } from './collector-registry.mjs';
+import { CCUSAGE_CLI_REPORTS, ccusageInvocation, runCcusageCliImportPlan } from './ccusage-bridge.mjs';
+import { applyCcusageImport, parseCcusageJsonText, planCcusageImport, readCcusageImportInput } from './ccusage-import.mjs';
+import { createSqliteBackup, defaultDbPath, deleteBudgetProfile, listBudgetProfiles, openDb, openReadOnlyDb, upsertBudgetProfile } from './db.mjs';
+import { formatPrivacyCheckReport, runPrivacyCheck } from './privacy-check.mjs';
+import { buildTerminalReport, formatTerminalReport } from './terminal-report.mjs';
+import { buildEmptyStatuslineSnapshot, buildStatuslineSnapshot, formatStatuslineText } from './statusline.mjs';
+import { buildModelPolicy, formatModelPolicy } from './model-policy.mjs';
+import { resolveLaunchCwd, resolveViteBin } from './runtime-paths.mjs';
+
+const parsedCommand = parseCommand(process.argv.slice(2));
+const command = parsedCommand.command;
+const args = parseArgs(parsedCommand.args);
+const SOURCE_DIR = dirname(fileURLToPath(import.meta.url));
+const PACKAGE_ROOT = resolve(SOURCE_DIR, '..');
+const USER_CWD = process.cwd();
+const requireFromCli = createRequire(import.meta.url);
+
+try {
+  if (command === 'auto') {
+    await autoCommand();
+  } else if (command === 'start') {
+    await startCommand({ demo: false });
+  } else if (command === 'open') {
+    await startCommand({ demo: false, openBrowser: true });
+  } else if (command === 'demo') {
+    await demoCommand();
+  } else if (command === 'live') {
+    await startCommand({ demo: false, route: '/live' });
+  } else if (command === 'statusline') {
+    await statuslineCommand();
+  } else if (command === 'collect') {
+    await collectCommand();
+  } else if (command === 'coverage') {
+    await coverageCommand();
+  } else if (command === 'compare-ccusage') {
+    await compareCcusageCommand();
+  } else if (command === 'collectors') {
+    await collectorsCommand();
+  } else if (command === 'import-usage') {
+    await importUsageCommand();
+  } else if (command === 'budget') {
+    await budgetCommand();
+  } else if (command === 'report') {
+    await reportCommand();
+  } else if (command === 'policy') {
+    await policyCommand();
+  } else if (command === 'doctor') {
+    await doctorCommand();
+  } else if (command === 'privacy-check') {
+    await privacyCheckCommand();
+  } else {
+    printHelp();
+    process.exit(command === 'help' ? 0 : 1);
+  }
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
+
+async function autoCommand() {
+  const dbPath = cliDbPath();
+  const coverageSources = args.sources || args.collectors || 'claude,codex,cursor';
+  const applySources = args.applySources || args.writeSources || 'claude,codex';
+  const openBrowser = args.noOpen ? false : true;
+
+  if (args.noCollect) {
+    console.log('[token-work] auto collect skipped (--no-collect). Starting local UI.');
+    await startCommand({ demo: false, dbPath, openBrowser, liveCollect: false });
+    return;
+  }
+
+  console.log(`[token-work] coverage ${coverageSources} (read-only)`);
+  let coverage;
+  try {
+    coverage = await runCollectDryRun({ sources: coverageSources, dbPath });
+    printCoverageSummary(coverage);
+  } catch (error) {
+    console.error(`[token-work] coverage failed: ${error.message}`);
+    console.error('[token-work] SQLite was not modified. Starting local UI so the failure is visible.');
+    await startCommand({ demo: false, dbPath, openBrowser, liveCollect: false });
+    return;
+  }
+
+  if (args.dryRunOnly) {
+    console.log('[token-work] dry-run only; SQLite was not modified. Starting local UI.');
+    await startCommand({ demo: false, dbPath, openBrowser, liveCollect: false });
+    return;
+  }
+
+  if (shouldAutoApplyCoverage(coverage, applySources)) {
+    console.log(`[token-work] applying trusted usage from ${applySources}`);
+    const result = await runCollectApply({ sources: applySources, dbPath });
+    if (result.parsed) {
+      printApplySummary(result.parsed);
+    } else if (result.stdout.trim()) {
+      console.log(result.stdout.trim());
+    }
+    if (result.code !== 0) {
+      console.error(result.stderr.trim() || '[token-work] collect apply failed.');
+      console.error('[token-work] Starting local UI with the current SQLite state.');
+    }
+  } else {
+    console.log('[token-work] no trusted Claude/Codex event-level history found; SQLite was not modified.');
+  }
+
+  await startCommand({ demo: false, dbPath, openBrowser, liveCollect: true });
+}
+
+async function demoCommand() {
+  const dbPath = resolve(USER_CWD, args.db || 'data/demo.sqlite');
+  const result = seedDemoDatabase({
+    dbPath,
+    demoPath: resolve(PACKAGE_ROOT, 'docs', 'demo-data', 'token-work-demo.json')
+  });
+  console.log(`[demo] seeded ${result.sessions} sessions and ${result.daily} daily rows into ${result.dbPath}`);
+  if (args.seedOnly) return;
+  await startCommand({ demo: true, dbPath });
+}
+
+async function startCommand({ demo = false, dbPath = null, route = '/', openBrowser = false, liveCollect = false, liveCollectRunOnStart = false } = {}) {
+  const apiPort = Number(args.apiPort || args.port || await freePort(4173));
+  const uiPort = Number(args.uiPort || await freePort(5173));
+  const env = {
+    ...process.env,
+    PORT: String(apiPort),
+    API_PORT: String(apiPort),
+    DB_PATH: dbPath || resolve(USER_CWD, args.db || process.env.DB_PATH || 'data/usage.sqlite'),
+    TOKEN_WORK_DEMO_MODE: demo ? '1' : process.env.TOKEN_WORK_DEMO_MODE || '',
+    ...liveCollectEnv({ enabled: liveCollect && !demo, runOnStart: liveCollectRunOnStart })
+  };
+  const viteBin = resolveViteBin({ packageRoot: PACKAGE_ROOT, requireLike: requireFromCli });
+  const launchCwd = resolveLaunchCwd(PACKAGE_ROOT);
+  const server = spawn(process.execPath, [resolve(SOURCE_DIR, 'server.mjs')], {
+    cwd: launchCwd,
+    env,
+    stdio: 'inherit',
+    windowsHide: true
+  });
+  const client = spawn(process.execPath, [viteBin, '--host', '127.0.0.1', '--port', String(uiPort)], {
+    cwd: launchCwd,
+    env,
+    stdio: 'inherit',
+    windowsHide: true
+  });
+  const uiUrl = `http://127.0.0.1:${uiPort}${route}`;
+  try {
+    await Promise.all([
+      waitForHttp(`http://127.0.0.1:${apiPort}/api/data`, { label: 'API' }),
+      waitForHttp(`http://127.0.0.1:${uiPort}/`, { label: 'UI' })
+    ]);
+  } catch (error) {
+    for (const child of [server, client]) {
+      if (!child.killed) child.kill();
+    }
+    throw error;
+  }
+  console.log(`[token-work] UI  ${uiUrl}${demo ? '  (Demo Mode)' : ''}`);
+  console.log(`[token-work] API http://127.0.0.1:${apiPort}`);
+  if (liveCollect && !demo) {
+    console.log(`[token-work] live collect refresh enabled every ${envLiveCollectIntervalSeconds()}s for Claude/Codex metadata.`);
+  }
+  if (openBrowser) {
+    setTimeout(() => openUrl(uiUrl), 900).unref?.();
+  }
+  await waitForChildren([server, client]);
+}
+
+function liveCollectEnv({ enabled = false, runOnStart = false } = {}) {
+  if (!enabled) return {};
+  const intervalSeconds = envLiveCollectIntervalSeconds();
+  return {
+    SCHEDULED_COLLECT_ENABLED: '1',
+    SCHEDULED_COLLECT_RUN_ON_START: runOnStart ? '1' : '0',
+    SCHEDULED_COLLECT_INTERVAL_SECONDS: String(intervalSeconds),
+    TOKEN_WORK_LIVE_COLLECT_INTERVAL_SECONDS: String(intervalSeconds)
+  };
+}
+
+function envLiveCollectIntervalSeconds() {
+  const requested = Number(process.env.TOKEN_WORK_LIVE_COLLECT_INTERVAL_SECONDS || process.env.SCHEDULED_COLLECT_INTERVAL_SECONDS || 60);
+  return Math.max(30, Number.isFinite(requested) && requested > 0 ? Math.round(requested) : 60);
+}
+
+async function collectCommand() {
+  const sources = args.sources || args.collectors || 'claude,codex';
+  if (args.apply && args.dryRun) {
+    throw new Error('Choose either --apply or --dry-run, not both.');
+  }
+  if (!args.apply && !args.dryRun) {
+    throw new Error('collect requires --dry-run or --apply. Use --dry-run first to audit candidate files without writing SQLite.');
+  }
+  if (args.apply) {
+    const confirmed = args.yes || process.env.TOKEN_WORK_COLLECT_CONFIRMED === '1'
+      || await confirmCollect(sources);
+    if (!confirmed) {
+      throw new Error('Collection cancelled. No local AI logs were scanned.');
+    }
+  }
+  const collectArgs = [
+    'src/collect.mjs',
+    args.apply ? '--apply' : '--dry-run',
+    '--sources',
+    sources
+  ];
+  if (args.db) collectArgs.push('--db', args.db);
+  if (args.json) collectArgs.push('--json');
+  if (args.apply && (args.yes || process.env.TOKEN_WORK_COLLECT_CONFIRMED === '1')) {
+    collectArgs.push('--yes');
+  }
+  const child = spawn(process.execPath, collectArgs, {
+    cwd: PACKAGE_ROOT,
+    env: {
+      ...process.env,
+      TOKEN_WORK_COLLECTORS: sources,
+      ...(args.apply ? { TOKEN_WORK_COLLECT_CONFIRMED: '1' } : {})
+    },
+    stdio: 'inherit',
+    windowsHide: true
+  });
+  const code = await childExitCode(child);
+  process.exitCode = code;
+}
+
+async function coverageCommand() {
+  const sources = args.sources || args.collectors || 'claude,codex,cursor';
+  const summary = await runCollectDryRun({ sources, dbPath: args.db });
+  if (args.json) {
+    console.log(JSON.stringify(summary, null, 2));
+    return;
+  }
+  printCoverageSummary(summary);
+  if (summary.totals?.fatalCoverageErrors > 0) process.exitCode = 2;
+}
+
+async function compareCcusageCommand() {
+  const report = String(args.report || 'session').toLowerCase();
+  const threshold = Number(args.threshold || 0.01);
+  const invocation = ccusageInvocation({ report, ccusageBin: args.ccusageBin });
+  await ensureCcusageBridgeConfirmed({ report, commandLabel: invocation.commandLabel });
+
+  const [tokenStudio, bridgeResult] = await Promise.all([
+    runCollectDryRun({ sources: args.sources || args.collectors || 'claude,codex', dbPath: args.db }),
+    runCcusageCliImportPlan({
+      report,
+      ccusageBin: args.ccusageBin,
+      device: args.device || hostname()
+    })
+  ]);
+  const ccusagePlan = bridgeResult.plan;
+  const comparison = buildCcusageComparison({ tokenStudio, ccusagePlan, report, threshold, command: invocation.commandLabel });
+  if (args.json) {
+    console.log(JSON.stringify(comparison, null, 2));
+  } else {
+    printCcusageComparison(comparison);
+  }
+  if (!comparison.ok) process.exitCode = 2;
+}
+
+async function doctorCommand() {
+  const collectors = detectCollectors();
+  console.log('Token Work Doctor');
+  console.log(`node=${process.version}`);
+  console.log(`cwd=${process.cwd()}`);
+  console.log(`db=${args.db || process.env.DB_PATH || 'data/usage.sqlite'}`);
+  console.log('');
+  console.log('Collectors');
+  for (const item of collectors) {
+    console.log(`- ${item.id}: ${item.supportStatus}, detected=${item.detected ? 'yes' : 'no'}, privacy=${item.privacyLevel}`);
+    if (item.existingRoots.length) console.log(`  roots=${item.existingRoots.join('; ')}`);
+    if (item.note) console.log(`  note=${item.note}`);
+  }
+}
+
+async function collectorsCommand() {
+  if (args.audit) {
+    const audit = await auditExperimentalCollectors();
+    if (args.json) {
+      console.log(JSON.stringify(audit, null, 2));
+      return;
+    }
+    console.log('Token Work Collector Audit');
+    console.log(`auditedAt=${audit.auditedAt}`);
+    console.log(`totals: files=${audit.totals.candidateFiles}, usable=${audit.totals.usableTokenRecords}, noToken=${audit.totals.skippedNoTokenRecords}, unsafe=${audit.totals.skippedConversationLikeRecords}, oversized=${audit.totals.skippedOversizedFiles}, parseErrors=${audit.totals.parseErrors}`);
+    for (const item of audit.collectors) {
+      const s = item.summary;
+      console.log(`- ${item.id}: detected=${item.detected ? 'yes' : 'no'}, files=${s.candidateFiles}, usable=${s.usableTokenRecords}, noToken=${s.skippedNoTokenRecords}, unsafe=${s.skippedConversationLikeRecords}, oversized=${s.skippedOversizedFiles}, parseErrors=${s.parseErrors}`);
+    }
+    return;
+  }
+
+  const collectors = detectCollectors();
+  if (args.json) {
+    console.log(JSON.stringify({ collectors }, null, 2));
+    return;
+  }
+
+  console.log('Token Work Collectors');
+  for (const item of collectors) {
+    console.log(`- ${item.id}: ${item.label}`);
+    console.log(`  status=${item.supportStatus}, default=${item.defaultEnabled ? 'yes' : 'no'}, detected=${item.detected ? 'yes' : 'no'}`);
+    console.log(`  privacy=${item.privacyLevel}, readsConversationContent=${item.readsConversationContent ? 'yes' : 'no'}, tokenReliability=${item.tokenReliability}`);
+    console.log(`  fields=${item.dataFields.join(',') || 'none'}`);
+    if (item.note) console.log(`  note=${item.note}`);
+  }
+}
+
+async function importUsageCommand() {
+  if (args.help) {
+    printImportUsageHelp();
+    return;
+  }
+  const format = args.format || 'ccusage-json';
+  if (args.apply && args.dryRun) {
+    throw new Error('Choose either --apply or --dry-run, not both.');
+  }
+  const { plan, bridge } = await buildImportUsagePlan(format);
+  const summary = {
+    ok: true,
+    format,
+    mode: args.apply ? 'apply' : 'dry-run',
+    detectedShape: plan.detectedShape,
+    daily: plan.daily.length,
+    sessions: plan.sessions.length,
+    tokenEvents: plan.tokenEvents.length,
+    warnings: plan.warnings,
+    bridge: bridge || null
+  };
+
+  if (args.apply) {
+    const dbPath = cliDbPath();
+    const db = openDb(dbPath);
+    try {
+      summary.backup = createSqliteBackup(db, dbPath, { reason: format === 'ccusage-cli' ? 'ccusage-cli-import' : 'ccusage-json-import' });
+      summary.applied = applyCcusageImport(db, plan);
+    } finally {
+      db.close();
+    }
+  }
+
+  if (args.json) {
+    console.log(JSON.stringify(summary, null, 2));
+    return;
+  }
+  const source = bridge ? `ccusage CLI ${bridge.report}` : 'ccusage JSON';
+  console.log(`${source} ${summary.mode}: shape=${summary.detectedShape}, daily=${summary.daily}, sessions=${summary.sessions}, token_events=${summary.tokenEvents}`);
+  if (summary.backup) console.log(`backup=${summary.backup.path}`);
+  for (const warning of summary.warnings.slice(0, 5)) {
+    console.log(`warning: ${warning.model || 'unknown'} — ${warning.reason}`);
+  }
+}
+
+async function buildImportUsagePlan(format) {
+  if (format === 'ccusage-json') {
+    if (!args.file) {
+      throw new Error('import-usage requires --file <path|-> for --format=ccusage-json.');
+    }
+    const payload = parseCcusageJsonText(readCcusageImportInput(args.file));
+    return {
+      plan: planCcusageImport(payload, {
+        device: args.device || hostname()
+      }),
+      bridge: null
+    };
+  }
+
+  if (format === 'ccusage-cli') {
+    const report = String(args.report || 'session').toLowerCase();
+    const invocation = ccusageInvocation({ report, ccusageBin: args.ccusageBin });
+    await ensureCcusageBridgeConfirmed({ report, commandLabel: invocation.commandLabel });
+    const { plan } = await runCcusageCliImportPlan({
+      report,
+      ccusageBin: args.ccusageBin,
+      device: args.device || hostname()
+    });
+    return {
+      plan,
+      bridge: {
+        report,
+        command: invocation.commandLabel
+      }
+    };
+  }
+
+  throw new Error('import-usage supports --format=ccusage-json or --format=ccusage-cli.');
+}
+
+async function ensureCcusageBridgeConfirmed({ report, commandLabel }) {
+  if (args.yes || process.env.TOKEN_WORK_CCUSAGE_BRIDGE_CONFIRMED === '1') return;
+  if (!process.stdin.isTTY) {
+    throw new Error('ccusage CLI bridge requires --yes in non-interactive shells because it runs an external local scanner.');
+  }
+  const confirmed = await confirmCcusageBridge({ report, commandLabel });
+  if (!confirmed) {
+    throw new Error('ccusage CLI bridge cancelled. No external scanner was run.');
+  }
+}
+
+async function budgetCommand() {
+  if (args.help) {
+    printBudgetHelp();
+    return;
+  }
+  const action = args._[0] || 'list';
+  const db = openCliDb();
+  try {
+    if (action === 'list') {
+      const profiles = listBudgetProfiles(db);
+      if (args.json) {
+        console.log(JSON.stringify({ profiles }, null, 2));
+        return;
+      }
+      console.log('Token Work Budget Profiles');
+      if (!profiles.length) {
+        console.log('- none');
+        return;
+      }
+      for (const profile of profiles) {
+        console.log(`- #${profile.id} ${profile.label}: source=${profile.source || '*'}, modelGroup=${profile.modelGroup || '*'}, window=${profile.windowType || 'rolling'}:${profile.windowMinutes}m, reset=${profile.resetAnchor || '-'}, warn=${Math.round(Number(profile.warningThreshold || 0.75) * 100)}%, hard=${Math.round(Number(profile.hardThreshold || 1) * 100)}%, tokenBudget=${profile.tokenBudget || '-'}, costBudgetUSD=${profile.costBudgetUSD || '-'}, enabled=${profile.enabled ? 'yes' : 'no'}`);
+      }
+      return;
+    }
+    if (action === 'set') {
+      const profile = upsertBudgetProfile(db, {
+        id: args.id,
+        source: args.source || '',
+        modelGroup: args.modelGroup || '',
+        label: args.label,
+        windowType: args.windowType || 'rolling',
+        windowMinutes: args.windowMinutes,
+        resetAnchor: args.resetAnchor || null,
+        warningThreshold: args.warningThreshold ?? 0.75,
+        hardThreshold: args.hardThreshold ?? 1,
+        tokenBudget: args.tokenBudget || 0,
+        costBudgetUSD: args.costBudgetUsd ?? args.costBudgetUSD ?? 0,
+        enabled: args.enabled ?? true
+      });
+      console.log(args.json ? JSON.stringify({ ok: true, profile }, null, 2) : `saved budget #${profile.id}: ${profile.label}`);
+      return;
+    }
+    if (action === 'delete') {
+      const deleted = deleteBudgetProfile(db, { id: args.id });
+      console.log(args.json ? JSON.stringify({ ok: true, deleted }, null, 2) : `deleted=${deleted}`);
+      return;
+    }
+    throw new Error('Unknown budget command. Use budget list, budget set, or budget delete.');
+  } finally {
+    db.close();
+  }
+}
+
+async function reportCommand() {
+  const format = args.format || 'table';
+  if (!['table', 'markdown', 'json'].includes(format)) {
+    throw new Error('report --format must be table, markdown, or json.');
+  }
+  const db = openCliDb();
+  try {
+    const report = buildTerminalReport(db, { period: args.period || 'week' });
+    console.log(formatTerminalReport(report, format));
+  } finally {
+    db.close();
+  }
+}
+
+async function statuslineCommand() {
+  if (args.help) {
+    printStatuslineHelp();
+    return;
+  }
+  const format = args.format || 'text';
+  if (!['text', 'json'].includes(format)) {
+    throw new Error('statusline --format must be text or json.');
+  }
+  const windowMinutes = Number(args.windowMinutes || 15);
+  if (!Number.isFinite(windowMinutes) || windowMinutes <= 0) {
+    throw new Error('statusline --window-minutes must be a positive number.');
+  }
+  const snapshotOptions = {
+    windowMinutes,
+    source: args.source || 'all'
+  };
+  let db;
+  let snapshot;
+  try {
+    db = openCliReadOnlyDb();
+    snapshot = buildStatuslineSnapshot(db, snapshotOptions);
+  } catch (error) {
+    if (!/SQLite database not found/i.test(error.message)) throw error;
+    snapshot = buildEmptyStatuslineSnapshot({
+      ...snapshotOptions,
+      warning: 'Local SQLite database not found.'
+    });
+  } finally {
+    db?.close();
+  }
+  if (format === 'json') {
+    console.log(JSON.stringify(snapshot, null, 2));
+    return;
+  }
+  console.log(formatStatuslineText(snapshot, {
+    maxWidth: args.maxWidth || 100
+  }));
+}
+
+async function privacyCheckCommand() {
+  const result = runPrivacyCheck({ includeUntracked: Boolean(args.includeUntracked) });
+  console.log(formatPrivacyCheckReport(result));
+  if (!result.ok) process.exitCode = 2;
+}
+
+async function policyCommand() {
+  const format = args.format || 'markdown';
+  if (!['markdown', 'claude-md', 'agents-md'].includes(format)) {
+    throw new Error('policy --format must be markdown, claude-md, or agents-md.');
+  }
+  let db;
+  let sessions = [];
+  try {
+    db = openCliReadOnlyDb();
+    sessions = loadPolicySessions(db);
+  } catch (error) {
+    if (!/SQLite database not found/i.test(error.message)) throw error;
+  } finally {
+    db?.close();
+  }
+  const policy = buildModelPolicy({ sessions });
+  console.log(formatModelPolicy(policy, format));
+}
+
+async function confirmCollect(sources) {
+  if (!process.stdin.isTTY) return false;
+  const rl = createInterface({ input, output });
+  try {
+    console.log('This will scan local AI coding logs for structured token usage and write SQLite.');
+    console.log(`Sources: ${sources}`);
+    console.log('It will not read or display conversation content, but it may access local metadata directories.');
+    const answer = await rl.question('Type COLLECT to continue: ');
+    return answer.trim() === 'COLLECT';
+  } finally {
+    rl.close();
+  }
+}
+
+async function confirmCcusageBridge({ report, commandLabel }) {
+  const rl = createInterface({ input, output });
+  try {
+    console.log('This will run ccusage as an external local scanner and pass structured JSON to Token Work.');
+    console.log(`Report: ${report}`);
+    console.log(`Command: ${commandLabel}`);
+    console.log('Token Work rejects conversation-like fields and recomputes cost with its official-price table.');
+    const answer = await rl.question('Type CCUSAGE to continue: ');
+    return answer.trim() === 'CCUSAGE';
+  } finally {
+    rl.close();
+  }
+}
+
+async function freePort(start) {
+  for (let port = Number(start); port < Number(start) + 80; port += 1) {
+    if (await canListen(port)) return port;
+  }
+  throw new Error(`No free port found near ${start}`);
+}
+
+function openCliDb() {
+  return openDb(cliDbPath());
+}
+
+function openCliReadOnlyDb() {
+  return openReadOnlyDb(cliDbPath());
+}
+
+function cliDbPath() {
+  return resolve(USER_CWD, args.db || process.env.DB_PATH || defaultDbPath);
+}
+
+function canListen(port) {
+  return new Promise(resolvePort => {
+    const server = createServer();
+    server.once('error', () => resolvePort(false));
+    server.once('listening', () => server.close(() => resolvePort(true)));
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+function waitForChildren(children) {
+  return new Promise(resolveRun => {
+    let done = false;
+    const stop = (code = 0) => {
+      if (done) return;
+      done = true;
+      for (const child of children) {
+        if (!child.killed) child.kill();
+      }
+      resolveRun(code);
+    };
+    for (const child of children) {
+      child.on('exit', code => stop(code ?? 0));
+      child.on('error', error => {
+        console.error(error.message);
+        stop(1);
+      });
+    }
+    process.on('SIGINT', () => stop(0));
+    process.on('SIGTERM', () => stop(0));
+  });
+}
+
+async function waitForHttp(url, { label = 'service', timeoutMs = 45000, intervalMs = 250 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = '';
+  while (Date.now() < deadline) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1500);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+      if (response.status < 500) return true;
+      lastError = `HTTP ${response.status}`;
+    } catch (error) {
+      clearTimeout(timer);
+      lastError = error.message;
+    }
+    await sleep(intervalMs);
+  }
+  throw new Error(`${label} did not become ready at ${url}${lastError ? ` (${lastError})` : ''}`);
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function childExitCode(child) {
+  return new Promise(resolveRun => {
+    child.on('exit', code => resolveRun(code ?? 0));
+    child.on('error', () => resolveRun(1));
+  });
+}
+
+function runCollectDryRun({ sources, dbPath } = {}) {
+  const collectArgs = [
+    resolve(SOURCE_DIR, 'collect.mjs'),
+    '--dry-run',
+    '--sources',
+    sources || 'claude,codex,cursor',
+    '--json'
+  ];
+  if (dbPath) collectArgs.push('--db', dbPath);
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(process.execPath, collectArgs, {
+      cwd: PACKAGE_ROOT,
+      env: {
+        ...process.env,
+        TOKEN_WORK_COLLECTORS: sources || 'claude,codex,cursor'
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('error', error => rejectRun(error));
+    child.on('close', code => {
+      if (code !== 0) {
+        rejectRun(new Error((stderr || stdout || `coverage dry-run failed with exit code ${code}`).trim()));
+        return;
+      }
+      try {
+        resolveRun(JSON.parse(stdout));
+      } catch (error) {
+        rejectRun(new Error(`coverage dry-run returned invalid JSON: ${error.message}`));
+      }
+    });
+  });
+}
+
+function runCollectApply({ sources, dbPath } = {}) {
+  const collectArgs = [
+    resolve(SOURCE_DIR, 'collect.mjs'),
+    '--apply',
+    '--yes',
+    '--sources',
+    sources || 'claude,codex',
+    '--json'
+  ];
+  if (dbPath) collectArgs.push('--db', dbPath);
+  return new Promise(resolveRun => {
+    const child = spawn(process.execPath, collectArgs, {
+      cwd: PACKAGE_ROOT,
+      env: {
+        ...process.env,
+        TOKEN_WORK_COLLECTORS: sources || 'claude,codex',
+        TOKEN_WORK_COLLECT_CONFIRMED: '1'
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('error', error => resolveRun({ code: 1, stdout, stderr: `${stderr}${error.message}`, parsed: null }));
+    child.on('close', code => {
+      let parsed = null;
+      try {
+        parsed = stdout.trim() ? JSON.parse(stdout) : null;
+      } catch {
+        parsed = null;
+      }
+      resolveRun({ code: code ?? 0, stdout, stderr, parsed });
+    });
+  });
+}
+
+function printCoverageSummary(summary) {
+  console.log(`Token Work Coverage Gate (${summary.mode})`);
+  console.log(`sources=${summary.enabledCollectors?.join(',') || 'none'}`);
+  console.log(`range=${summary.totals?.firstTimestamp || '-'}..${summary.totals?.lastTimestamp || '-'}`);
+  console.log(`totals: files=${summary.totals?.candidateFiles || 0}, usable=${summary.totals?.usableTokenRecords || 0}, sessions=${summary.totals?.sessionRows || 0}, events=${summary.totals?.tokenEvents || 0}, tokens=${summary.totals?.eventTotalTokens || 0}`);
+  for (const source of summary.sources || []) {
+    console.log(`- ${source.id}: ${source.coverageRisk} | files=${source.candidateFiles}, usable=${source.usableTokenRecords}, sessions=${source.sessionRows}, events=${source.tokenEvents}, tokens=${source.eventTotalTokens}`);
+    if (source.firstTimestamp || source.lastTimestamp) console.log(`  range=${source.firstTimestamp || '-'}..${source.lastTimestamp || '-'}`);
+    if (source.coverageStatus) console.log(`  ${source.coverageStatus}`);
+  }
+}
+
+function buildCcusageComparison({ tokenStudio, ccusagePlan, report, threshold, command }) {
+  const tokenStudioTokens = Number(tokenStudio.totals?.eventTotalTokens || tokenStudio.totals?.sessionTotalTokens || tokenStudio.totals?.dailyTotalTokens || 0);
+  const ccusageTokens = sumUsageRows(ccusagePlan.tokenEvents || ccusagePlan.sessions || ccusagePlan.daily || []);
+  const diffPct = diffPctNumber(tokenStudioTokens, ccusageTokens);
+  const sources = [...new Set((tokenStudio.sources || []).map(source => source.id))];
+  return {
+    ok: diffPct <= threshold,
+    report,
+    threshold,
+    command,
+    tokenStudio: {
+      sources,
+      dailyRows: tokenStudio.totals?.dailyRows || 0,
+      sessionRows: tokenStudio.totals?.sessionRows || 0,
+      tokenEvents: tokenStudio.totals?.tokenEvents || 0,
+      totalTokens: tokenStudioTokens,
+      coverageRisks: (tokenStudio.sources || []).map(source => ({
+        id: source.id,
+        risk: source.coverageRisk,
+        status: source.coverageStatus
+      }))
+    },
+    ccusage: {
+      detectedShape: ccusagePlan.detectedShape,
+      dailyRows: ccusagePlan.daily.length,
+      sessionRows: ccusagePlan.sessions.length,
+      tokenEvents: ccusagePlan.tokenEvents.length,
+      totalTokens: ccusageTokens,
+      warnings: ccusagePlan.warnings
+    },
+    diff: {
+      tokenDelta: tokenStudioTokens - ccusageTokens,
+      diffPct
+    },
+    note: 'Only token structure is compared. Token Work ignores ccusage cost fields and recomputes official-price cost separately.'
+  };
+}
+
+function printCcusageComparison(comparison) {
+  console.log(`Token Work vs ccusage (${comparison.report})`);
+  console.log(`ok=${comparison.ok ? 'yes' : 'no'} threshold=${Math.round(comparison.threshold * 10000) / 100}%`);
+  console.log(`token-work tokens=${comparison.tokenStudio.totalTokens} events=${comparison.tokenStudio.tokenEvents} sessions=${comparison.tokenStudio.sessionRows}`);
+  console.log(`ccusage tokens=${comparison.ccusage.totalTokens} events=${comparison.ccusage.tokenEvents} sessions=${comparison.ccusage.sessionRows}`);
+  console.log(`diff=${comparison.diff.tokenDelta} (${Math.round(comparison.diff.diffPct * 10000) / 100}%)`);
+  if (!comparison.ok) {
+    console.log('coverage gate failed: token totals differ beyond threshold');
+  }
+}
+
+function sumUsageRows(rows) {
+  return rows.reduce((sum, row) => sum
+    + positiveNumber(row.totalTokens ?? row.total_tokens)
+    + (row.totalTokens || row.total_tokens ? 0 : positiveNumber(row.inputTokens ?? row.input_tokens))
+    + (row.totalTokens || row.total_tokens ? 0 : positiveNumber(row.outputTokens ?? row.output_tokens))
+    + (row.totalTokens || row.total_tokens ? 0 : positiveNumber(row.cacheReadTokens ?? row.cache_read_tokens))
+    + (row.totalTokens || row.total_tokens ? 0 : positiveNumber(row.cacheCreationTokens ?? row.cache_creation_tokens))
+    + (row.totalTokens || row.total_tokens ? 0 : positiveNumber(row.reasoningTokens ?? row.reasoning_tokens ?? row.reasoningOutputTokens ?? row.reasoning_output_tokens)), 0);
+}
+
+function positiveNumber(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0;
+}
+
+function diffPctNumber(left, right) {
+  const max = Math.max(Number(left || 0), Number(right || 0), 1);
+  return Math.abs(Number(left || 0) - Number(right || 0)) / max;
+}
+
+function shouldAutoApplyCoverage(summary, applySources) {
+  if (Number(summary?.totals?.fatalCoverageErrors || 0) > 0) return false;
+  const wanted = new Set(String(applySources || 'claude,codex').split(',').map(value => value.trim()).filter(Boolean));
+  return (summary.sources || []).some(source =>
+    wanted.has(source.id)
+    && source.coverageRisk === 'trusted-event-level'
+    && Number(source.tokenEvents || 0) > 0
+  );
+}
+
+function printApplySummary(summary) {
+  const before = summary.before || {};
+  const after = summary.after || {};
+  const deltaSessions = Number(after.sessionRows || 0) - Number(before.sessionRows || 0);
+  const deltaEvents = Number(after.tokenEvents || 0) - Number(before.tokenEvents || 0);
+  console.log(`[token-work] collect applied: sessions +${deltaSessions}, token_events +${deltaEvents}`);
+  if (summary.backup?.fileName) console.log(`[token-work] backup ${summary.backup.fileName}`);
+  for (const source of summary.sources || []) {
+    console.log(`[token-work] ${source.id}: ${source.coverageRisk}, events=${source.tokenEvents}, sessions=${source.sessionRows}`);
+  }
+}
+
+function openUrl(url) {
+  let launcher;
+  let launcherArgs;
+  if (process.platform === 'win32') {
+    launcher = 'cmd';
+    launcherArgs = ['/c', 'start', '""', url];
+  } else if (process.platform === 'darwin') {
+    launcher = 'open';
+    launcherArgs = [url];
+  } else {
+    launcher = 'xdg-open';
+    launcherArgs = [url];
+  }
+  const child = spawn(launcher, launcherArgs, {
+    stdio: 'ignore',
+    detached: true,
+    windowsHide: true
+  });
+  child.unref();
+}
+
+function parseCommand(argv) {
+  const commands = new Set([
+    'auto',
+    'start',
+    'open',
+    'demo',
+    'live',
+    'statusline',
+    'collect',
+    'coverage',
+    'compare-ccusage',
+    'collectors',
+    'import-usage',
+    'budget',
+    'report',
+    'policy',
+    'doctor',
+    'privacy-check'
+  ]);
+  const first = argv[0];
+  if (!first) return { command: 'auto', args: [] };
+  if (first === 'help' || first === '--help' || first === '-h') return { command: 'help', args: argv.slice(1) };
+  if (!first.startsWith('-') && commands.has(first)) return { command: first, args: argv.slice(1) };
+  if (!first.startsWith('-')) return { command: first, args: argv.slice(1) };
+  return { command: 'auto', args: argv };
+}
+
+function parseArgs(argv) {
+  const parsed = { _: [] };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg.startsWith('--') && arg.includes('=')) {
+      const [key, value] = arg.slice(2).split(/=(.*)/s);
+      parsed[toCamel(key)] = value;
+    } else if (arg.startsWith('--')) {
+      const key = toCamel(arg.slice(2));
+      const next = argv[i + 1];
+      if (!next || next.startsWith('--')) {
+        parsed[key] = true;
+      } else {
+        parsed[key] = next;
+        i += 1;
+      }
+    } else {
+      parsed._.push(arg);
+    }
+  }
+  return parsed;
+}
+
+function toCamel(value) {
+  return value.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
+}
+
+function printHelp() {
+  console.log([
+    'Token Work ROI',
+    '',
+    'Commands:',
+    '  token-work [--db data/usage.sqlite] [--no-collect|--dry-run-only]',
+    '    Default real entry: coverage -> trusted Claude/Codex apply -> UI -> 60s live refresh.',
+    '  token-work demo [--seed-only] [--db data/demo.sqlite]',
+    '  token-work start [--db data/usage.sqlite] [--api-port 4173] [--ui-port 5173]',
+    '  token-work open [--db data/usage.sqlite] [--api-port 4173] [--ui-port 5173]',
+    '  token-work live [--db data/usage.sqlite]',
+    '  token-work statusline [--db data/usage.sqlite] [--window-minutes 15] [--format text|json]',
+    '  token-work collectors [--json]',
+    '  token-work collectors --audit [--json]',
+    '  token-work coverage --sources claude,codex,cursor [--json]',
+    '  token-work compare-ccusage --report=session --json --yes',
+    '  token-work import-usage --format=ccusage-json --file <path|-> [--dry-run|--apply]',
+    '  token-work import-usage --format=ccusage-cli --report=<daily|weekly|monthly|session|blocks> [--dry-run|--apply] [--yes]',
+    '  token-work budget list|set|delete',
+    '  token-work report --period=week --format=table|markdown|json',
+    '  token-work policy --format=markdown|claude-md|agents-md',
+    '  token-work collect --dry-run --sources claude,codex,cursor',
+    '  token-work collect --apply --yes --sources claude,codex',
+    '  token-work doctor',
+    '  token-work privacy-check [--include-untracked]'
+  ].join('\n'));
+}
+
+function printBudgetHelp() {
+  console.log([
+    'Token Work Budget Profiles',
+    '',
+    'Budgets are local custom guardrails. They are not provider subscription quotas.',
+    '',
+    'Examples:',
+    '  token-work budget list',
+    '  token-work budget set --source "Codex CLI" --label "Codex 15m" --window-minutes 15 --token-budget 50000',
+    '  token-work budget set --model-group heavy --label "Heavy model daily cap" --window-minutes 1440 --token-budget 200000 --hard-threshold 1',
+    '  token-work budget set --source "Claude Code" --label "Claude 5h" --window-type fixed --window-minutes 300 --reset-anchor 2026-06-17T09:00:00Z --warning-threshold 0.75 --token-budget 500000',
+    '  token-work budget delete --id 1',
+    '',
+    'Options:',
+    '  --window-type rolling|fixed',
+    '  --model-group all|heavy|mid|light|priced|unpriced',
+    '  --reset-anchor <ISO datetime>    fixed windows only',
+    '  --warning-threshold <0-1>        default 0.75',
+    '  --hard-threshold <0.5-2>         exceeded threshold, default 1'
+  ].join('\n'));
+}
+
+function printStatuslineHelp() {
+  console.log([
+    'Token Work Statusline Guardrails',
+    '',
+    'Read-only SQLite statusline for terminal prompts, tmux, scripts, or Claude Code statusline.',
+    '',
+    'Examples:',
+    '  token-work statusline --format=text --window-minutes=15 --max-width=100',
+    '  token-work statusline --format=json --window-minutes=15',
+    '',
+    'Claude Code statusline command:',
+    '  npx token-work statusline --format=text --window-minutes=15 --max-width=100',
+    '',
+    'tmux:',
+    '  set -g status-right "#(npx token-work statusline --format=text --max-width=80)"',
+    '',
+    'PowerShell prompt:',
+    '  function prompt { "$(npx token-work statusline --format=text --max-width=80) PS $($PWD)> " }',
+    '',
+    'Privacy:',
+    '  statusline only reads local SQLite. It does not scan logs, run ccusage, or start a background process.'
+  ].join('\n'));
+}
+
+function printImportUsageHelp() {
+  console.log([
+    'Token Work ccusage Import',
+    '',
+    'Default mode is dry-run. It validates shape and counts rows without writing SQLite.',
+    '',
+    'Examples:',
+    '  token-work import-usage --format=ccusage-json --file ccusage.json --dry-run',
+    '  token-work import-usage --format=ccusage-json --file ccusage.json --apply',
+    '  ccusage daily --json | token-work import-usage --format=ccusage-json --file - --dry-run',
+    '  token-work import-usage --format=ccusage-cli --report=session --dry-run --yes',
+    '  token-work import-usage --format=ccusage-cli --report=blocks --apply --yes',
+    '  token-work import-usage --format=ccusage-cli --report=daily --ccusage-bin ccusage --dry-run',
+    '',
+    'Supported shapes:',
+    '  daily, project daily, weekly, session, blocks, monthly',
+    '',
+    'ccusage CLI bridge reports:',
+    `  ${CCUSAGE_CLI_REPORTS.join(', ')}`,
+    '',
+    'Privacy:',
+    '  prompt, response, messages, transcript, diff, content, and text fields are rejected.',
+    '  ccusage-cli runs an external local scanner only after interactive confirmation or --yes.',
+    '  Imported cost fields are ignored; Token Work recomputes official-price conversion.'
+  ].join('\n'));
+}
+
+function loadPolicySessions(db) {
+  return db.prepare(`
+    SELECT
+      COALESCE(a.work_purpose, '未说明') AS workPurpose,
+      COALESCE(a.work_stage, '未说明') AS workStage,
+      COALESCE(a.value_level, '未评估') AS valueLevel,
+      COALESCE(a.output_status, '未标注') AS outputStatus,
+      s.total_tokens AS totalTokens,
+      s.cost_usd AS costUSD
+    FROM session_usage s
+    LEFT JOIN session_annotations a
+      ON a.device = s.device
+      AND a.source = s.source
+      AND a.session_id = s.session_id
+    ORDER BY s.total_tokens DESC
+  `).all();
+}

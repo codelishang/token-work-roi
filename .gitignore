@@ -1,0 +1,15 @@
+data/*
+!data/.gitkeep
+!data/official-pricing.json
+.DS_Store
+.idea/
+*.log
+node_modules/
+.vite/
+.npm-cache/
+dist/
+release/
+.env
+.env.*
+.claude/
+.codex/

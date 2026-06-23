@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Token Work">
+  <rect width="512" height="512" rx="112" fill="#262520"/>
+  <path d="M118 314l71-128 72 171 58-101 75 82" fill="none" stroke="#faf7ef" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="382" cy="142" r="34" fill="#7bd88f"/>
+  <text x="256" y="424" text-anchor="middle" font-family="Arial, sans-serif" font-size="58" font-weight="700" fill="#faf7ef">TS</text>
+</svg>

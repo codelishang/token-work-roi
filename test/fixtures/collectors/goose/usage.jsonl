@@ -1,0 +1,2 @@
+{"eventId":"goose-1","sessionId":"goose-session-1","timestamp":"2026-06-17T02:10:00Z","model":"claude-sonnet","project":"token-work-roi","tokens":{"input":1800,"output":260,"cacheRead":500},"toolCategory":"agent","fileExtension":".ts"}
+{"eventId":"goose-skip-no-tokens","sessionId":"goose-session-2","timestamp":"2026-06-17T02:11:00Z","model":"claude-sonnet","project":"token-work-roi"}

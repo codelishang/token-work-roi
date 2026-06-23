@@ -1,0 +1,2 @@
+{"eventId":"kimi-1","sessionId":"kimi-session-1","timestamp":"2026-06-17T02:08:00Z","model":"kimi-k2","project":"token-work-roi","inputTokens":1100,"outputTokens":380,"cacheCreationTokens":70,"toolCategory":"review","fileExtension":".jsx"}
+{"eventId":"kimi-skip-no-tokens","sessionId":"kimi-session-2","timestamp":"2026-06-17T02:09:00Z","model":"kimi-k2","project":"token-work-roi"}

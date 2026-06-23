@@ -1,0 +1,146 @@
+{
+  "version": 2,
+  "synthetic": true,
+  "generatedFor": "Token Work ROI public demo",
+  "notes": [
+    "This file contains synthetic demo records only.",
+    "It does not contain real local AI session data or conversation content.",
+    "annotationBackup can be used as the shape for /api/import/annotations after matching sessions exist in the local SQLite database."
+  ],
+  "usageSeed": {
+    "daily": [
+      {
+        "device": "demo-laptop",
+        "source": "Codex CLI",
+        "usageDate": "2026-06-10",
+        "model": "codex-mini",
+        "inputTokens": 180000,
+        "outputTokens": 62000,
+        "cacheCreationTokens": 9000,
+        "cacheReadTokens": 54000,
+        "reasoningOutputTokens": 12000,
+        "totalTokens": 317000,
+        "costUSD": 5.84
+      },
+      {
+        "device": "demo-laptop",
+        "source": "Claude Code",
+        "usageDate": "2026-06-09",
+        "model": "claude-sonnet",
+        "inputTokens": 220000,
+        "outputTokens": 71000,
+        "cacheCreationTokens": 16000,
+        "cacheReadTokens": 61000,
+        "reasoningOutputTokens": 0,
+        "totalTokens": 368000,
+        "costUSD": 8.15
+      }
+    ],
+    "sessions": [
+      {
+        "device": "demo-laptop",
+        "source": "Codex CLI",
+        "sessionId": "demo:codex:token-work-roi",
+        "lastActivity": "2026-06-10T09:20:00.000Z",
+        "projectPath": "D:/Projects/token-work-roi-demo",
+        "inputTokens": 180000,
+        "outputTokens": 62000,
+        "cacheCreationTokens": 9000,
+        "cacheReadTokens": 54000,
+        "reasoningOutputTokens": 12000,
+        "totalTokens": 317000,
+        "costUSD": 5.84
+      },
+      {
+        "device": "demo-laptop",
+        "source": "Claude Code",
+        "sessionId": "demo:claude:resume-polish",
+        "lastActivity": "2026-06-09T16:40:00.000Z",
+        "projectPath": "D:/Projects/resume-roi-demo",
+        "inputTokens": 220000,
+        "outputTokens": 71000,
+        "cacheCreationTokens": 16000,
+        "cacheReadTokens": 61000,
+        "reasoningOutputTokens": 0,
+        "totalTokens": 368000,
+        "costUSD": 8.15
+      },
+      {
+        "device": "demo-laptop",
+        "source": "Codex CLI",
+        "sessionId": "demo:codex:abandoned-spike",
+        "lastActivity": "2026-06-08T12:10:00.000Z",
+        "projectPath": "D:/Projects/abandoned-spike-demo",
+        "inputTokens": 90000,
+        "outputTokens": 24000,
+        "cacheCreationTokens": 5000,
+        "cacheReadTokens": 22000,
+        "reasoningOutputTokens": 3000,
+        "totalTokens": 144000,
+        "costUSD": 2.12
+      }
+    ]
+  },
+  "annotationBackup": {
+    "version": 2,
+    "sessionAnnotations": [
+      {
+        "device": "demo-laptop",
+        "source": "Codex CLI",
+        "sessionId": "demo:codex:token-work-roi",
+        "projectAlias": "Token Work",
+        "taskType": "功能开发",
+        "outputStatus": "已发布",
+        "note": "v2 本地 ROI 复盘闭环"
+      },
+      {
+        "device": "demo-laptop",
+        "source": "Claude Code",
+        "sessionId": "demo:claude:resume-polish",
+        "projectAlias": "简历优化工具",
+        "taskType": "问题修复",
+        "outputStatus": "已完成",
+        "note": "修复结果页证据展示"
+      },
+      {
+        "device": "demo-laptop",
+        "source": "Codex CLI",
+        "sessionId": "demo:codex:abandoned-spike",
+        "projectAlias": "废弃 Spike",
+        "taskType": "技术调研",
+        "outputStatus": "已废弃",
+        "note": "方向不值得继续投入"
+      }
+    ],
+    "sessionOutputs": [
+      {
+        "device": "demo-laptop",
+        "source": "Codex CLI",
+        "sessionId": "demo:codex:token-work-roi",
+        "outputUrl": "https://github.com/example/token-work/pull/12",
+        "outputLabel": "v2 PR"
+      },
+      {
+        "device": "demo-laptop",
+        "source": "Claude Code",
+        "sessionId": "demo:claude:resume-polish",
+        "outputUrl": "https://example.com/resume-demo",
+        "outputLabel": "Demo 页面"
+      }
+    ],
+    "projectAliasRules": [
+      {
+        "pattern": "D:/Projects/token-work-roi-demo",
+        "matchType": "prefix",
+        "projectAlias": "Token Work",
+        "enabled": true
+      },
+      {
+        "pattern": "D:/Projects/resume-roi-demo",
+        "matchType": "prefix",
+        "projectAlias": "简历优化工具",
+        "enabled": true
+      }
+    ]
+  }
+}

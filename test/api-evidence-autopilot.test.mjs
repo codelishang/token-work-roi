@@ -1,0 +1,183 @@
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import {
+  openDb,
+  upsertDaily,
+  upsertProjectAliasRule,
+  upsertSession,
+  upsertSessionOutput
+} from '../src/db.mjs';
+
+test('evidence suggestion API builds and applies selected high-confidence evidence', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'token-work-api-evidence-'));
+  const dbPath = join(dir, 'usage.sqlite');
+  const port = 4300 + Math.floor(Math.random() * 1000);
+  seedDb(dbPath);
+
+  const child = spawn(process.execPath, ['src/server.mjs'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      PORT: String(port),
+      DB_PATH: dbPath,
+      SCHEDULED_COLLECT_ENABLED: 'false'
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stderr.on('data', chunk => { stderr += chunk; });
+
+  try {
+    await waitForApi(port, () => ({ stdout, stderr, exited: child.exitCode != null, exitCode: child.exitCode }));
+
+    const planResponse = await getJson(port, '/api/evidence-suggestions?period=all');
+    assert.equal(planResponse.ok, true);
+    assert.equal(planResponse.plan.period, 'all');
+    assert.equal(planResponse.plan.privacy.includes('Prompt'), true);
+    assert.equal(JSON.stringify(planResponse).includes('D:\\HighROIProjects\\token-work'), false);
+    const annotation = planResponse.plan.suggestions.find(item => item.kind === 'annotation' && item.canApply);
+    assert.ok(annotation, 'expected an applicable annotation suggestion');
+    assert.equal(annotation.suggestedValues.taskType, '功能开发');
+
+    await assertRejectsWithStatus(
+      fetch(`http://127.0.0.1:${port}/api/evidence-suggestions/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ suggestionIds: [annotation.suggestionId] })
+      }),
+      415
+    );
+
+    await assertRejectsWithStatus(
+      fetch(`http://127.0.0.1:${port}/api/evidence-suggestions/apply`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: 'http://evil.example'
+        },
+        body: JSON.stringify({ suggestionIds: [annotation.suggestionId] })
+      }),
+      403
+    );
+
+    const applied = await postJson(port, '/api/evidence-suggestions/apply', {
+      period: 'all',
+      suggestionIds: [annotation.suggestionId]
+    });
+    assert.equal(applied.ok, true);
+    assert.equal(applied.appliedAnnotations, 1);
+    assert.equal(applied.appliedOutputs, 0);
+
+    const data = await getJson(port, '/api/data');
+    assert.equal(data.sessions[0].projectAlias, 'Token Work');
+    assert.equal(data.sessions[0].taskType, '功能开发');
+    assert.equal(data.sessions[0].annotationSource, 'auto');
+    assert.equal(data.sessions[0].annotationConfidence >= 80, true);
+  } finally {
+    await stopChild(child);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function seedDb(dbPath) {
+  const db = openDb(dbPath);
+  try {
+    upsertProjectAliasRule(db, {
+      pattern: 'D:\\HighROIProjects\\token-work',
+      matchType: 'prefix',
+      projectAlias: 'Token Work',
+      enabled: true
+    });
+    upsertDaily(db, {
+      device: 'devbox',
+      source: 'Codex CLI',
+      usageDate: '2026-06-18',
+      model: 'gpt-5.5',
+      inputTokens: 1000,
+      outputTokens: 200,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      reasoningOutputTokens: 10,
+      totalTokens: 1210,
+      costUSD: 0.5
+    });
+    upsertSession(db, {
+      device: 'devbox',
+      source: 'Codex CLI',
+      sessionId: 'local:codex:D:\\HighROIProjects\\token-work:gpt-5.5',
+      lastActivity: '2026-06-18T10:00:00.000Z',
+      projectPath: 'D:\\HighROIProjects\\token-work',
+      inputTokens: 1000,
+      outputTokens: 200,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      reasoningOutputTokens: 10,
+      totalTokens: 1210,
+      costUSD: 0.5
+    });
+    upsertSessionOutput(db, {
+      device: 'devbox',
+      source: 'Codex CLI',
+      sessionId: 'local:codex:D:\\HighROIProjects\\token-work:gpt-5.5',
+      outputUrl: 'https://github.com/codelishang/token-work-roi/commit/abcdef1234567890',
+      outputLabel: 'token-work abcdef12',
+      outputType: 'commit'
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function waitForApi(port, diagnostics) {
+  const start = Date.now();
+  let lastError = null;
+  while (Date.now() - start < 5000) {
+    try {
+      await getJson(port, '/api/data');
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+  const details = diagnostics ? diagnostics() : {};
+  throw new Error(`server did not start in time: ${lastError?.message || 'no response'}\nstdout=${details.stdout || ''}\nstderr=${details.stderr || ''}\nexit=${details.exited ? details.exitCode : 'running'}`);
+}
+
+async function getJson(port, path) {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`);
+  if (!response.ok) assert.fail(await response.text());
+  return response.json();
+}
+
+async function postJson(port, path, body) {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) assert.fail(await response.text());
+  return response.json();
+}
+
+async function assertRejectsWithStatus(responsePromise, expectedStatus) {
+  const response = await responsePromise;
+  assert.equal(response.status, expectedStatus, await response.text());
+}
+
+function stopChild(child) {
+  if (child.exitCode != null) return Promise.resolve();
+  return new Promise(resolve => {
+    child.once('close', resolve);
+    child.kill();
+  });
+}

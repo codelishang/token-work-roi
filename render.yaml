@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: token-work-roi
+    env: docker
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 4173
+      - key: HOST
+        value: 0.0.0.0
+      - key: INGEST_TOKEN
+        generateValue: true
+    disk:
+      name: token-work-roi-data
+      mountPath: /app/data
+      sizeGB: 1

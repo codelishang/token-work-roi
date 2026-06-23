@@ -1,0 +1,13 @@
+.git
+.github
+.idea
+node_modules
+dist
+desktop
+docs/assets
+data/*
+!data/.gitkeep
+!data/official-pricing.json
+*.log
+npm-debug.log*
+.DS_Store

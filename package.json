@@ -1,0 +1,71 @@
+{
+  "name": "token-work",
+  "version": "1.0.0",
+  "description": "Local AI coding ROI studio for private token, output, and model strategy review.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codelishang/token-work-roi.git"
+  },
+  "bugs": {
+    "url": "https://github.com/codelishang/token-work-roi/issues"
+  },
+  "homepage": "https://github.com/codelishang/token-work-roi#readme",
+  "bin": {
+    "token-work": "src/cli.mjs"
+  },
+  "files": [
+    "src",
+    "config",
+    "public",
+    "data/.gitkeep",
+    "data/official-pricing.json",
+    "index.html",
+    "vite.config.js",
+    "README.md",
+    "README.en.md",
+    "LICENSE",
+    "COMMERCIAL-LICENSE.md",
+    "NOTICE.md",
+    "PRIVACY.md",
+    "Dockerfile",
+    "docker-compose.yml",
+    "render.yaml"
+  ],
+  "scripts": {
+    "start": "node src/cli.mjs start",
+    "demo": "node src/cli.mjs demo",
+    "collect": "node src/collect.mjs",
+    "doctor": "node src/cli.mjs doctor",
+    "privacy:check": "node src/cli.mjs privacy-check",
+    "closure:check": "node src/closure-check.mjs",
+    "closure:import": "node src/closure-import.mjs",
+    "pricing:update": "node src/update-pricing.mjs",
+    "dev": "node src/dev.mjs",
+    "dev:client": "vite --host 127.0.0.1 --port 5173",
+    "dev:server": "node src/server.mjs",
+    "build": "vite build",
+    "preview": "npm run build && node src/server.mjs",
+    "serve": "node src/server.mjs",
+    "smoke:npx": "node scripts/smoke-npx.mjs",
+    "smoke:browser": "node scripts/smoke-browser-console.mjs",
+    "smoke:published": "node scripts/smoke-published.mjs",
+    "desktop": "electron desktop/main.mjs",
+    "desktop:smoke": "node scripts/smoke-desktop.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^6.0.2",
+    "echarts": "^6.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^8.0.16"
+  },
+  "devDependencies": {
+    "electron": "^42.4.1"
+  }
+}
