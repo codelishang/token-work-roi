@@ -1,65 +1,80 @@
-# Collector Support Matrix
+# 数据来源支持表 / Collector Support Matrix
 
-Token Work ROI prefers trustworthy token metadata over broad but unreliable coverage.
+元衡只导入有明确词元字段的数据。宁可少导入，也不按文本长度估算词元。
 
-| Source | Status | Data source | Reads conversation content | Token reliability | Default |
-|---|---|---|---:|---|---:|
-| Claude Code | stable | local metadata/log files | No | native token fields | Yes |
-| Codex CLI | stable | local JSONL session metadata | No | native token fields | Yes |
-| Gemini CLI | stable | local session metadata | No | native token fields | Yes |
-| OpenCode | stable | local data directory | No | native token fields | Yes |
-| OpenClaw | stable | local agent metadata | No | native token fields | Yes |
-| Hermes Agent | stable | local SQLite metadata | No | native token fields | Yes |
-| Cursor | experimental | explicit structured usage JSON/JSONL only | No | explicit token fields only | No |
-| GitHub Copilot CLI | experimental | explicit structured usage JSON/JSONL only | No | explicit token fields only | No |
-| Qwen Code | experimental | explicit structured usage JSON/JSONL only | No | explicit token fields only | No |
-| Kimi / Moonshot Coding CLI | experimental | explicit structured usage JSON/JSONL only | No | explicit token fields only | No |
-| Goose | experimental | explicit structured usage JSON/JSONL only | No | explicit token fields only | No |
-| ccusage JSON / CLI Bridge | import-only | documented ccusage JSON output or explicit `ccusage --json --no-cost` bridge | No | external structured token fields | No |
-| Amp | detected-only | local path detection only | No | unknown; no usage import | No |
-| Droid | detected-only | local path detection only | No | unknown; no usage import | No |
-| Codebuff | detected-only | local path detection only | No | unknown; no usage import | No |
-| pi-agent | detected-only | local path detection only | No | unknown; no usage import | No |
-| Roo Code | detected-only | local path detection only | No | unknown; no usage import | No |
-| Zed Agent | detected-only | local path detection only | No | unknown; no usage import | No |
-| Antigravity | detected-only | local path detection only | No | unknown; no usage import | No |
-| Cline | detected-only | local path detection only | No | unknown; no usage import | No |
-| Kiro | detected-only | local path detection only | No | unknown; no usage import | No |
-| Grok Build | detected-only | local path detection only | No | unknown; no usage import | No |
-| Kilo | detected-only | local path detection only | No | unknown; no usage import | No |
+Yuanheng imports usage only when explicit token fields exist. It prefers missing data over guessed data.
 
-Experimental collectors are opt-in. They skip records without explicit token fields and never infer usage from message text, prompts, responses, diffs, or full file paths.
+## 状态说明 / Status
 
-Import-only sources are explicit. Saved ccusage JSON does not scan local logs. The CLI bridge runs ccusage as an external local scanner only after confirmation or `--yes`; Token Work receives structured JSON, rejects conversation-like fields, and recomputes official-price costs:
+| 状态 | 含义 |
+|---|---|
+| stable | 默认可用，能读取可靠的结构化词元记录 |
+| experimental | 需要显式启用，只在发现明确词元字段时导入 |
+| import-only | 只能通过外部结构化 JSON 或显式 CLI bridge 导入 |
+| detected-only | 只能检测本机是否可能安装过，不能写入用量 |
+
+## 支持表 / Matrix
+
+| 来源 | 状态 | 数据来源 | 是否读取对话正文 | 可检测 | 可采集 | 默认检查 | 默认写入 |
+|---|---|---|---:|---:|---:|---:|---:|
+| Claude Code | stable | 本机元数据或日志文件 | 否 | 是 | 是 | 是 | 是 |
+| Codex CLI | stable | 本机 JSONL session 元数据 | 否 | 是 | 是 | 是 | 是 |
+| Cursor | experimental | 明确的结构化 usage JSON/JSONL | 否 | 是 | 仅明确词元字段 | 是 | 否 |
+| Gemini CLI | stable | 本机 session 元数据 | 否 | 是 | 是 | 否 | 否 |
+| OpenCode | stable | 本机数据目录 | 否 | 是 | 是 | 否 | 否 |
+| OpenClaw | stable | 本机 agent 元数据 | 否 | 是 | 是 | 否 | 否 |
+| Hermes Agent | stable | 本机 SQLite 元数据 | 否 | 是 | 是 | 否 | 否 |
+| GitHub Copilot CLI | experimental | 明确的结构化 usage JSON/JSONL | 否 | 是 | 仅明确词元字段 | 否 | 否 |
+| Qwen Code | experimental | 明确的结构化 usage JSON/JSONL | 否 | 是 | 仅明确词元字段 | 否 | 否 |
+| Kimi / Moonshot Coding CLI | experimental | 明确的结构化 usage JSON/JSONL | 否 | 是 | 仅明确词元字段 | 否 | 否 |
+| Goose | experimental | 明确的结构化 usage JSON/JSONL | 否 | 是 | 仅明确词元字段 | 否 | 否 |
+| 结构化 JSON / CLI Bridge | import-only | 外部结构化 JSON 或显式 CLI bridge | 否 | 否 | 是 | 否 | 否 |
+| Amp | detected-only | 本机路径检测 | 否 | 是 | 否 | 否 | 否 |
+| Droid | detected-only | 本机路径检测 | 否 | 是 | 否 | 否 | 否 |
+| Codebuff | detected-only | 本机路径检测 | 否 | 是 | 否 | 否 | 否 |
+| pi-agent | detected-only | 本机路径检测 | 否 | 是 | 否 | 否 | 否 |
+| Roo Code | detected-only | 本机路径检测 | 否 | 是 | 否 | 否 | 否 |
+| Zed Agent | detected-only | 本机路径检测 | 否 | 是 | 否 | 否 | 否 |
+| Antigravity | detected-only | 本机路径检测 | 否 | 是 | 否 | 否 | 否 |
+| Cline | detected-only | 本机路径检测 | 否 | 是 | 否 | 否 | 否 |
+| Kiro | detected-only | 本机路径检测 | 否 | 是 | 否 | 否 | 否 |
+| Grok Build | detected-only | 本机路径检测 | 否 | 是 | 否 | 否 | 否 |
+| Kilo | detected-only | 本机路径检测 | 否 | 是 | 否 | 否 | 否 |
+
+“默认检查”表示快速启动时会只读检查该来源是否存在可靠字段；“默认写入”表示通过可信门槛后会写入 SQLite。
+
+“Default check” means the quick start checks the source in read-only mode. “Default write” means trusted events can be written to SQLite after the trust gate passes.
+
+## 结构化 JSON 导入 / Structured JSON Import
 
 ```bash
 npx token-work import-usage --format=ccusage-json --file ccusage.json --dry-run
-npx token-work import-usage --format=ccusage-json --file ccusage.json --apply
+npx token-work import-usage --format=ccusage-json --file ccusage.json --apply --yes
 npx token-work import-usage --format=ccusage-cli --report=session --dry-run --yes
-npx token-work import-usage --format=ccusage-cli --report=blocks --apply --yes
 ```
 
-The Dashboard ccusage CLI Bridge panel only builds these copyable commands. It does not run ccusage from the browser or through a new server-side scanner API.
+元衡可以导入外部工具生成的结构化 JSON。ccusage 是其中一种可选示例，不是元衡运行所必需的依赖。
 
-Detected-only sources only report whether likely local paths exist. They do not write `daily_usage`, `session_usage`, or `token_events` unless a collector audit proves reliable token/model/time/session metadata.
+浏览器中的 CLI Bridge 只生成可复制命令，不会从浏览器运行外部命令。
 
-## Collector Audit
+Yuanheng can import structured JSON generated by external tools. ccusage is one optional example, not a runtime requirement.
 
-Token Work collector audit provides:
+The browser bridge only creates copyable commands. It does not run external commands from the browser.
+
+## 审计命令 / Audit
 
 ```bash
 npx token-work collectors --audit --json
 ```
 
-The audit checks experimental collector roots and returns only safe counts:
+审计只输出安全摘要：
 
-- candidate files
-- usable structured token records
-- skipped records with no token fields
-- skipped conversation-like records
-- skipped oversized files
-- parse errors
+- 候选文件数。
+- 可用结构化词元记录数。
+- 没有词元字段而跳过的记录数。
+- 类似对话内容而跳过的记录数。
+- 超大文件和解析错误。
 
-It does not write SQLite, does not print full paths, and does not output prompt, response, diff, transcript, or message content. A collector should only move from experimental to stable after audit results show reliable token/model/time/session metadata on real local files. Detected-only collectors must first move to experimental with fixture coverage before they can ever become stable.
+它不写 SQLite，不输出完整路径，也不输出 prompt、response、diff、transcript 或消息正文。
 
-From a cloned repository, replace `npx token-work` with `node src/cli.mjs` for local development.
+It does not write SQLite, print full paths, or output prompts, responses, diffs, transcripts, or message content.

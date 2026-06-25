@@ -144,13 +144,9 @@ button, input, select { font-family: inherit; color: inherit; }
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: linear-gradient(135deg, oklch(0.30 0.04 265), oklch(0.20 0.02 265));
-  color: white;
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-  font-size: 14px;
-  letter-spacing: -0.02em;
+  display: block;
+  object-fit: cover;
+  box-shadow: 0 8px 18px rgba(31, 43, 39, 0.14);
 }
 
 .brand h1 {

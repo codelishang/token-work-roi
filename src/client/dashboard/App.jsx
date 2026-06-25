@@ -1228,7 +1228,7 @@ function DataSourceStatusPanel({
           {periodLabel && <p className="data-source-period">当前时间范围：{periodLabel}</p>}
         </div>
         <div className="data-source-version">
-          <span>Token Work</span>
+          <span>元衡</span>
           <strong>v{runtime?.packageVersion || 'unknown'}</strong>
         </div>
       </div>
@@ -1584,7 +1584,7 @@ function FirstRunPanel({ state, onOpenImportBudget }) {
       <div className="first-run-main">
         <div>
           <div className="eyebrow">首次使用</div>
-          <h2>{primaryNotice?.title || '5 分钟跑通 Token Work ROI'}</h2>
+          <h2>{primaryNotice?.title || '5 分钟跑通元衡 Token Work ROI'}</h2>
           <p>{primaryNotice?.detail || '按顺序准备数据、设置预算，再把 ROI 建议加入行动清单。'}</p>
         </div>
         <div className="first-run-actions">

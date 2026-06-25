@@ -1,24 +1,47 @@
-# Token Work Pulse Desktop
+# 元衡桌面版
 
-Token Work Pulse is an optional Electron companion for local live guardrails.
+桌面版是元衡的一个本地小窗。它适合放在 Dock、任务栏或托盘里，随时看今天的 token 压力、预算状态和当前建议。
 
-It is not a new collector and it is not the main product. It only opens the existing local `/live`, `/trust`, and `/review` surfaces.
+它不是另一个产品，也不会重新采集一套数据。桌面版打开的还是本机 `127.0.0.1` 上的元衡服务，只是把 `/live` 做成一个更顺手的小窗，并在菜单里放了看板、复盘和可信度入口。
 
-## Privacy Boundary
+## 启动
 
-- Reads the existing local Token Work API on `127.0.0.1`.
-- Starts the local Web/API service if it is not already running.
-- Does not run collection logic inside Electron; if it starts a fresh local service, that service uses the same safe scheduled Claude/Codex refresh as the default CLI path.
-- Does not upload data.
-- Does not read prompt, response, transcript, diff, command body, or full local paths.
-- Does not claim provider subscription quotas. Budget windows are user-defined guardrails.
-
-## Development
+桌面版目前面向源码仓库使用，不是签名安装包。先安装源码依赖：
 
 ```bash
+npm install
+npm run desktop:install
 npm run desktop
 ```
 
-The tray menu opens Pulse, Dashboard, Review, and Trust. Closing the window keeps the tray app alive; Quit exits the companion and stops the service process it started.
+如果第一次启动时看到 Electron 下载失败，先运行一次 `npm run desktop:install`。安装脚本默认使用 Electron 官方下载源；国内网络需要加速时，可以显式设置 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
-Desktop release assets should be produced through a separate GitHub Release workflow. The `desktop/` directory is excluded from the npm tarball because npm remains the CLI/Web distribution path.
+## 它会做什么
+
+- 如果本地服务已经在运行，桌面版会直接复用它。
+- 如果本地服务没有运行，桌面版会启动同一套 Web/API 服务。
+- 默认不会开启定时采集，也不会在启动时写入新的本机记录。
+- 托盘菜单可以打开实时、看板、复盘和可信度页面。
+- 退出桌面版时，只会停止它自己启动的服务进程。
+
+## 它不会做什么
+
+- 不上传数据。
+- 不读取 prompt、response、transcript、diff、命令正文或完整本机路径。
+- 不在桌面壳里实现新的采集器。
+- 不默认启用启动即采集或定时采集。
+- 不把用户自定义预算说成服务商订阅额度。
+
+## 图标
+
+桌面版使用同一套元衡图标：
+
+- Web/PWA 使用 `public/token-work-icon.svg`。
+- Windows/Linux 窗口图标使用 `public/token-work-icon.png`。
+- macOS 的 `.icns` 图标供后续打包发布使用。运行桌面版不会修改 `node_modules/electron`。
+
+开发运行时如果系统仍显示 Electron 默认图标，不影响功能；正式桌面图标应在打包发布阶段处理。
+
+## 发布说明
+
+`npm run desktop` 是给源码用户使用的本地启动入口，不是签名安装包。以后如果要给普通用户分发桌面版，应单独通过 GitHub Release 发布 Windows/macOS/Linux 安装包或便携包。

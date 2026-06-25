@@ -7,11 +7,13 @@ import { createServer } from 'node:net';
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const assetDir = resolve(packageRoot, 'docs/assets');
+const qaAssetDir = resolve(packageRoot, 'tmp/qa-screenshots');
 const realDbPath = resolve(packageRoot, 'data/usage.sqlite');
+const captureReal = process.env.TOKEN_WORK_CAPTURE_REAL === '1';
 
 const pages = [
-  { name: 'dashboard', path: '/', scrollY: 1180 },
-  { name: 'trust', path: '/trust', scrollY: 420 },
+  { name: 'dashboard', path: '/', scrollY: 0 },
+  { name: 'trust', path: '/trust', scrollY: 0 },
   { name: 'review', path: '/review', scrollY: 0 },
   { name: 'live', path: '/live', scrollY: 0, publicName: 'live-pulse' }
 ];
@@ -27,20 +29,25 @@ try {
       dbPath: join(tempRoot, 'demo.sqlite'),
       apiStart: 4470,
       uiStart: 5470,
-      outputName: page => `token-work-${page.publicName || page.name}.png`
+      outputName: page => `token-work-${page.publicName || page.name}.png`,
+      extraShots: true
     });
 
-    if (existsSync(realDbPath)) {
+    if (captureReal && existsSync(realDbPath)) {
+      mkdirSync(qaAssetDir, { recursive: true });
       await captureTarget({
         label: 'real',
         command: 'start',
         dbPath: realDbPath,
         apiStart: 4570,
         uiStart: 5570,
+        outputDir: qaAssetDir,
         outputName: page => `token-work-real-${page.name}.png`
       });
-    } else {
+    } else if (captureReal) {
       console.log(`[screenshots] skipped real screenshots; SQLite database not found at ${realDbPath}`);
+    } else {
+      console.log('[screenshots] skipped real screenshots; set TOKEN_WORK_CAPTURE_REAL=1 to write local QA screenshots under tmp/qa-screenshots.');
     }
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
@@ -50,7 +57,7 @@ try {
   process.exit(1);
 }
 
-async function captureTarget({ label, command, dbPath, apiStart, uiStart, outputName }) {
+async function captureTarget({ label, command, dbPath, apiStart, uiStart, outputName, outputDir = assetDir, extraShots = false }) {
   const apiPort = await freePort(apiStart);
   const uiPort = await freePort(uiStart);
   const app = spawn(process.execPath, [
@@ -97,13 +104,13 @@ async function captureTarget({ label, command, dbPath, apiStart, uiStart, output
     if (!browser) {
       throw new Error('No Chromium-compatible browser found. Set CHROME_PATH or TOKEN_WORK_BROWSER.');
     }
-    await capturePages({ browser, uiPort, outputName });
+    await capturePages({ browser, uiPort, outputName, outputDir, extraShots });
   } finally {
     await stopChild(app);
   }
 }
 
-async function capturePages({ browser, uiPort, outputName }) {
+async function capturePages({ browser, uiPort, outputName, outputDir, extraShots }) {
   const debugPort = await freePort(9322);
   const profileDir = join(tmpdir(), `token-work-screenshot-${Date.now()}`);
   const chrome = spawn(browser, [
@@ -147,9 +154,12 @@ async function capturePages({ browser, uiPort, outputName }) {
           fromSurface: true,
           captureBeyondViewport: false
         });
-        const out = resolve(assetDir, outputName({ name, path, scrollY, publicName }));
+        const out = resolve(outputDir, outputName({ name, path, scrollY, publicName }));
         writeFileSync(out, Buffer.from(screenshot.result.data, 'base64'));
         console.log(out);
+      }
+      if (extraShots) {
+        await captureExtraScreenshots(cdp, uiPort);
       }
     } finally {
       cdp.close();
@@ -157,6 +167,89 @@ async function capturePages({ browser, uiPort, outputName }) {
   } finally {
     await stopChild(chrome);
   }
+}
+
+async function captureExtraScreenshots(cdp, uiPort) {
+  await navigateAndWait(cdp, `http://127.0.0.1:${uiPort}/`, 'dashboard-extra');
+  await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, 1020)' });
+  await sleep(1000);
+  await captureViewport(cdp, 'token-work-dashboard-trust-workbench.png');
+  await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, 2250)' });
+  await sleep(1000);
+  await captureViewport(cdp, 'token-work-dashboard-models.png');
+  await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, 3300)' });
+  await sleep(1000);
+  await captureViewport(cdp, 'token-work-dashboard-attribution.png');
+  await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, document.body.scrollHeight)' });
+  await sleep(1000);
+  await captureViewport(cdp, 'token-work-dashboard-details.png');
+  await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, 0)' });
+  await sleep(400);
+  await clickByText(cdp, '导入/预算');
+  await sleep(1000);
+  await captureViewport(cdp, 'token-work-import-budget-modal.png');
+
+  await navigateAndWait(cdp, `http://127.0.0.1:${uiPort}/trust`, 'trust-extra');
+  await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, 800)' });
+  await sleep(1000);
+  await captureViewport(cdp, 'token-work-trust-sources.png');
+  await clickByText(cdp, '导入 ccusage JSON');
+  await sleep(1000);
+  await captureViewport(cdp, 'token-work-trust-import-entry.png');
+
+  await navigateAndWait(cdp, `http://127.0.0.1:${uiPort}/review`, 'review-extra');
+  await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, 720)' });
+  await sleep(1000);
+  await captureViewport(cdp, 'token-work-review-evidence.png');
+  await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, 1500)' });
+  await sleep(1000);
+  await captureViewport(cdp, 'token-work-review-simulator.png');
+  await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, 2150)' });
+  await sleep(1000);
+  await captureViewport(cdp, 'token-work-review-actions.png');
+  await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, document.body.scrollHeight)' });
+  await sleep(1000);
+  await captureViewport(cdp, 'token-work-review-report-export.png');
+
+  await navigateAndWait(cdp, `http://127.0.0.1:${uiPort}/live`, 'live-extra');
+  await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, 420)' });
+  await sleep(1000);
+  await captureViewport(cdp, 'token-work-live-budget-detail.png');
+}
+
+async function navigateAndWait(cdp, url, label) {
+  await cdp.send('Page.navigate', { url });
+  await waitForVisibleContent(cdp, label);
+  await sleep(1200);
+}
+
+async function clickByText(cdp, text) {
+  const escaped = JSON.stringify(text);
+  const result = await cdp.send('Runtime.evaluate', {
+    expression: `(() => {
+      const wanted = ${escaped};
+      const candidates = Array.from(document.querySelectorAll('button, a, [role="button"]'));
+      const el = candidates.find(node => (node.innerText || node.textContent || '').trim().includes(wanted));
+      if (!el) return false;
+      el.click();
+      return true;
+    })()`,
+    returnByValue: true
+  });
+  if (!result.result?.result?.value) {
+    throw new Error(`Could not click text: ${text}`);
+  }
+}
+
+async function captureViewport(cdp, fileName) {
+  const screenshot = await cdp.send('Page.captureScreenshot', {
+    format: 'png',
+    fromSurface: true,
+    captureBeyondViewport: false
+  });
+  const out = resolve(assetDir, fileName);
+  writeFileSync(out, Buffer.from(screenshot.result.data, 'base64'));
+  console.log(out);
 }
 
 async function waitForVisibleContent(cdp, label) {
@@ -261,10 +354,12 @@ async function waitForJson(url, { timeoutMs = 30000, childState } = {}) {
 }
 
 async function freePort(start) {
-  for (let port = start; port < Math.min(start + 1000, 65535); port += 1) {
-    if (await canListen(port)) return port;
+  if (start) {
+    for (let port = start; port < Math.min(start + 10000, 65535); port += 1) {
+      if (await canListen(port)) return port;
+    }
   }
-  throw new Error(`No free port found near ${start}`);
+  return systemAssignedPort();
 }
 
 function canListen(port) {
@@ -273,6 +368,18 @@ function canListen(port) {
     server.once('error', () => resolvePort(false));
     server.once('listening', () => server.close(() => resolvePort(true)));
     server.listen(port, '127.0.0.1');
+  });
+}
+
+function systemAssignedPort() {
+  return new Promise((resolvePort, rejectPort) => {
+    const server = createServer();
+    server.once('error', rejectPort);
+    server.once('listening', () => {
+      const address = server.address();
+      server.close(() => resolvePort(address.port));
+    });
+    server.listen(0, '127.0.0.1');
   });
 }
 

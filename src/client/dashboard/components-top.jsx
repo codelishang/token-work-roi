@@ -13,10 +13,10 @@ function Topbar({ lastSync, onRefresh, refreshing, onCollect, collecting, collec
     <div className="topbar">
       <div className="topbar-left">
         <div className="brand">
-          <div className="brand-mark">TS</div>
+          <img className="brand-mark" src="/token-work-icon.svg" alt="" aria-hidden="true" />
           <div>
-            <h1>Token Work</h1>
-            <p className="brand-sub">个人 AI 工作流复盘 · 项目任务归因</p>
+            <h1>元衡</h1>
+            <p className="brand-sub">Token Work ROI</p>
           </div>
         </div>
         <div className="page-switch">

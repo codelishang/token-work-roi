@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 280" role="img" aria-label="元衡 Token Work ROI logo">
+  <defs>
+    <linearGradient id="logo-seal" x1="36" y1="30" x2="228" y2="232" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1d3a32"/>
+      <stop offset="0.56" stop-color="#101713"/>
+      <stop offset="1" stop-color="#0c1320"/>
+    </linearGradient>
+    <linearGradient id="logo-calibrate" x1="84" y1="164" x2="180" y2="144" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#74d29d"/>
+      <stop offset="0.5" stop-color="#d0ad61"/>
+      <stop offset="1" stop-color="#7ebde1"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="32" y="32" width="200" height="200" rx="54" fill="url(#logo-seal)"/>
+  <rect x="62" y="62" width="140" height="140" rx="36" fill="none" stroke="#f4ead8" stroke-width="1.7" opacity="0.14"/>
+  <g fill="none" stroke="#f4ead8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M94 92c20-10 56-10 76 0" stroke-width="11"/>
+    <path d="M132 85v100" stroke-width="12"/>
+    <path d="M101 121c10 16 21 21 31 17" stroke-width="10"/>
+    <path d="M163 121c-10 16-21 21-31 17" stroke-width="10"/>
+    <path d="M111 184c14 10 28 10 42 0" stroke-width="10.5"/>
+  </g>
+  <path d="M82 164c18-8 34-7 50 3s32 7 50-9"
+        fill="none" stroke="url(#logo-calibrate)" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="132" cy="167" r="4.5" fill="#d0ad61"/>
+
+  <text x="286" y="120" font-family="'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', system-ui, sans-serif" font-size="72" font-weight="740" fill="#17231e">元衡</text>
+  <text x="288" y="168" font-family="Inter, Arial, system-ui, sans-serif" font-size="27" font-weight="680" letter-spacing="0.14em" fill="#536b62">TOKEN WORK ROI</text>
+  <text x="288" y="216" font-family="'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', system-ui, sans-serif" font-size="23" fill="#70766d">把 AI 用量、成本与产出价值放到同一把尺上</text>
+</svg>

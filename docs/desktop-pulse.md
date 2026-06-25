@@ -1,69 +1,82 @@
-# Desktop Pulse Companion
+# 桌面版说明
 
-Desktop Pulse is the optional local companion for people who want a tray/menu-bar style entry in addition to the Web app and CLI.
+元衡主要还是一个本地 Web 工具。看板、可信度、复盘、导入和报告，都更适合在浏览器里认真看。
 
-## Positioning
+桌面版解决的是另一个小问题：你正在写代码，不想一直开着浏览器 tab，但又想知道今天 token 是否烧得太快、预算是不是快到了、有没有需要处理的建议。它像一个本地仪表小窗，放在旁边就好。
 
-Pulse is not a replacement for Dashboard, Trust, or Review.
+## 什么时候用桌面版
 
-- Dashboard remains the main token and project workspace.
-- `/trust` remains the coverage and local trust workbench.
-- `/review` remains the ROI evidence and model strategy workspace.
-- Desktop Pulse is for quick live guardrails: burn rate, custom budget windows, reset countdowns, unpriced models, and open actions.
+适合：
 
-If you mainly do weekly review, use the browser app. If you want a small local window/tray entry that stays close while you work, use Desktop Pulse.
+- 想常驻一个实时窗口。
+- 想从托盘快速打开实时、看板、复盘和可信度。
+- 想在工作中随手看 burn rate、预算窗口和重模型提醒。
 
-## Start
+不适合：
+
+- 做完整复盘。
+- 管理证据队列。
+- 导入数据或导出报告。
+- 长时间阅读可信度细节。
+
+这些工作还是用浏览器更舒服。
+
+## 启动方式
+
+桌面版目前是源码仓库里的本地开发入口，不是签名安装包，也不是 npm 包的一键桌面能力。先安装源码依赖：
 
 ```bash
+npm install
 npm run desktop
 ```
 
-Pulse checks whether the local Token Work Web/API service is already running on `127.0.0.1`. If it is not running, Pulse starts the existing local service with safe live refresh enabled and opens `/live?surface=desktop`.
+如果 Electron 二进制没有下载成功，先运行：
 
-Live refresh means the local service periodically applies trusted Claude/Codex event-level metadata into SQLite and then `/live` reads the latest 15-minute window. Pulse does not read process memory or intercept prompts. If an upstream tool has not flushed logs yet, a 5-60 second delay is normal.
+```bash
+npm run desktop:install
+```
 
-## Download And Use Paths
+桌面版启动后会检查本机 `127.0.0.1` 上有没有元衡服务。已经有服务就复用；没有服务就启动一份本地服务，然后打开 `/live?surface=desktop`。
 
-Current state:
+## 它看到的数据
 
-- Web/CLI users run `npx token-work` or `node src/cli.mjs`; this is the primary public path.
-- Source users can run `npm run desktop`; this launches Electron locally during development.
-- The npm package does not include a packaged desktop installer.
+桌面版不直接读编辑器、终端或进程内存。它看的还是元衡本地服务整理后的本地数据库。
 
-Future desktop distribution should be separate from npm:
+默认情况下，桌面版启动本地服务时不会自动开启定时采集，也不会在启动时写入新的本机记录。用户需要实时刷新可信结构化记录时，应先确认采集边界，再显式配置本地服务或在浏览器界面中手动采集。
 
-- Windows: portable `.exe` or installer from GitHub Releases.
-- macOS/Linux: optional release assets after signing/package decisions.
-- Desktop packages must pass desktop smoke and privacy checks before release.
+## 和浏览器版的关系
 
-The desktop app is useful only if it gives a lower-friction pulse than a browser tab: tray/menu access, compact live window, budget warnings, reset countdowns, and one-click links to Review/Trust. It should not become a second full dashboard.
+- `/live`：桌面版和浏览器使用同一个实时界面。
+- `/` 看板：适合看整体用量、项目、来源和模型价格。
+- `/trust` 可信度：适合确认数据来源是否可靠。
+- `/review` 复盘：适合做周报、ROI 证据和模型策略。
 
-## What It Shows
+桌面版只是更方便地打开这些页面，不会复制一套业务逻辑。
 
-- Today / recent-window token pressure through `/api/live`.
-- Burn rate, cache reuse, official-price conversion, and custom budget status.
-- Reset countdown for rolling or fixed user-defined windows.
-- Heavy-model and unpriced-model warnings.
-- Shortcuts to Dashboard, Trust, and Review.
+## 隐私
 
-## What It Does Not Do
+桌面版只连接本机服务：
 
-- It does not implement its own collector or run `collect` directly from Electron.
-- When Pulse starts a fresh local service, that service runs the same safe scheduled Claude/Codex refresh used by the default `npx token-work` path.
-- It does not implement separate collectors.
-- It does not upload data.
-- It does not read prompt, response, transcript, diff, command body, or full local paths.
-- It does not claim provider subscription quotas; all budgets are user-defined guardrails.
+- 不上传数据。
+- 不访问远程兜底页面。
+- 不读取 prompt、response、transcript、diff、命令正文或完整本机路径。
+- 不在桌面壳里实现新的采集逻辑。
+- 默认不启用定时采集或启动即采集。
 
-## Security Boundary
+如果本地服务启动失败，桌面版会显示本地错误页，而不是跳到某个远程地址。
 
-Desktop Pulse is a local companion only. The Electron window loads the local Token Work service on `127.0.0.1`, denies renderer-created windows, blocks navigation away from the local service, denies renderer permission requests, keeps `contextIsolation` enabled, disables `nodeIntegration`, enables sandboxing, and keeps web security enabled. If the local service is unavailable, Pulse shows a local error page instead of falling back to a remote URL.
+## 图标
 
-## Visual Boundary
+图标文件放在 `public/`：
 
-The cyberpunk style is intentionally limited to live surfaces: browser `/live` and Electron Desktop Pulse. Dashboard, Trust, and Review keep the calmer Claude-like audit visual system because ROI evidence needs to feel inspectable and credible. Desktop Pulse loads `/live?surface=desktop`; browser `/live` loads the same Pulse data and visual language without the tray shell.
+- `token-work-icon.svg` 用于 Web 和 PWA。
+- `token-work-icon.png` 用于 Windows/Linux 的 Electron 窗口图标。
+- `token-work-icon.icns` 用于 macOS 的 Dock 和应用图标。
 
-## Release Boundary
+图标生成和 Electron 应用图标同步属于构建或发布阶段工作。运行 `npm run desktop` 不会修改 `public/` 或 `node_modules/electron`。
 
-The npm package remains the CLI/Web distribution path. Desktop release artifacts should be produced as separate GitHub Release assets after desktop smoke and privacy checks pass.
+## 发布
+
+当前桌面版是源码仓库里的本地启动入口，不是给普通用户双击安装的桌面软件。
+
+如果之后要正式分发桌面版，应该单独做 GitHub Release，并为 Windows、macOS、Linux 分别准备安装包或便携包。发布前至少要跑桌面启动检查、隐私检查和基础截图检查。

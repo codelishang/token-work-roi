@@ -863,8 +863,8 @@ function ReviewDashboard({ rawData, onReloadData }) {
       <nav className="review-nav">
         <div className="review-nav-inner">
           <div className="brand-line">
-            <span className="brand-dot"/>
-            <span className="brand-name">Token Work</span>
+            <img className="brand-dot" src="/token-work-icon.svg" alt="" aria-hidden="true" />
+            <span className="brand-name">元衡</span>
             <div className="page-switch">
               <a href="/" className="page-chip">看板</a>
               <span className="page-chip active">复盘</span>

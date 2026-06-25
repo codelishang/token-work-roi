@@ -1,8 +1,8 @@
 {
   "id": "/?app=token-work-roi",
-  "name": "Token Work ROI",
-  "short_name": "Token Work",
-  "description": "Local AI coding ROI review for trusted token usage, evidence, and model strategy.",
+  "name": "元衡 Token Work ROI",
+  "short_name": "元衡",
+  "description": "Yuanheng: A local AI coding ROI review for trusted token usage, evidence, and model strategy.",
   "start_url": "/?app=token-work-roi",
   "scope": "/",
   "display": "standalone",
@@ -10,6 +10,12 @@
   "theme_color": "#faf7ef",
   "orientation": "any",
   "icons": [
+    {
+      "src": "/token-work-icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
     {
       "src": "/token-work-icon.svg",
       "sizes": "any",

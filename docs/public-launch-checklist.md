@@ -38,11 +38,14 @@ Real local validation screenshots:
 
 - May contain model names, project aliases, and aggregate token counts from a real local SQLite.
 - Must not contain prompt, response, transcript, diff, full local path, local username, private output URL, or exported report content.
-- Assets to inspect before sharing:
-  - `docs/assets/token-work-real-dashboard.png`
-  - `docs/assets/token-work-real-trust.png`
-  - `docs/assets/token-work-real-review.png`
-  - `docs/assets/token-work-real-live.png`
+- Keep them out of `docs/assets` and public README content.
+- Generate local QA screenshots only when needed:
+
+```bash
+TOKEN_WORK_CAPTURE_REAL=1 node scripts/capture-real-screenshots.mjs
+```
+
+- Inspect local-only outputs under `tmp/qa-screenshots/` before any manual sharing.
 
 ## GitHub Release
 
@@ -61,7 +64,8 @@ Real local validation screenshots:
 - Demo-only path: `npx token-work demo`.
 - Troubleshooting path: `npx token-work --dry-run-only`, then `npx token-work --no-collect` if you only want to inspect the current SQLite.
 - Do not publish until `npm pack --dry-run` shows no SQLite databases, logs, `.env`, `.claude`, `.codex`, `dist`, or `node_modules`.
-- Do not publish until the tarball includes `data/official-pricing.json`, `LICENSE`, `COMMERCIAL-LICENSE.md`, `NOTICE.md`, `PRIVACY.md`, and no deprecated pricing cache files.
+- Do not publish until the tarball includes `data/official-pricing.json`, `docs/demo-data/token-work-demo.json`, `LICENSE`, `COMMERCIAL-LICENSE.md`, `NOTICE.md`, `PRIVACY.md`, and no deprecated pricing cache files.
+- Do not publish until the tarball excludes `docs/assets/`, `desktop/`, Electron icon bundles, and local QA screenshots. README screenshots should use repository-hosted demo/sanitized image URLs, not npm package-local image paths.
 - Do not publish until `npm run smoke:npx` passes. This command installs the packed tarball in a fresh temp directory, runs the installed CLI, verifies event-level fixture collection, verifies UI/API readiness, and checks the auto-attribution proxy path.
 - Do not publish until `npm run smoke:browser` passes on at least one Chromium-capable runner. This catches Dashboard `ReferenceError`, React duplicate-key warnings, and UI-port `/api` proxy connection failures.
 - Do not publish until `token-work coverage` shows Claude/Codex event-level rows or explains why they are unavailable. Cursor detected-only must not be marketed as successful native usage collection.

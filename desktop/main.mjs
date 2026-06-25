@@ -1,6 +1,7 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage, screen, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, nativeImage, screen, session } from 'electron';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -9,20 +10,24 @@ const packageRoot = resolve(desktopDir, '..');
 const nodeBin = process.env.TOKEN_WORK_NODE || 'node';
 const defaultApiPort = Number(process.env.TOKEN_WORK_DESKTOP_API_PORT || 4173);
 const defaultUiPort = Number(process.env.TOKEN_WORK_DESKTOP_UI_PORT || 5173);
-const windowTitle = 'Token Work Pulse';
+const appTitle = '元衡 Token Work ROI';
+const pulseTitle = '元衡 Token Work Pulse';
 
 let mainWindow;
 let tray;
+let cachedAppIcon;
 let serviceProcess;
+let isQuitting = false;
 let urls = {
   api: `http://127.0.0.1:${defaultApiPort}`,
   ui: `http://127.0.0.1:${defaultUiPort}`
 };
 
-app.setName(windowTitle);
+app.setName(appTitle);
 
 app.whenReady().then(async () => {
   try {
+    setDockIcon();
     installSecurityGuards();
     urls = await ensureLocalService();
     createTray();
@@ -34,24 +39,31 @@ app.whenReady().then(async () => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow(urls);
+  else focusOrOpen('/live?surface=desktop');
+});
+
+app.on('window-all-closed', event => {
+  event.preventDefault();
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
   if (serviceProcess && !serviceProcess.killed) {
     serviceProcess.kill();
   }
 });
 
-function createWindow(currentUrls) {
+function createWindow(currentUrls, initialRoute = '/live?surface=desktop') {
   const bounds = desktopPulseBounds();
   mainWindow = new BrowserWindow({
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
-    minWidth: 1180,
-    minHeight: 760,
-    title: windowTitle,
+    minWidth: 420,
+    minHeight: 560,
+    title: desktopTitleForRoute(initialRoute),
+    icon: appIcon(),
     backgroundColor: '#05070d',
     autoHideMenuBar: true,
     webPreferences: {
@@ -64,27 +76,31 @@ function createWindow(currentUrls) {
   });
   mainWindow.on('page-title-updated', event => {
     event.preventDefault();
-    mainWindow.setTitle(windowTitle);
+    syncWindowTitle();
   });
-  mainWindow.loadURL(localUiUrl('/live?surface=desktop', currentUrls));
+  mainWindow.on('close', event => {
+    if (isQuitting) return;
+    event.preventDefault();
+    mainWindow.hide();
+  });
+  mainWindow.webContents.on('did-navigate', () => syncWindowTitle());
+  mainWindow.webContents.on('did-navigate-in-page', () => syncWindowTitle());
+  mainWindow.webContents.on('did-finish-load', () => syncWindowTitle());
+  mainWindow.setTitle(desktopTitleForRoute(initialRoute));
+  mainWindow.loadURL(localUiUrl(initialRoute, currentUrls));
   mainWindow.once('ready-to-show', () => {
-    mainWindow.setAlwaysOnTop(true, 'screen-saver');
-    mainWindow.maximize();
     mainWindow.show();
     mainWindow.focus();
-    setTimeout(() => {
-      if (!mainWindow?.isDestroyed()) mainWindow.setAlwaysOnTop(false);
-    }, 1800);
   });
 }
 
 function desktopPulseBounds() {
   const workArea = screen.getPrimaryDisplay().workArea;
   const margin = 16;
-  const width = Math.min(1820, Math.max(1180, workArea.width - margin * 2));
-  const height = Math.min(980, Math.max(760, workArea.height - margin * 2));
+  const width = Math.min(560, Math.max(420, workArea.width - margin * 2));
+  const height = Math.min(760, Math.max(560, workArea.height - margin * 2));
   return {
-    x: workArea.x + margin,
+    x: workArea.x + workArea.width - width - margin,
     y: workArea.y + margin,
     width,
     height
@@ -95,7 +111,8 @@ function createErrorWindow(error) {
   mainWindow = new BrowserWindow({
     width: 420,
     height: 260,
-    title: 'Token Work Pulse startup error',
+    title: `${appTitle} startup error`,
+    icon: appIcon(),
     backgroundColor: '#05070d',
     autoHideMenuBar: true,
     webPreferences: {
@@ -109,42 +126,40 @@ function createErrorWindow(error) {
   const message = escapeHtml(error?.message || 'Local service did not start.');
   mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
     <main style="font-family:system-ui,sans-serif;background:#05070d;color:#eef7ff;min-height:100vh;padding:24px">
-      <p style="color:#35f4ff;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase">Token Work Pulse</p>
+      <p style="color:#35f4ff;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase">${appTitle}</p>
       <h1 style="font-size:22px;margin:0 0 12px">Local service did not start</h1>
-      <p style="color:#91a8ba;line-height:1.5">Pulse only connects to the local Token Work service on 127.0.0.1. It does not use a remote fallback.</p>
+      <p style="color:#91a8ba;line-height:1.5">Pulse only connects to the local 元衡 Token Work service on 127.0.0.1. It does not use a remote fallback.</p>
       <pre style="white-space:pre-wrap;border:1px solid rgba(53,244,255,.25);border-radius:8px;padding:12px;color:#ffb84d">${message}</pre>
     </main>
   `)}`);
 }
 
 function createTray() {
-  tray = new Tray(trayIcon());
-  tray.setToolTip('Token Work Pulse');
+  tray = new Tray(appIcon());
+  tray.setToolTip(appTitle);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open Pulse', click: () => focusOrOpen('/live?surface=desktop') },
-    { label: 'Open Dashboard', click: () => openExternal('/') },
-    { label: 'Open Review', click: () => openExternal('/review') },
-    { label: 'Open Trust', click: () => openExternal('/trust') },
+    { label: 'Open Dashboard', click: () => focusOrOpen('/') },
+    { label: 'Open Review', click: () => focusOrOpen('/review') },
+    { label: 'Open Trust', click: () => focusOrOpen('/trust') },
     { type: 'separator' },
-    { label: 'Run Coverage Check', click: () => openExternal('/trust') },
-    { type: 'separator' },
-    { label: 'Quit', click: () => app.quit() }
+    { label: 'Quit', click: () => {
+      isQuitting = true;
+      app.quit();
+    } }
   ]));
   tray.on('click', () => focusOrOpen('/live?surface=desktop'));
 }
 
 function focusOrOpen(route) {
   if (!mainWindow || mainWindow.isDestroyed()) {
-    createWindow(urls);
+    createWindow(urls, route);
     return;
   }
+  mainWindow.setTitle(desktopTitleForRoute(route));
   mainWindow.loadURL(localUiUrl(route));
   mainWindow.show();
   mainWindow.focus();
-}
-
-function openExternal(route) {
-  shell.openExternal(localUiUrl(route));
 }
 
 function installSecurityGuards() {
@@ -163,6 +178,20 @@ function installSecurityGuards() {
 function localUiUrl(route = '/', currentUrls = urls) {
   const safeRoute = String(route || '/').startsWith('/') ? String(route || '/') : '/';
   return `${currentUrls.ui}${safeRoute}`;
+}
+
+function desktopTitleForRoute(routeOrUrl) {
+  try {
+    const parsed = new URL(String(routeOrUrl || '/'), urls.ui);
+    return parsed.pathname === '/live' ? pulseTitle : appTitle;
+  } catch {
+    return appTitle;
+  }
+}
+
+function syncWindowTitle() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setTitle(desktopTitleForRoute(mainWindow.webContents.getURL()));
 }
 
 function isAllowedDesktopUrl(value) {
@@ -199,8 +228,8 @@ async function ensureLocalService() {
     cwd: packageRoot,
     env: {
       ...process.env,
-      SCHEDULED_COLLECT_ENABLED: '1',
-      SCHEDULED_COLLECT_RUN_ON_START: '1',
+      SCHEDULED_COLLECT_ENABLED: process.env.SCHEDULED_COLLECT_ENABLED || '0',
+      SCHEDULED_COLLECT_RUN_ON_START: process.env.SCHEDULED_COLLECT_RUN_ON_START || '0',
       SCHEDULED_COLLECT_INTERVAL_SECONDS: String(liveCollectIntervalSeconds()),
       TOKEN_WORK_LIVE_COLLECT_INTERVAL_SECONDS: String(liveCollectIntervalSeconds())
     },
@@ -227,14 +256,22 @@ function liveCollectIntervalSeconds() {
   return Math.max(30, Number.isFinite(requested) && requested > 0 ? Math.round(requested) : 60);
 }
 
-function trayIcon() {
-  return nativeImage.createFromDataURL(`data:image/svg+xml;utf8,${encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <rect width="32" height="32" rx="8" fill="#05070d"/>
-      <path d="M7 19l5-9 5 12 4-7 4 4" fill="none" stroke="#35f4ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-      <circle cx="24" cy="8" r="3" fill="#6dff9c"/>
-    </svg>
-  `)}`);
+function appIcon() {
+  if (cachedAppIcon && !cachedAppIcon.isEmpty()) return cachedAppIcon;
+  const pngPath = resolve(packageRoot, 'public', 'token-work-icon.png');
+  if (existsSync(pngPath)) {
+    cachedAppIcon = nativeImage.createFromPath(pngPath);
+    if (!cachedAppIcon.isEmpty()) return cachedAppIcon;
+  }
+  const svg = readFileSync(resolve(packageRoot, 'public', 'token-work-icon.svg'), 'utf8');
+  cachedAppIcon = nativeImage.createFromDataURL(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+  return cachedAppIcon;
+}
+
+function setDockIcon() {
+  if (typeof app.dock?.setIcon === 'function') {
+    app.dock.setIcon(appIcon());
+  }
 }
 
 function escapeHtml(value) {
@@ -278,9 +315,9 @@ async function isTokenWorkUi(origin) {
     const response = await fetch(`${origin}/live?surface=desktop`, { signal: AbortSignal.timeout(1200) });
     if (response.status >= 500) return false;
     const text = await response.text();
-    return text.includes('Token Work ROI') ||
-      text.includes('/manifest.webmanifest') ||
-      text.includes('/src/client/main.jsx');
+    return text.includes('name="token-work-app" content="token-work-roi"') ||
+      text.includes('name="application-name" content="元衡 Token Work"') ||
+      text.includes('Token Work ROI');
   } catch {
     return false;
   }

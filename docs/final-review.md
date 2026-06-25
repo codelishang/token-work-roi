@@ -37,12 +37,7 @@ Token Work ROI is considered feature-complete for the current `v1.0.0` local rel
 - Markdown report includes Local Trust, Coverage-to-Evidence, output evidence, model strategy, and action trend sections.
 - Privacy check passes and publish tarballs contain no real SQLite databases, `.env`, AI logs, real exports, or personal paths.
 - License files and package metadata consistently state `AGPL-3.0-only` with commercial dual licensing available under separate written terms.
-- Public README uses demo/sanitized screenshots by default, while local validation keeps separately labeled real screenshots:
-  - `docs/assets/token-work-real-dashboard.png`
-  - `docs/assets/token-work-real-trust.png`
-  - `docs/assets/token-work-real-review.png`
-  - `docs/assets/token-work-real-live.png`
-  - `docs/assets/token-work-live-pulse.png`
+- Public README uses demo/sanitized screenshots only. Real local validation screenshots stay in local QA artifacts such as `tmp/qa-screenshots/` and are not committed under `docs/assets`.
 
 ## Stop Rules
 

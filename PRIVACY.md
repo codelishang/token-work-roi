@@ -44,6 +44,8 @@ Token Work ROI does not store:
 
 Output links store only URL, label, and type.
 
+User-entered output links, link notes, source device, file type, and path hashes may be stored in the local SQLite database when they are needed for review. Path hashes are used to distinguish sources without storing full path text.
+
 ## Local Data
 
 Local SQLite files live under `data/` by default and are ignored by Git.

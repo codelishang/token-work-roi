@@ -107,8 +107,8 @@ export function LiveApp() {
     <main className={`live-shell ${isDesktopPulse ? 'desktop-pulse' : 'browser-live'}`}>
       <nav className="pulse-nav">
         <div className="pulse-brand">
-          <span className="pulse-logo" aria-hidden="true">TW</span>
-          <strong>Token Work Pulse</strong>
+          <img className="pulse-logo" src="/token-work-icon.svg" alt="" aria-hidden="true" />
+          <strong>元衡 Token Work Pulse</strong>
           <span className={`pulse-badge status-${freshness}`}>{freshnessLabel(freshness)}</span>
         </div>
         <div className="pulse-actions">

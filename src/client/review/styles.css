@@ -105,9 +105,11 @@ body::before {
   color: var(--ink-2);
 }
 .brand-dot {
-  width: 7px; height: 7px;
-  background: var(--ink);
-  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  object-fit: cover;
+  box-shadow: 0 6px 14px rgba(31, 43, 39, 0.12);
 }
 .brand-name {
   font-weight: 600;

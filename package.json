@@ -1,7 +1,7 @@
 {
   "name": "token-work",
   "version": "1.0.0",
-  "description": "Local AI coding ROI studio for private token, output, and model strategy review.",
+  "description": "Token Work ROI: local-first token usage, output evidence, and model strategy review for AI coding.",
   "license": "AGPL-3.0-only",
   "type": "module",
   "repository": {
@@ -18,9 +18,14 @@
   "files": [
     "src",
     "config",
-    "public",
+    "public/manifest.webmanifest",
+    "public/token-work-icon.png",
+    "public/token-work-icon.svg",
+    "public/yuanheng-logo.svg",
     "data/.gitkeep",
     "data/official-pricing.json",
+    "docs/demo-data/token-work-demo.json",
+    "!docs/demo-data/README.md",
     "index.html",
     "vite.config.js",
     "README.md",
@@ -51,7 +56,8 @@
     "smoke:npx": "node scripts/smoke-npx.mjs",
     "smoke:browser": "node scripts/smoke-browser-console.mjs",
     "smoke:published": "node scripts/smoke-published.mjs",
-    "desktop": "electron desktop/main.mjs",
+    "desktop": "node scripts/run-desktop.mjs",
+    "desktop:install": "node scripts/install-electron.mjs",
     "desktop:smoke": "node scripts/smoke-desktop.mjs",
     "test": "node --test"
   },

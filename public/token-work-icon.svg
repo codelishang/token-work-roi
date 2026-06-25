@@ -1,6 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Token Work">
-  <rect width="512" height="512" rx="112" fill="#262520"/>
-  <path d="M118 314l71-128 72 171 58-101 75 82" fill="none" stroke="#faf7ef" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="382" cy="142" r="34" fill="#7bd88f"/>
-  <text x="256" y="424" text-anchor="middle" font-family="Arial, sans-serif" font-size="58" font-weight="700" fill="#faf7ef">TS</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="元衡 Token Work ROI logo">
+  <defs>
+    <linearGradient id="seal" x1="68" y1="44" x2="444" y2="468" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1d3a32"/>
+      <stop offset="0.56" stop-color="#101713"/>
+      <stop offset="1" stop-color="#0c1320"/>
+    </linearGradient>
+    <linearGradient id="calibrate" x1="154" y1="319" x2="358" y2="206" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#74d29d"/>
+      <stop offset="0.5" stop-color="#d0ad61"/>
+      <stop offset="1" stop-color="#7ebde1"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#seal)"/>
+  <rect x="56" y="56" width="400" height="400" rx="112" fill="none" stroke="#f4ead8" stroke-width="4" opacity="0.14"/>
+
+  <g fill="none" stroke="#f4ead8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M170 160c42-20 130-20 172 0" stroke-width="28"/>
+    <path d="M256 145v226" stroke-width="30"/>
+    <path d="M186 224c24 34 47 46 70 36" stroke-width="25"/>
+    <path d="M326 224c-24 34-47 46-70 36" stroke-width="25"/>
+    <path d="M207 365c32 22 66 22 98 0" stroke-width="27"/>
+  </g>
+
+  <path d="M154 316c36-17 70-15 102 6s65 15 102-18"
+        fill="none" stroke="url(#calibrate)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="256" cy="322" r="9" fill="#d0ad61"/>
 </svg>
