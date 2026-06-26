@@ -79,10 +79,10 @@ test('bare CLI no-collect starts UI without scanning or writing usage', async ()
 
 test('start command accepts OS-assigned API and UI ports', async () => {
   const fixture = createAutoFixture();
-  const { child, output } = startCli(fixture, ['start']);
+  const { child, output, cli } = startCli(fixture, ['start']);
 
   try {
-    const apiPort = await waitForCliApiPort(child, output);
+    const apiPort = await waitForCliApiPort(child, output, cli);
     assert.match(output.stdout, /\[token-work\] UI  http:\/\/127\.0\.0\.1:\d+/);
     assert.match(output.stdout, /\[token-work\] API http:\/\/127\.0\.0\.1:\d+/);
     const data = await waitForData(apiPort);
@@ -144,6 +144,7 @@ function startBareCli(fixture, extraArgs) {
 }
 
 function startCli(fixture, commandArgs = [], extraArgs = []) {
+  const cli = { ready: null };
   const child = spawn(process.execPath, [
     'src/cli.mjs',
     ...commandArgs,
@@ -158,9 +159,12 @@ function startCli(fixture, commandArgs = [], extraArgs = []) {
   ], {
     cwd: process.cwd(),
     env: { ...process.env, ...fixture.env },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     detached: process.platform !== 'win32',
     windowsHide: true
+  });
+  child.on('message', message => {
+    if (message?.type === 'ready') cli.ready = message;
   });
   const output = { stdout: '', stderr: '' };
   child.stdout.setEncoding('utf8');
@@ -170,7 +174,7 @@ function startCli(fixture, commandArgs = [], extraArgs = []) {
   child.on('error', error => {
     output.stderr += `${output.stderr ? '\n' : ''}${error.stack || error.message}`;
   });
-  return { child, output };
+  return { child, output, cli };
 }
 
 function cliApiPort(output) {
@@ -178,13 +182,21 @@ function cliApiPort(output) {
   return match ? Number(match[1]) : null;
 }
 
-async function waitForCliApiPort(child, output) {
+function cliReadyApiPort(cli) {
+  return validPort(cli.ready?.apiPort) ? cli.ready.apiPort : null;
+}
+
+function validPort(port) {
+  return Number.isInteger(port) && port > 0 && port <= 65535;
+}
+
+async function waitForCliApiPort(child, output, cli = null) {
   const start = Date.now();
   while (Date.now() - start < 45000) {
     if (child.exitCode != null) {
       throw new Error(`CLI exited before API became ready\nstdout=${output.stdout}\nstderr=${output.stderr}`);
     }
-    const port = cliApiPort(output);
+    const port = cli ? cliReadyApiPort(cli) : cliApiPort(output);
     if (port) return port;
     await new Promise(resolve => setTimeout(resolve, 100));
   }

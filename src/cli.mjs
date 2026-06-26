@@ -173,6 +173,7 @@ async function startCommand({ demo = false, dbPath = null, route = '/', openBrow
     ]);
     console.log(`[token-work] UI  ${uiUrl}${demo ? '  (Demo Mode)' : ''}`);
     console.log(`[token-work] API http://127.0.0.1:${apiPort}`);
+    if (process.send) process.send({ type: 'ready', apiPort, uiPort });
     if (liveCollect && !demo) {
       console.log(`[token-work] live collect refresh enabled every ${envLiveCollectIntervalSeconds()}s for Claude/Codex metadata.`);
     }
@@ -264,12 +265,14 @@ async function waitForChildPort(child, output, parsePort, label, { timeoutMs = 4
 
 function parseServerPort(stdout) {
   const match = String(stdout || '').match(/http:\/\/[^:]+:(\d+) \(listening on /);
-  return match ? Number(match[1]) : null;
+  const port = match ? Number(match[1]) : null;
+  return validPort(port) ? port : null;
 }
 
 function parseVitePort(stdout) {
   const match = String(stdout || '').match(/Local:\s+http:\/\/127\.0\.0\.1:(\d+)\//);
-  return match ? Number(match[1]) : null;
+  const port = match ? Number(match[1]) : null;
+  return validPort(port) ? port : null;
 }
 
 function liveCollectEnv({ enabled = false, runOnStart = false } = {}) {
