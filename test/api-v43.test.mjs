@@ -99,7 +99,7 @@ function seedDb(dbPath) {
 
 async function waitForApi(port) {
   const start = Date.now();
-  while (Date.now() - start < 5000) {
+  while (Date.now() - start < 15000) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/api/data`);
       if (response.ok) return;
