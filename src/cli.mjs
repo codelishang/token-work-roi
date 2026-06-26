@@ -132,6 +132,7 @@ async function demoCommand() {
 async function startCommand({ demo = false, dbPath = null, route = '/', openBrowser = false, liveCollect = false, liveCollectRunOnStart = false } = {}) {
   const requestedApiPort = Number(args.apiPort || args.port || await freePort(4173));
   const requestedUiPort = Number(args.uiPort || await freePort(5173));
+  const vitePort = requestedUiPort === 0 ? await freePort(5173) : requestedUiPort;
   const env = {
     ...process.env,
     PORT: String(requestedApiPort),
@@ -150,7 +151,7 @@ async function startCommand({ demo = false, dbPath = null, route = '/', openBrow
   });
   const serverOutput = captureAndForwardChildOutput(server);
   const serverStatus = captureServerStatus(server);
-  const client = spawn(process.execPath, [viteBin, '--host', '127.0.0.1', '--port', String(requestedUiPort)], {
+  const client = spawn(process.execPath, [viteBin, '--host', '127.0.0.1', '--port', String(vitePort), '--strictPort'], {
     cwd: launchCwd,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -158,13 +159,10 @@ async function startCommand({ demo = false, dbPath = null, route = '/', openBrow
   });
   const clientOutput = captureAndForwardChildOutput(client);
   let apiPort = requestedApiPort;
-  let uiPort = requestedUiPort;
+  let uiPort = vitePort;
   try {
     if (requestedApiPort === 0) {
       apiPort = await waitForServerPort(server, serverStatus, serverOutput);
-    }
-    if (requestedUiPort === 0) {
-      uiPort = await waitForChildPort(client, clientOutput, parseVitePort, 'UI');
     }
     const uiUrl = `http://127.0.0.1:${uiPort}${route}`;
     await Promise.all([
@@ -252,25 +250,8 @@ async function waitForServerPort(child, status, output, { timeoutMs = 45000 } = 
   throw new Error(`API did not report a listening port\nstdout=${output.stdout}\nstderr=${output.stderr}`);
 }
 
-async function waitForChildPort(child, output, parsePort, label, { timeoutMs = 45000 } = {}) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    if (child.exitCode != null) throw new Error(`${label} exited before reporting a port\nstdout=${output.stdout}\nstderr=${output.stderr}`);
-    const port = parsePort(output.stdout);
-    if (port) return port;
-    await sleep(50);
-  }
-  throw new Error(`${label} did not report a listening port\nstdout=${output.stdout}\nstderr=${output.stderr}`);
-}
-
 function parseServerPort(stdout) {
   const match = String(stdout || '').match(/http:\/\/[^:]+:(\d+) \(listening on /);
-  const port = match ? Number(match[1]) : null;
-  return validPort(port) ? port : null;
-}
-
-function parseVitePort(stdout) {
-  const match = String(stdout || '').match(/Local:\s+http:\/\/127\.0\.0\.1:(\d+)\//);
   const port = match ? Number(match[1]) : null;
   return validPort(port) ? port : null;
 }
