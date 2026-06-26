@@ -99,6 +99,28 @@
       "httpStatus": 200,
       "contentLength": 359379,
       "assets": []
+    },
+    {
+      "provider": "Gemini",
+      "label": "Gemini API pricing",
+      "url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "note": "Gemini API USD prices per 1M tokens; Pro has separate short-context and long-context rates.",
+      "fetchedAt": "2026-06-23T10:05:57.310Z",
+      "fetchStatus": "fallback-table",
+      "httpStatus": null,
+      "contentLength": null,
+      "assets": []
+    },
+    {
+      "provider": "Kimi",
+      "label": "Kimi API pricing",
+      "url": "https://platform.kimi.com/docs/pricing/chat",
+      "note": "Official Kimi API RMB prices converted to USD for internal cost math.",
+      "fetchedAt": "2026-06-23T10:05:57.310Z",
+      "fetchStatus": "fallback-table",
+      "httpStatus": null,
+      "contentLength": null,
+      "assets": []
     }
   ],
   "models": [
@@ -611,6 +633,148 @@
       "sourceProvider": "DoubaoSeed",
       "pricingFetchStatus": "fallback-table",
       "note": "Official Ark pricing page. RMB prices are converted to USD for internal cost math."
+    },
+    {
+      "provider": "Gemini",
+      "model": "gemini-2.5-flash",
+      "aliases": [
+        "gemini-2-5-flash",
+        "gemini-flash-latest"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 0.3,
+        "cachedInput": 0.075,
+        "cacheWrite5m": 0.3,
+        "cacheWrite1h": 0.3,
+        "output": 2.5
+      },
+      "officialRatesPerMTok": null,
+      "sourceProvider": "Gemini",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Gemini API standard rate for prompts up to 200k tokens."
+    },
+    {
+      "provider": "Gemini",
+      "model": "gemini-2.5-pro",
+      "aliases": [
+        "gemini-2-5-pro",
+        "gemini-pro-latest"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 1.25,
+        "cachedInput": 0.31,
+        "cacheWrite5m": 1.25,
+        "cacheWrite1h": 1.25,
+        "output": 10
+      },
+      "officialRatesPerMTok": null,
+      "sourceProvider": "Gemini",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Gemini API short-context rate for prompts up to 200k tokens."
+    },
+    {
+      "provider": "Gemini",
+      "model": "gemini-2.5-pro-long-context",
+      "aliases": [
+        "gemini-2-5-pro-long-context"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 2.5,
+        "cachedInput": 0.625,
+        "cacheWrite5m": 2.5,
+        "cacheWrite1h": 2.5,
+        "output": 15
+      },
+      "officialRatesPerMTok": null,
+      "sourceProvider": "Gemini",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Gemini API long-context rate for prompts over 200k tokens."
+    },
+    {
+      "provider": "Kimi",
+      "model": "kimi-k2.7-code",
+      "aliases": [
+        "kimi-k2-7-code"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 0.9577247054222984,
+        "cachedInput": 0.19154494108445969,
+        "cacheWrite5m": 0.9577247054222984,
+        "cacheWrite1h": 0.9577247054222984,
+        "output": 3.978241084061855
+      },
+      "officialRatesPerMTok": null,
+      "sourceProvider": "Kimi",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Official Kimi API RMB rate converted to USD at the last verified refresh rate."
+    },
+    {
+      "provider": "Kimi",
+      "model": "kimi-k2.7-code-highspeed",
+      "aliases": [
+        "kimi-k2-7-code-highspeed"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 1.9154494108445967,
+        "cachedInput": 0.38308988216891937,
+        "cacheWrite5m": 1.9154494108445967,
+        "cacheWrite1h": 1.9154494108445967,
+        "output": 7.95648216812371
+      },
+      "officialRatesPerMTok": null,
+      "sourceProvider": "Kimi",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Official Kimi API RMB rate converted to USD at the last verified refresh rate."
+    },
+    {
+      "provider": "Kimi",
+      "model": "kimi-k2.6",
+      "aliases": [
+        "kimi-k2-6"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 0.9577247054222984,
+        "cachedInput": 0.16207648860992743,
+        "cacheWrite5m": 0.9577247054222984,
+        "cacheWrite1h": 0.9577247054222984,
+        "output": 3.978241084061855
+      },
+      "officialRatesPerMTok": null,
+      "sourceProvider": "Kimi",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Official Kimi API RMB rate converted to USD at the last verified refresh rate."
+    },
+    {
+      "provider": "Kimi",
+      "model": "kimi-k2.5",
+      "aliases": [
+        "kimi-k2-5"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 0.5893690494906452,
+        "cachedInput": 0.1031395836608629,
+        "cacheWrite5m": 0.5893690494906452,
+        "cacheWrite1h": 0.5893690494906452,
+        "output": 3.094187509825887
+      },
+      "officialRatesPerMTok": null,
+      "sourceProvider": "Kimi",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Official Kimi API RMB rate converted to USD at the last verified refresh rate."
     }
   ]
 }

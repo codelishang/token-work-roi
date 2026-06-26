@@ -613,7 +613,7 @@ function isUnpricedModel(model) {
 
 function isHeavyModel(model) {
   const value = String(model || '').toLowerCase();
-  return value.includes('opus') || value.includes('gpt-5.5');
+  return value.includes('opus') || value.includes('gpt-5.5') || value.includes('gemini-2.5-pro-long-context');
 }
 
 function isLightModel(model) {
@@ -622,14 +622,18 @@ function isLightModel(model) {
     || value.includes('flash')
     || value.includes('spark')
     || value.includes('deepseek')
-    || value.includes('mimo');
+    || value.includes('mimo')
+    || value.includes('gemini-2.5-flash')
+    || /kimi-k2[.-]5/.test(value);
 }
 
 function isMidModel(model) {
   const value = String(model || '').toLowerCase();
   return value.includes('sonnet')
     || value.includes('gpt-5.3')
-    || value.includes('codex');
+    || value.includes('codex')
+    || value.includes('gemini-2.5-pro')
+    || /kimi-k2[.-][67]/.test(value);
 }
 
 function modelMatchesGroup(model, modelGroup) {

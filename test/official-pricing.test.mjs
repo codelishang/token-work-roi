@@ -25,6 +25,60 @@ test('calculates OpenAI API standard USD price from official per-token rates', (
   assert.equal(cost.ratesPerMTok.output, 30);
 });
 
+test('calculates Gemini API USD price from official rates', () => {
+  const flash = calculateOfficialCost('gemini-2.5-flash', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    output: 1_000_000
+  });
+  const pro = calculateOfficialCost('google/gemini-2.5-pro', {
+    input: 1_000_000,
+    output: 1_000_000
+  });
+
+  assert.equal(flash.priced, true);
+  assert.equal(flash.provider, 'Gemini');
+  assert.equal(flash.totalUSD, 2.875);
+  assert.equal(pro.priced, true);
+  assert.equal(pro.totalUSD, 11.25);
+});
+
+test('calculates Kimi API USD price from official RMB rates', () => {
+  const code = calculateOfficialCost('kimi-k2.7-code', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    output: 1_000_000
+  });
+  const light = calculateOfficialCost('moonshotai/kimi-k2.5', {
+    input: 1_000_000,
+    output: 1_000_000
+  });
+
+  assert.equal(code.priced, true);
+  assert.equal(code.provider, 'Kimi');
+  assert.equal(code.totalUSD, 5.127510730568613);
+  assert.equal(calculateOfficialCost('kimi-k2-7-code', { input: 1_000_000 }).resolvedModel, 'kimi-k2.7-code');
+  assert.equal(calculateOfficialCost('kimi/kimi-k2-5', { input: 1_000_000 }).provider, 'Kimi');
+  assert.equal(light.priced, true);
+  assert.equal(light.totalUSD, 3.683556559316532);
+});
+
+test('provider additions keep Gemini before Kimi at the end', () => {
+  const pricing = loadPricing();
+  return pricing.then(data => {
+    const sourceProviders = data.sources.map(source => source.provider);
+    assert.deepEqual(sourceProviders.slice(-2), ['Gemini', 'Kimi']);
+
+    const modelProviders = data.models.map(model => model.provider);
+    const firstGoogle = modelProviders.indexOf('Gemini');
+    const firstKimi = modelProviders.indexOf('Kimi');
+    assert.ok(firstGoogle > 0);
+    assert.ok(firstKimi > firstGoogle);
+    assert.deepEqual(modelProviders.slice(firstGoogle, firstKimi), ['Gemini', 'Gemini', 'Gemini']);
+    assert.deepEqual(modelProviders.slice(firstKimi), ['Kimi', 'Kimi', 'Kimi', 'Kimi']);
+  });
+});
+
 test('calculates Claude prompt-cache cost with official 5-minute cache write default', () => {
   const cost = calculateOfficialCost('claude-opus-4-7', {
     input: 1_000_000,

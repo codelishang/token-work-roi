@@ -6,9 +6,9 @@ const DEFAULT_WORK_PURPOSE = '未说明';
 const DEFAULT_WORK_STAGE = '未说明';
 const DEFAULT_VALUE_LEVEL = '未评估';
 
-const HEAVY_MODEL_PATTERNS = [/^gpt-5\.5/i, /claude-opus/i];
-const MID_MODEL_PATTERNS = [/^gpt-5\.3-codex$/i, /claude-sonnet/i];
-const LIGHT_MODEL_PATTERNS = [/claude-haiku/i, /deepseek/i, /mimo/i];
+const HEAVY_MODEL_PATTERNS = [/^gpt-5\.5/i, /claude-opus/i, /gemini-2\.5-pro-long-context/i];
+const MID_MODEL_PATTERNS = [/^gpt-5\.3-codex$/i, /claude-sonnet/i, /gemini-2\.5-pro/i, /kimi-k2[.-][67]/i];
+const LIGHT_MODEL_PATTERNS = [/claude-haiku/i, /deepseek/i, /mimo/i, /gemini-2\.5-flash/i, /kimi-k2[.-]5/i];
 const EXPLORATION_PURPOSES = new Set(['测试验证', '上下文整理']);
 const EXPLORATION_STAGES = new Set(['探索', '验证']);
 const PRODUCTIVE_STATUSES = new Set(['已完成', '已发布']);
@@ -84,7 +84,7 @@ function buildHeavyModelExplorationSuggestion(sessions, total) {
     impact: aggregate.costUSD > total.costUSD * 0.1 ? '高' : '中',
     tone: 'optimize',
     title: '测试和探索阶段优先改用轻量模型',
-    recommendation: '把测试验证、上下文整理和探索阶段默认切到 Haiku、DeepSeek 或 MiMo，确认方向后再升级到重模型。',
+    recommendation: '把测试验证、上下文整理和探索阶段默认切到 Haiku、Gemini Flash、DeepSeek、MiMo 或 Kimi K2.5，确认方向后再升级到重模型。',
     reason: '这些任务通常需要快速试错，不需要一开始就使用最高单价模型。',
     evidence: withAttributionEvidence(`${rows.length} 个探索/验证类 session 使用了重模型，合计 ${compact(aggregate.totalTokens)} tokens、官方价 ${money(aggregate.costUSD)}。`, rows),
     action: '把这类任务的默认模型改成轻量模型；只有进入实现收口、复杂调试或发布前审查时再切回重模型。',

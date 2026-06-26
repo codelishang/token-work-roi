@@ -63,13 +63,13 @@ export function canonicalProvider(raw) {
     if (value === 'x_ai' || value === 'xai') return 'xai';
     if (value === 'z_ai' || value === 'zai' || value === 'zhipu' || value === 'zhipu glm' || value === 'bigmodel') return 'Zhipu GLM';
     if (value === 'doubao' || value === 'doubao seed' || value === 'doubaoseed' || value === 'volcengine' || value === 'ark' || value === 'bytedance') return 'DoubaoSeed';
-    if (value === 'moonshot' || value === 'moonshotai') return 'moonshotai';
+    if (value === 'moonshot' || value === 'moonshotai' || value === 'kimi') return 'Kimi';
     if (value === 'meta' || value === 'meta_llama') return 'meta_llama';
     if (value === 'azure' || value === 'azure_ai') return 'azure_ai';
     if (value === 'anthropic' || value === 'vertex' || value === 'vertex_ai') return 'anthropic';
     if (value === 'together' || value === 'together_ai') return 'together_ai';
     if (value === 'fireworks' || value === 'fireworks_ai') return 'fireworks_ai';
-    if (value === 'google' || value === 'gemini') return 'google';
+    if (value === 'google' || value === 'gemini') return 'Gemini';
     if (value === 'openai' || value === 'openai_codex') return 'openai';
     if (value === 'mistral' || value === 'mistralai') return 'mistralai';
     if (value === 'ai21') return 'ai21';
@@ -80,9 +80,10 @@ export function canonicalProvider(raw) {
 
 export function inferProviderFromModel(model) {
   const lower = String(model || '').toLowerCase();
+  if (lower.includes('kimi') || lower.includes('moonshot')) return 'Kimi';
   if (lower.includes('claude') || lower.includes('anthropic') || /\b(opus|sonnet|haiku)\b/.test(lower)) return 'anthropic';
   if (lower.includes('gpt') || lower.includes('openai') || /\b(o1|o3|o4)\b/.test(lower)) return 'openai';
-  if (lower.includes('gemini') || lower.includes('google')) return 'google';
+  if (lower.includes('gemini') || lower.includes('google')) return 'Gemini';
   if (lower.includes('grok')) return 'xai';
   if (lower.includes('deepseek')) return 'deepseek';
   if (lower.includes('mimo') || lower.includes('xiaomi')) return 'xiaomi';

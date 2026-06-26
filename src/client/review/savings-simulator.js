@@ -11,13 +11,17 @@ const TARGET_MODELS = {
   light: [
     { model: 'deepseek-v4-flash', provider: 'deepseek', label: 'DeepSeek V4 Flash' },
     { model: 'mimo-v2.5', provider: 'xiaomi', label: 'MiMo v2.5' },
-    { model: 'claude-haiku-4-5', provider: 'anthropic', label: 'Claude Haiku 4.5' }
+    { model: 'claude-haiku-4-5', provider: 'anthropic', label: 'Claude Haiku 4.5' },
+    { model: 'gemini-2.5-flash', provider: 'Gemini', label: 'Gemini 2.5 Flash' },
+    { model: 'kimi-k2.5', provider: 'Kimi', label: 'Kimi K2.5' }
   ],
   mid: [
     { model: 'gpt-5.3-codex', provider: 'openai', label: 'GPT-5.3 Codex' },
     { model: 'claude-sonnet-4-6', provider: 'anthropic', label: 'Claude Sonnet 4.6' },
     { model: 'deepseek-v4-pro', provider: 'deepseek', label: 'DeepSeek V4 Pro' },
-    { model: 'mimo-v2.5-pro', provider: 'xiaomi', label: 'MiMo v2.5 Pro' }
+    { model: 'mimo-v2.5-pro', provider: 'xiaomi', label: 'MiMo v2.5 Pro' },
+    { model: 'gemini-2.5-pro', provider: 'Gemini', label: 'Gemini 2.5 Pro' },
+    { model: 'kimi-k2.7-code', provider: 'Kimi', label: 'Kimi K2.7 Code' }
   ]
 };
 

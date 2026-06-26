@@ -353,9 +353,9 @@ function inferFromModelAndActivity(session, now) {
 function modelTier(model, pricingStatus = '') {
   const name = normalizeText(model).toLowerCase();
   if (!name || name === '<synthetic>' || pricingStatus === 'unpriced') return 'unpriced';
-  if (name.startsWith('gpt-5.5') || name.includes('claude-opus')) return 'heavy';
-  if (name === 'gpt-5.3-codex' || name.includes('claude-sonnet')) return 'mid';
-  if (name.includes('claude-haiku') || name.includes('deepseek') || name.includes('mimo')) return 'light';
+  if (name.startsWith('gpt-5.5') || name.includes('claude-opus') || name.includes('gemini-2.5-pro-long-context')) return 'heavy';
+  if (name === 'gpt-5.3-codex' || name.includes('claude-sonnet') || name.includes('gemini-2.5-pro') || /kimi-k2[.-][67]/.test(name)) return 'mid';
+  if (name.includes('claude-haiku') || name.includes('deepseek') || name.includes('mimo') || name.includes('gemini-2.5-flash') || /kimi-k2[.-]5/.test(name)) return 'light';
   return 'unknown';
 }
 

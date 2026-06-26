@@ -52,6 +52,18 @@ export const OFFICIAL_PRICING_SOURCES = [
     label: 'Volcengine Ark pricing',
     url: 'https://www.volcengine.com/pricing?product=ark_bd&tab=1',
     note: 'Official Ark pricing page. RMB prices are converted to USD for internal cost math.'
+  },
+  {
+    provider: 'Gemini',
+    label: 'Gemini API pricing',
+    url: 'https://ai.google.dev/gemini-api/docs/pricing',
+    note: 'Gemini API USD prices per 1M tokens; Pro has separate short-context and long-context rates.'
+  },
+  {
+    provider: 'Kimi',
+    label: 'Kimi API pricing',
+    url: 'https://platform.kimi.com/docs/pricing/chat',
+    note: 'Official Kimi API RMB prices converted to USD for internal cost math.'
   }
 ];
 
@@ -311,6 +323,90 @@ export const OFFICIAL_PRICE_TABLE = [
     source: "DoubaoSeed",
     unavailableReason: "Run npm run pricing:update to fetch official RMB pricing and convert it to USD.",
     note: "Official Ark pricing page. RMB prices are converted to USD for internal cost math."
+  }),
+  officialRate({
+    provider: "Gemini",
+    model: "gemini-2.5-flash",
+    aliases: ["gemini-2-5-flash", "gemini-flash-latest"],
+    input: 0.3,
+    cachedInput: 0.075,
+    cacheWrite5m: 0.3,
+    cacheWrite1h: 0.3,
+    output: 2.5,
+    source: "Gemini",
+    note: "Gemini API standard rate for prompts up to 200k tokens."
+  }),
+  officialRate({
+    provider: "Gemini",
+    model: "gemini-2.5-pro",
+    aliases: ["gemini-2-5-pro", "gemini-pro-latest"],
+    input: 1.25,
+    cachedInput: 0.31,
+    cacheWrite5m: 1.25,
+    cacheWrite1h: 1.25,
+    output: 10,
+    source: "Gemini",
+    note: "Gemini API short-context rate for prompts up to 200k tokens."
+  }),
+  officialRate({
+    provider: "Gemini",
+    model: "gemini-2.5-pro-long-context",
+    aliases: ["gemini-2-5-pro-long-context"],
+    input: 2.5,
+    cachedInput: 0.625,
+    cacheWrite5m: 2.5,
+    cacheWrite1h: 2.5,
+    output: 15,
+    source: "Gemini",
+    note: "Gemini API long-context rate for prompts over 200k tokens."
+  }),
+  officialRate({
+    provider: "Kimi",
+    model: "kimi-k2.7-code",
+    aliases: ["kimi-k2-7-code"],
+    input: 0.9577247054222984,
+    cachedInput: 0.19154494108445969,
+    cacheWrite5m: 0.9577247054222984,
+    cacheWrite1h: 0.9577247054222984,
+    output: 3.978241084061855,
+    source: "Kimi",
+    note: "Official Kimi API RMB rate converted to USD at the last verified refresh rate."
+  }),
+  officialRate({
+    provider: "Kimi",
+    model: "kimi-k2.7-code-highspeed",
+    aliases: ["kimi-k2-7-code-highspeed"],
+    input: 1.9154494108445967,
+    cachedInput: 0.38308988216891937,
+    cacheWrite5m: 1.9154494108445967,
+    cacheWrite1h: 1.9154494108445967,
+    output: 7.95648216812371,
+    source: "Kimi",
+    note: "Official Kimi API RMB rate converted to USD at the last verified refresh rate."
+  }),
+  officialRate({
+    provider: "Kimi",
+    model: "kimi-k2.6",
+    aliases: ["kimi-k2-6"],
+    input: 0.9577247054222984,
+    cachedInput: 0.16207648860992743,
+    cacheWrite5m: 0.9577247054222984,
+    cacheWrite1h: 0.9577247054222984,
+    output: 3.978241084061855,
+    source: "Kimi",
+    note: "Official Kimi API RMB rate converted to USD at the last verified refresh rate."
+  }),
+  officialRate({
+    provider: "Kimi",
+    model: "kimi-k2.5",
+    aliases: ["kimi-k2-5"],
+    input: 0.5893690494906452,
+    cachedInput: 0.1031395836608629,
+    cacheWrite5m: 0.5893690494906452,
+    cacheWrite1h: 0.5893690494906452,
+    output: 3.094187509825887,
+    source: "Kimi",
+    note: "Official Kimi API RMB rate converted to USD at the last verified refresh rate."
   })
 ];
 
@@ -670,6 +766,8 @@ function canonicalProvider(value) {
   const normalized = String(value || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
   if (['zai', 'z ai', 'zhipu', 'zhipu ai', 'zhipu glm', 'bigmodel'].includes(normalized)) return 'Zhipu GLM';
   if (['volcengine', 'volc engine', 'ark', 'doubao', 'doubao seed', 'doubaoseed', 'bytedance'].includes(normalized)) return 'DoubaoSeed';
+  if (['google', 'gemini'].includes(normalized)) return 'Gemini';
+  if (['moonshot', 'moonshot ai', 'moonshotai', 'kimi'].includes(normalized)) return 'Kimi';
   return String(value || '').trim();
 }
 

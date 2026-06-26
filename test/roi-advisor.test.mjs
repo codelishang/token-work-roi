@@ -13,6 +13,10 @@ test('modelTier classifies heavy, mid, light and unpriced models', () => {
   assert.equal(modelTier('claude-sonnet-4-6', 'priced'), 'mid');
   assert.equal(modelTier('deepseek-v4-pro', 'priced'), 'light');
   assert.equal(modelTier('mimo-v2.5-pro', 'priced'), 'light');
+  assert.equal(modelTier('kimi-k2.7-code', 'priced'), 'mid');
+  assert.equal(modelTier('kimi-k2-7-code', 'priced'), 'mid');
+  assert.equal(modelTier('kimi-k2.5', 'priced'), 'light');
+  assert.equal(modelTier('kimi-k2-5', 'priced'), 'light');
   assert.equal(modelTier('gpt-5.3-codex-spark', 'unpriced'), 'unpriced');
   assert.equal(modelTier('<synthetic>', ''), 'unpriced');
 });

@@ -133,7 +133,7 @@ function buildModelPolicyRows(sessions) {
       label: '轻量默认',
       title: '测试验证、探索和上下文整理',
       targetTier: 'light',
-      action: '默认用 Haiku、DeepSeek 或 MiMo 快速试错，方向确认后再升级。',
+      action: '默认用 Haiku、Gemini Flash、DeepSeek、MiMo 或 Kimi K2.5 快速试错，方向确认后再升级。',
       sessions: sessions.filter(isLightPolicyWork)
     },
     {
@@ -141,7 +141,7 @@ function buildModelPolicyRows(sessions) {
       label: '中模型实现',
       title: '功能开发、调试修复和维护实现',
       targetTier: 'mid',
-      action: '复杂实现和调试默认用 Sonnet 或 Codex 中模型，兼顾上下文理解和成本。',
+      action: '复杂实现和调试默认用 Sonnet、Gemini Pro、Codex 或 Kimi Code 中模型，兼顾上下文理解和成本。',
       sessions: sessions.filter(isMidPolicyWork)
     },
     {
@@ -230,7 +230,7 @@ function buildStrategyRecommendations({ sessions, annotated, modelRows }) {
       id: 'light-model-for-exploration',
       title: '探索和验证默认用轻量模型',
       detail: `${heavyExploration.length} 个探索/验证 session 使用了重模型，合计 ${compactCN(agg.totalTokens)} tokens。`,
-      action: '测试验证、上下文整理、技术调研先用 Haiku、DeepSeek 或 MiMo，进入复杂实现再升级。'
+      action: '测试验证、上下文整理、技术调研先用 Haiku、Gemini Flash、DeepSeek、MiMo 或 Kimi K2.5，进入复杂实现再升级。'
     });
   }
 

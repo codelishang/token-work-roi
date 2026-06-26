@@ -107,9 +107,9 @@ function scopeMatcher(action = {}) {
 
 function modelTierLabel(session = {}) {
   const model = String(session.model || session.pricingModel || '').toLowerCase();
-  if (/opus|gpt-5\.5/.test(model)) return 'heavy';
-  if (/sonnet|codex|pro/.test(model)) return 'mid';
-  if (/haiku|flash|deepseek|mimo/.test(model)) return 'light';
+  if (/opus|gpt-5\.5|gemini-2\.5-pro-long-context/.test(model)) return 'heavy';
+  if (/sonnet|codex|pro|kimi-k2[.-][67]/.test(model)) return 'mid';
+  if (/haiku|flash|deepseek|mimo|kimi-k2[.-]5/.test(model)) return 'light';
   return 'unknown';
 }
 
