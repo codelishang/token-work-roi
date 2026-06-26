@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { openDb, recordRun, upsertSession, upsertTokenEvent } from '../src/db.mjs';
+import { removeTempDir } from '../test-support/fs.mjs';
 import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('read APIs expose coverage bridge and evidence flywheel safely', async () => {
@@ -45,7 +46,7 @@ test('read APIs expose coverage bridge and evidence flywheel safely', async () =
     assert.equal(JSON.stringify(samples).includes('D:\\HighROIProjects\\secret-project'), false);
   } finally {
     await stopTestServer(server.child);
-    rmSync(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
 });
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -10,6 +10,7 @@ import {
   upsertSession,
   upsertSessionOutput
 } from '../src/db.mjs';
+import { removeTempDir } from '../test-support/fs.mjs';
 import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('evidence suggestion API builds and applies selected high-confidence evidence', async () => {
@@ -66,7 +67,7 @@ test('evidence suggestion API builds and applies selected high-confidence eviden
     assert.equal(data.sessions[0].annotationConfidence >= 80, true);
   } finally {
     await stopTestServer(server.child);
-    rmSync(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
 });
 

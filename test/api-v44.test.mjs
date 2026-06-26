@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { openDb } from '../src/db.mjs';
+import { removeTempDir } from '../test-support/fs.mjs';
 import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('ccusage import API dry-runs before explicit apply', async () => {
@@ -72,7 +73,7 @@ test('ccusage import API dry-runs before explicit apply', async () => {
     assert.equal(after.sessions.length, 1);
   } finally {
     await stopTestServer(server.child);
-    rmSync(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
 });
 

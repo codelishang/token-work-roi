@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8,6 +8,7 @@ import {
   upsertSession,
   upsertSessionAnnotation
 } from '../src/db.mjs';
+import { removeTempDir } from '../test-support/fs.mjs';
 import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('auto attribution API suggests, applies, protects manual rows, and undoes auto rows', async () => {
@@ -63,7 +64,7 @@ test('auto attribution API suggests, applies, protects manual rows, and undoes a
     assert.equal(afterUndo.sessions.find(session => session.sessionId === 'claude:two').annotationSource, 'manual');
   } finally {
     await stopTestServer(server.child);
-    rmSync(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
 });
 

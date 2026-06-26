@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { openDb, upsertDaily, upsertSession } from '../src/db.mjs';
+import { removeTempDir } from '../test-support/fs.mjs';
 import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('v2 APIs cover alias rules, batch annotations, outputs, backup, export and import', async () => {
@@ -139,7 +140,7 @@ test('v2 APIs cover alias rules, batch annotations, outputs, backup, export and 
     assert.equal(deletedRule.deleted, 1);
   } finally {
     await stopTestServer(server.child);
-    rmSync(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
 });
 

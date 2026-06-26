@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildLiveDataFreshness, buildLiveGuardrails, buildLiveSnapshot } from '../src/live.mjs';
 import { openDb, upsertTokenEvent } from '../src/db.mjs';
+import { removeTempDir } from '../test-support/fs.mjs';
 import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('live snapshot uses recent token events for burn rate and cache hit', () => {
@@ -314,7 +315,7 @@ test('live API returns guardrails and warnings from temporary SQLite', async () 
     assert.ok(body.warnings.some(item => item.type === 'high-burn-rate'));
   } finally {
     await stopTestServer(server.child);
-    rmSync(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -352,7 +353,7 @@ test('live API does not cap 24h token event counts at 500', async () => {
     assert.equal(body.bySource[0].requests, 620);
   } finally {
     await stopTestServer(server.child);
-    rmSync(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
 });
 

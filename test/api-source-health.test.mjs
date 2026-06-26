@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { openDb, recordRun, upsertSession, upsertTokenEvent } from '../src/db.mjs';
+import { removeTempDir } from '../test-support/fs.mjs';
 import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('source health API returns safe coverage metadata', async () => {
@@ -48,7 +49,7 @@ test('source health API returns safe coverage metadata', async () => {
     assert.match(await collectResponse.text(), /Demo Mode/);
   } finally {
     await stopTestServer(server.child);
-    rmSync(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -69,7 +70,7 @@ test('data API labels real aggregate-only databases as not event verified', asyn
     assert.doesNotMatch(JSON.stringify(data.meta.runtime), /C:\\\\Users|D:\\\\HighROIProjects|prompt|response|transcript|diff/);
   } finally {
     await stopTestServer(server.child);
-    rmSync(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -89,7 +90,7 @@ test('data API labels event rows without a verified run as needing coverage', as
     assert.equal(data.meta.runtime.db.fileName, 'usage.sqlite');
   } finally {
     await stopTestServer(server.child);
-    rmSync(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -109,7 +110,7 @@ test('data API labels verified event-level databases as event verified', async (
     assert.equal(data.meta.runtime.db.fileName, 'usage.sqlite');
   } finally {
     await stopTestServer(server.child);
-    rmSync(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
 });
 
