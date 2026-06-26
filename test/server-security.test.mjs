@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { spawnTestServer, startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 const guardedGetPaths = [
   '/api/data',
@@ -155,49 +154,32 @@ test('ingest rejects non-local browser origins and non-json bodies', async () =>
 
 async function startServer(extraEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-security-'));
-  const port = await freePort(7600);
-  const child = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: process.cwd(),
+  const server = startTestServer({
+    dbPath: join(dir, 'usage.sqlite'),
     env: {
-      ...process.env,
-      HOST: '127.0.0.1',
-      PORT: String(port),
-      DB_PATH: join(dir, 'usage.sqlite'),
-      SCHEDULED_COLLECT_ENABLED: 'false',
+      HOST: extraEnv.HOST || '127.0.0.1',
       TOKEN_WORK_ALLOW_REMOTE: '',
       INGEST_TOKEN: '',
       ...extraEnv
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
-  });
-
-  let output = '';
-  child.stdout.on('data', chunk => {
-    output += chunk.toString();
-  });
-  child.stderr.on('data', chunk => {
-    output += chunk.toString();
+    }
   });
 
   try {
-    await waitForApi(port, child, () => output);
+    const port = await waitForTestServer(server);
+    return {
+      port,
+      child: server.child,
+      output: () => `${server.output.stdout}${server.output.stderr}`,
+      async stop() {
+        await stopTestServer(server.child);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
   } catch (error) {
-    child.kill();
+    await stopTestServer(server.child);
     rmSync(dir, { recursive: true, force: true });
     throw error;
   }
-
-  return {
-    port,
-    child,
-    output: () => output,
-    async stop() {
-      child.kill();
-      await new Promise(resolve => child.once('exit', resolve));
-      rmSync(dir, { recursive: true, force: true });
-    }
-  };
 }
 
 function ingestPayload() {
@@ -245,72 +227,30 @@ function postIngest(port, headers = {}, { body = {} } = {}) {
 
 async function runServerUntilExit(extraEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-security-denied-'));
-  const port = await freePort(8600);
-  const child = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DB_PATH: join(dir, 'usage.sqlite'),
-      SCHEDULED_COLLECT_ENABLED: 'false',
-      ...extraEnv
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
+  const server = spawnTestServer({
+    dbPath: join(dir, 'usage.sqlite'),
+    env: extraEnv
   });
 
-  let output = '';
-  child.stdout.on('data', chunk => {
-    output += chunk.toString();
-  });
-  child.stderr.on('data', chunk => {
-    output += chunk.toString();
-  });
-
-  const code = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error(`server did not exit; output=${output}`));
-    }, 5000);
-    child.once('exit', exitCode => {
-      clearTimeout(timer);
-      resolve(exitCode);
+  try {
+    const code = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        stopTestServer(server.child).finally(() => {
+          reject(new Error(`server did not exit; output=${server.output.stdout}${server.output.stderr}`));
+        });
+      }, 5000);
+      server.child.once('exit', exitCode => {
+        clearTimeout(timer);
+        resolve(exitCode);
+      });
+      server.child.once('error', error => {
+        clearTimeout(timer);
+        reject(error);
+      });
     });
-  });
-
-  rmSync(dir, { recursive: true, force: true });
-  return { code, output };
-}
-
-async function waitForApi(port, child, getOutput) {
-  const start = Date.now();
-  while (Date.now() - start < 7000) {
-    if (child.exitCode !== null) {
-      throw new Error(`server exited early; output=${getOutput()}`);
-    }
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/data`);
-      if (response.ok) return;
-    } catch {
-      // Retry while the server binds.
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
+    return { code, output: `${server.output.stdout}${server.output.stderr}` };
+  } finally {
+    await stopTestServer(server.child);
+    rmSync(dir, { recursive: true, force: true });
   }
-  throw new Error(`server did not start; output=${getOutput()}`);
-}
-
-async function freePort(start) {
-  for (let port = start; port < start + 1000; port += 1) {
-    if (await canListen(port)) return port;
-  }
-  throw new Error(`No free port found near ${start}`);
-}
-
-function canListen(port) {
-  return new Promise(resolvePort => {
-    const server = createServer();
-    server.once('error', () => resolvePort(false));
-    server.once('listening', () => server.close(() => resolvePort(true)));
-    server.listen(port, '127.0.0.1');
-  });
 }

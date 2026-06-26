@@ -1,39 +1,19 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { openDb, upsertDaily, upsertSession } from '../src/db.mjs';
+import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('annotation API upserts, merges into /api/data, and deletes', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-api-'));
   const dbPath = join(dir, 'usage.sqlite');
-  const port = 4300 + Math.floor(Math.random() * 1000);
   seedDb(dbPath);
-
-  const child = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DB_PATH: dbPath,
-      SCHEDULED_COLLECT_ENABLED: 'false'
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
-  });
-  let stdout = '';
-  let stderr = '';
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', chunk => { stdout += chunk; });
-  child.stderr.on('data', chunk => { stderr += chunk; });
+  const server = startTestServer({ dbPath });
 
   try {
-    await waitForApi(port, () => ({ stdout, stderr, exited: child.exitCode != null, exitCode: child.exitCode }));
-    assert.match(stdout, /listening on 127\.0\.0\.1/);
-
+    const port = await waitForTestServer(server);
     const initial = await getJson(port, '/api/data');
     assert.equal(initial.sessions.length, 1);
     assert.equal(initial.sessions[0].model, 'codex-mini');
@@ -106,7 +86,7 @@ test('annotation API upserts, merges into /api/data, and deletes', async () => {
     assert.equal(cleared.sessions[0].workStage, '未说明');
     assert.equal(cleared.sessions[0].valueLevel, '未评估');
   } finally {
-    await stopChild(child);
+    await stopTestServer(server.child);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -146,22 +126,6 @@ function seedDb(dbPath) {
   }
 }
 
-async function waitForApi(port, diagnostics) {
-  const start = Date.now();
-  let lastError = null;
-  while (Date.now() - start < 5000) {
-    try {
-      await getJson(port, '/api/data');
-      return;
-    } catch (error) {
-      lastError = error;
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-  }
-  const details = diagnostics ? diagnostics() : {};
-  throw new Error(`server did not start in time: ${lastError?.message || 'no response'}\nstdout=${details.stdout || ''}\nstderr=${details.stderr || ''}\nexit=${details.exited ? details.exitCode : 'running'}`);
-}
-
 async function getJson(port, path) {
   const response = await fetch(`http://127.0.0.1:${port}${path}`);
   if (!response.ok) assert.fail(await response.text());
@@ -193,10 +157,3 @@ async function assertRejectsWithStatus(responsePromise, expectedStatus) {
   assert.equal(response.status, expectedStatus, await response.text());
 }
 
-function stopChild(child) {
-  if (child.exitCode != null) return Promise.resolve();
-  return new Promise(resolve => {
-    child.once('close', resolve);
-    child.kill();
-  });
-}

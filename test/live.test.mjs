@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildLiveDataFreshness, buildLiveGuardrails, buildLiveSnapshot } from '../src/live.mjs';
 import { openDb, upsertTokenEvent } from '../src/db.mjs';
+import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('live snapshot uses recent token events for burn rate and cache hit', () => {
   const snapshot = buildLiveSnapshot({
@@ -284,7 +284,6 @@ test('live snapshot supports fixed budget reset windows and custom near threshol
 test('live API returns guardrails and warnings from temporary SQLite', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-live-api-'));
   const dbPath = join(dir, 'usage.sqlite');
-  const port = 6100 + Math.floor(Math.random() * 1000);
   const db = openDb(dbPath);
   try {
     upsertTokenEvent(db, {
@@ -301,20 +300,10 @@ test('live API returns guardrails and warnings from temporary SQLite', async () 
     db.close();
   }
 
-  const child = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DB_PATH: dbPath,
-      SCHEDULED_COLLECT_ENABLED: 'false'
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
-  });
+  const server = startTestServer({ dbPath });
 
   try {
-    await waitForLiveApi(port);
+    const port = await waitForTestServer(server, { path: '/api/live' });
     const response = await fetch(`http://127.0.0.1:${port}/api/live`);
     if (!response.ok) assert.fail(await response.text());
     const body = await response.json();
@@ -324,7 +313,7 @@ test('live API returns guardrails and warnings from temporary SQLite', async () 
     assert.equal(body.collectionState.status, 'idle');
     assert.ok(body.warnings.some(item => item.type === 'high-burn-rate'));
   } finally {
-    await stopChild(child);
+    await stopTestServer(server.child);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -332,7 +321,6 @@ test('live API returns guardrails and warnings from temporary SQLite', async () 
 test('live API does not cap 24h token event counts at 500', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-live-window-'));
   const dbPath = join(dir, 'usage.sqlite');
-  const port = 6200 + Math.floor(Math.random() * 1000);
   const db = openDb(dbPath);
   try {
     const now = Date.now();
@@ -352,20 +340,10 @@ test('live API does not cap 24h token event counts at 500', async () => {
     db.close();
   }
 
-  const child = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DB_PATH: dbPath,
-      SCHEDULED_COLLECT_ENABLED: 'false'
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
-  });
+  const server = startTestServer({ dbPath });
 
   try {
-    await waitForLiveApi(port);
+    const port = await waitForTestServer(server, { path: '/api/live' });
     const response = await fetch(`http://127.0.0.1:${port}/api/live?windowMinutes=1440`);
     if (!response.ok) assert.fail(await response.text());
     const body = await response.json();
@@ -373,29 +351,8 @@ test('live API does not cap 24h token event counts at 500', async () => {
     assert.equal(body.pulse.requestCount, 620);
     assert.equal(body.bySource[0].requests, 620);
   } finally {
-    await stopChild(child);
+    await stopTestServer(server.child);
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-async function waitForLiveApi(port) {
-  const start = Date.now();
-  while (Date.now() - start < 5000) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/live`);
-      if (response.ok) return;
-    } catch {
-      // Retry while the server starts.
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  throw new Error('live API did not start in time');
-}
-
-function stopChild(child) {
-  if (child.exitCode != null) return Promise.resolve();
-  return new Promise(resolve => {
-    child.once('close', resolve);
-    child.kill();
-  });
-}

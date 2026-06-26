@@ -109,8 +109,11 @@ const server = createServer((req, res) => {
 });
 
 server.listen(port, host, () => {
+  const address = server.address();
+  const actualPort = address && typeof address === 'object' ? address.port : port;
   const displayHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
-  console.log(`Token Work ROI: http://${displayHost}:${port} (listening on ${host})`);
+  process.send?.({ type: 'listening', port: actualPort, host });
+  console.log(`Token Work ROI: http://${displayHost}:${actualPort} (listening on ${host})`);
   startScheduledCollect();
 });
 

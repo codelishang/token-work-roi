@@ -1,33 +1,20 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { openDb } from '../src/db.mjs';
+import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('ccusage import API dry-runs before explicit apply', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-api-v44-'));
   const dbPath = join(dir, 'usage.sqlite');
-  const port = 7400 + Math.floor(Math.random() * 1000);
   const db = openDb(dbPath);
   db.close();
-
-  const child = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DB_PATH: dbPath,
-      BACKUP_DIR: join(dir, 'backups'),
-      SCHEDULED_COLLECT_ENABLED: 'false'
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
-  });
+  const server = startTestServer({ dbPath, env: { BACKUP_DIR: join(dir, 'backups') } });
 
   try {
-    await waitForApi(port);
+    const port = await waitForTestServer(server);
     const payload = {
       daily: [{
         date: '2026-06-17',
@@ -84,24 +71,10 @@ test('ccusage import API dry-runs before explicit apply', async () => {
     assert.equal(after.daily.length, 1);
     assert.equal(after.sessions.length, 1);
   } finally {
-    await stopChild(child);
+    await stopTestServer(server.child);
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-async function waitForApi(port) {
-  const start = Date.now();
-  while (Date.now() - start < 5000) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/data`);
-      if (response.ok) return;
-    } catch {
-      // Retry while the server starts.
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  throw new Error('server did not start in time');
-}
 
 async function getJson(port, path) {
   const response = await fetch(`http://127.0.0.1:${port}${path}`);
@@ -119,10 +92,3 @@ async function postJson(port, path, body) {
   return response.json();
 }
 
-function stopChild(child) {
-  if (child.exitCode != null) return Promise.resolve();
-  return new Promise(resolve => {
-    child.once('close', resolve);
-    child.kill();
-  });
-}

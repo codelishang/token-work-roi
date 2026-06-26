@@ -1,40 +1,29 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import packageJson from '../package.json' with { type: 'json' };
+import { stopProcessTree } from '../test-support/process.mjs';
 
 test('CLI help exposes bare auto entrypoint', async () => {
   const result = await runNode(['src/cli.mjs', '--help']);
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /token-work \[--db data\/usage\.sqlite\]/);
-  assert.match(result.stdout, /--no-collect\|--dry-run-only/);
+  assert.match(result.stdout, /--api-port 4173\|0/);
+  assert.match(result.stdout, /--ui-port 5173\|0/);
+  assert.match(result.stdout, /Use port 0 to let the OS assign a free local port/);
 });
 
 test('bare CLI auto apply writes trusted event usage before starting UI', async () => {
   const fixture = createAutoFixture();
-  const apiPort = randomPort();
-  const uiPort = randomPort();
-  const child = spawn(process.execPath, [
-    'src/cli.mjs',
-    '--db',
-    fixture.dbPath,
-    '--api-port',
-    String(apiPort),
-    '--ui-port',
-    String(uiPort),
-    '--no-open'
-  ], {
-    cwd: process.cwd(),
-    env: { ...process.env, ...fixture.env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: process.platform !== 'win32',
-    windowsHide: true
-  });
+  const { child, output } = startBareCli(fixture, []);
 
   try {
+    const apiPort = await waitForCliApiPort(child, output);
+    assert.match(output.stdout, /\[token-work\] UI  http:\/\/127\.0\.0\.1:\d+/);
+    assert.match(output.stdout, /\[token-work\] API http:\/\/127\.0\.0\.1:\d+/);
     const data = await waitForData(apiPort);
     assert.equal(data.meta.runtime.packageVersion, packageJson.version);
     assert.equal(data.meta.runtime.counts.tokenEventRows, 1);
@@ -50,27 +39,12 @@ test('bare CLI auto apply writes trusted event usage before starting UI', async 
 
 test('bare CLI dry-run-only starts UI without writing usage', async () => {
   const fixture = createAutoFixture();
-  const apiPort = randomPort();
-  const uiPort = randomPort();
-  const child = spawn(process.execPath, [
-    'src/cli.mjs',
-    '--db',
-    fixture.dbPath,
-    '--api-port',
-    String(apiPort),
-    '--ui-port',
-    String(uiPort),
-    '--dry-run-only',
-    '--no-open'
-  ], {
-    cwd: process.cwd(),
-    env: { ...process.env, ...fixture.env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: process.platform !== 'win32',
-    windowsHide: true
-  });
+  const { child, output } = startBareCli(fixture, ['--dry-run-only']);
 
   try {
+    const apiPort = await waitForCliApiPort(child, output);
+    assert.match(output.stdout, /\[token-work\] UI  http:\/\/127\.0\.0\.1:\d+/);
+    assert.match(output.stdout, /\[token-work\] API http:\/\/127\.0\.0\.1:\d+/);
     const data = await waitForData(apiPort);
     assert.equal(data.meta.runtime.counts.sessionRows, 0);
     assert.equal(data.meta.runtime.counts.tokenEventRows, 0);
@@ -85,33 +59,34 @@ test('bare CLI dry-run-only starts UI without writing usage', async () => {
 
 test('bare CLI no-collect starts UI without scanning or writing usage', async () => {
   const fixture = createAutoFixture();
-  const apiPort = randomPort();
-  const uiPort = randomPort();
-  const child = spawn(process.execPath, [
-    'src/cli.mjs',
-    '--db',
-    fixture.dbPath,
-    '--api-port',
-    String(apiPort),
-    '--ui-port',
-    String(uiPort),
-    '--no-collect',
-    '--no-open'
-  ], {
-    cwd: process.cwd(),
-    env: { ...process.env, ...fixture.env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: process.platform !== 'win32',
-    windowsHide: true
-  });
+  const { child, output } = startBareCli(fixture, ['--no-collect']);
 
   try {
+    const apiPort = await waitForCliApiPort(child, output);
+    assert.match(output.stdout, /\[token-work\] UI  http:\/\/127\.0\.0\.1:\d+/);
+    assert.match(output.stdout, /\[token-work\] API http:\/\/127\.0\.0\.1:\d+/);
     const data = await waitForData(apiPort);
     assert.equal(data.meta.runtime.counts.sessionRows, 0);
     assert.equal(data.meta.runtime.counts.tokenEventRows, 0);
     assert.equal(data.meta.dataMode.id, 'empty');
     const live = await getJson(apiPort, '/api/live');
     assert.equal(live.autoCollectEnabled, false);
+  } finally {
+    await stopChild(child);
+    cleanupFixture(fixture);
+  }
+});
+
+test('start command accepts OS-assigned API and UI ports', async () => {
+  const fixture = createAutoFixture();
+  const { child, output } = startCli(fixture, ['start']);
+
+  try {
+    const apiPort = await waitForCliApiPort(child, output);
+    assert.match(output.stdout, /\[token-work\] UI  http:\/\/127\.0\.0\.1:\d+/);
+    assert.match(output.stdout, /\[token-work\] API http:\/\/127\.0\.0\.1:\d+/);
+    const data = await waitForData(apiPort);
+    assert.equal(data.meta.dataMode.id, 'empty');
   } finally {
     await stopChild(child);
     cleanupFixture(fixture);
@@ -164,6 +139,58 @@ function createAutoFixture() {
   };
 }
 
+function startBareCli(fixture, extraArgs) {
+  return startCli(fixture, [], extraArgs);
+}
+
+function startCli(fixture, commandArgs = [], extraArgs = []) {
+  const child = spawn(process.execPath, [
+    'src/cli.mjs',
+    ...commandArgs,
+    '--db',
+    fixture.dbPath,
+    '--api-port',
+    '0',
+    '--ui-port',
+    '0',
+    '--no-open',
+    ...extraArgs
+  ], {
+    cwd: process.cwd(),
+    env: { ...process.env, ...fixture.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
+    windowsHide: true
+  });
+  const output = { stdout: '', stderr: '' };
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', chunk => { output.stdout += chunk; });
+  child.stderr.on('data', chunk => { output.stderr += chunk; });
+  child.on('error', error => {
+    output.stderr += `${output.stderr ? '\n' : ''}${error.stack || error.message}`;
+  });
+  return { child, output };
+}
+
+function cliApiPort(output) {
+  const match = output.stdout.match(/\[token-work\] API http:\/\/127\.0\.0\.1:(\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
+async function waitForCliApiPort(child, output) {
+  const start = Date.now();
+  while (Date.now() - start < 45000) {
+    if (child.exitCode != null) {
+      throw new Error(`CLI exited before API became ready\nstdout=${output.stdout}\nstderr=${output.stderr}`);
+    }
+    const port = cliApiPort(output);
+    if (port) return port;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`CLI API did not become ready\nstdout=${output.stdout}\nstderr=${output.stderr}`);
+}
+
 async function getJson(port, path) {
   const response = await fetch(`http://127.0.0.1:${port}${path}`);
   if (!response.ok) assert.fail(await response.text());
@@ -172,10 +199,6 @@ async function getJson(port, path) {
 
 function cleanupFixture(fixture) {
   rmSync(fixture.dir, { recursive: true, force: true });
-}
-
-function randomPort() {
-  return 12000 + Math.floor(Math.random() * 20000);
 }
 
 async function waitForData(port) {
@@ -193,39 +216,7 @@ async function waitForData(port) {
 }
 
 function stopChild(child) {
-  if (child.exitCode != null) return Promise.resolve();
-  return new Promise(resolve => {
-    let resolved = false;
-    const done = () => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(killTimer);
-      clearTimeout(resolveTimer);
-      resolve();
-    };
-    const killTree = force => {
-      if (child.exitCode != null) return done();
-      if (process.platform === 'win32' && child.pid) {
-        spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
-        return;
-      }
-      if (child.pid) {
-        try {
-          process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM');
-          return;
-        } catch {
-          // Fall back to killing the direct child below.
-        }
-      }
-      child.kill(force ? 'SIGKILL' : 'SIGTERM');
-    };
-    const killTimer = setTimeout(() => killTree(true), 2500);
-    const resolveTimer = setTimeout(done, 5000);
-    killTimer.unref?.();
-    resolveTimer.unref?.();
-    child.once('close', done);
-    killTree(false);
-  });
+  return stopProcessTree(child, { detached: process.platform !== 'win32' });
 }
 
 function runNode(argv) {

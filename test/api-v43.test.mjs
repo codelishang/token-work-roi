@@ -1,31 +1,19 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { openDb, upsertTokenEvent } from '../src/db.mjs';
+import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('APIs cover budget profiles and advisor actions', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-api-'));
   const dbPath = join(dir, 'usage.sqlite');
-  const port = 6300 + Math.floor(Math.random() * 1000);
   seedDb(dbPath);
-
-  const child = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DB_PATH: dbPath,
-      SCHEDULED_COLLECT_ENABLED: 'false'
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
-  });
+  const server = startTestServer({ dbPath });
 
   try {
-    await waitForApi(port);
+    const port = await waitForTestServer(server);
     const budget = await postJson(port, '/api/budget-profiles', {
       source: 'Codex CLI',
       label: 'Codex 15m',
@@ -74,7 +62,7 @@ test('APIs cover budget profiles and advisor actions', async () => {
     const deletedBudget = await deleteJson(port, '/api/budget-profiles', { id: budget.profile.id });
     assert.equal(deletedBudget.deleted, 1);
   } finally {
-    await stopChild(child);
+    await stopTestServer(server.child);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -95,20 +83,6 @@ function seedDb(dbPath) {
   } finally {
     db.close();
   }
-}
-
-async function waitForApi(port) {
-  const start = Date.now();
-  while (Date.now() - start < 15000) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/data`);
-      if (response.ok) return;
-    } catch {
-      // Retry while the server starts.
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  throw new Error('server did not start in time');
 }
 
 async function getJson(port, path) {
@@ -140,12 +114,4 @@ async function deleteJson(port, path, body) {
 async function assertRejectsWithStatus(responsePromise, expectedStatus) {
   const response = await responsePromise;
   assert.equal(response.status, expectedStatus, await response.text());
-}
-
-function stopChild(child) {
-  if (child.exitCode != null) return Promise.resolve();
-  return new Promise(resolve => {
-    child.once('close', resolve);
-    child.kill();
-  });
 }

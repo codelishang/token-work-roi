@@ -1,31 +1,19 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { openDb, recordRun, upsertSession, upsertTokenEvent } from '../src/db.mjs';
+import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('read APIs expose coverage bridge and evidence flywheel safely', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-api-'));
   const dbPath = join(dir, 'usage.sqlite');
-  const port = 6500 + Math.floor(Math.random() * 1000);
   seedDb(dbPath);
-
-  const child = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DB_PATH: dbPath,
-      SCHEDULED_COLLECT_ENABLED: 'false'
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
-  });
+  const server = startTestServer({ dbPath });
 
   try {
-    await waitForApi(port);
+    const port = await waitForTestServer(server);
     const data = await getJson(port, '/api/data');
     assert.ok(data.meta.coverageBridge);
     assert.ok(data.meta.evidenceFlywheel);
@@ -56,7 +44,7 @@ test('read APIs expose coverage bridge and evidence flywheel safely', async () =
     assert.ok(Array.isArray(samples.samples));
     assert.equal(JSON.stringify(samples).includes('D:\\HighROIProjects\\secret-project'), false);
   } finally {
-    await stopChild(child);
+    await stopTestServer(server.child);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -100,30 +88,9 @@ function seedDb(dbPath) {
   }
 }
 
-async function waitForApi(port) {
-  const start = Date.now();
-  while (Date.now() - start < 5000) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/data`);
-      if (response.ok) return;
-    } catch {
-      // Retry while the server starts.
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  throw new Error('server did not start in time');
-}
-
 async function getJson(port, path) {
   const response = await fetch(`http://127.0.0.1:${port}${path}`);
   if (!response.ok) assert.fail(await response.text());
   return response.json();
 }
 
-function stopChild(child) {
-  if (child.exitCode != null) return Promise.resolve();
-  return new Promise(resolve => {
-    child.once('close', resolve);
-    child.kill();
-  });
-}

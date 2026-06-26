@@ -130,12 +130,12 @@ async function demoCommand() {
 }
 
 async function startCommand({ demo = false, dbPath = null, route = '/', openBrowser = false, liveCollect = false, liveCollectRunOnStart = false } = {}) {
-  const apiPort = Number(args.apiPort || args.port || await freePort(4173));
-  const uiPort = Number(args.uiPort || await freePort(5173));
+  const requestedApiPort = Number(args.apiPort || args.port || await freePort(4173));
+  const requestedUiPort = Number(args.uiPort || await freePort(5173));
   const env = {
     ...process.env,
-    PORT: String(apiPort),
-    API_PORT: String(apiPort),
+    PORT: String(requestedApiPort),
+    API_PORT: String(requestedApiPort),
     DB_PATH: dbPath || resolve(USER_CWD, args.db || process.env.DB_PATH || 'data/usage.sqlite'),
     TOKEN_WORK_DEMO_MODE: demo ? '1' : process.env.TOKEN_WORK_DEMO_MODE || '',
     ...liveCollectEnv({ enabled: liveCollect && !demo, runOnStart: liveCollectRunOnStart })
@@ -145,36 +145,131 @@ async function startCommand({ demo = false, dbPath = null, route = '/', openBrow
   const server = spawn(process.execPath, [resolve(SOURCE_DIR, 'server.mjs')], {
     cwd: launchCwd,
     env,
-    stdio: 'inherit',
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     windowsHide: true
   });
-  const client = spawn(process.execPath, [viteBin, '--host', '127.0.0.1', '--port', String(uiPort)], {
+  const serverOutput = captureAndForwardChildOutput(server);
+  const serverStatus = captureServerStatus(server);
+  const client = spawn(process.execPath, [viteBin, '--host', '127.0.0.1', '--port', String(requestedUiPort)], {
     cwd: launchCwd,
     env,
-    stdio: 'inherit',
+    stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
   });
-  const uiUrl = `http://127.0.0.1:${uiPort}${route}`;
+  const clientOutput = captureAndForwardChildOutput(client);
+  let apiPort = requestedApiPort;
+  let uiPort = requestedUiPort;
   try {
+    if (requestedApiPort === 0) {
+      apiPort = await waitForServerPort(server, serverStatus, serverOutput);
+    }
+    if (requestedUiPort === 0) {
+      uiPort = await waitForChildPort(client, clientOutput, parseVitePort, 'UI');
+    }
+    const uiUrl = `http://127.0.0.1:${uiPort}${route}`;
     await Promise.all([
       waitForHttp(`http://127.0.0.1:${apiPort}/api/data`, { label: 'API' }),
       waitForHttp(`http://127.0.0.1:${uiPort}/`, { label: 'UI' })
     ]);
-  } catch (error) {
-    for (const child of [server, client]) {
-      if (!child.killed) child.kill();
+    console.log(`[token-work] UI  ${uiUrl}${demo ? '  (Demo Mode)' : ''}`);
+    console.log(`[token-work] API http://127.0.0.1:${apiPort}`);
+    if (liveCollect && !demo) {
+      console.log(`[token-work] live collect refresh enabled every ${envLiveCollectIntervalSeconds()}s for Claude/Codex metadata.`);
     }
+    if (openBrowser) {
+      setTimeout(() => openUrl(uiUrl), 900).unref?.();
+    }
+  } catch (error) {
+    await stopCliChildren([server, client]);
     throw error;
   }
-  console.log(`[token-work] UI  ${uiUrl}${demo ? '  (Demo Mode)' : ''}`);
-  console.log(`[token-work] API http://127.0.0.1:${apiPort}`);
-  if (liveCollect && !demo) {
-    console.log(`[token-work] live collect refresh enabled every ${envLiveCollectIntervalSeconds()}s for Claude/Codex metadata.`);
-  }
-  if (openBrowser) {
-    setTimeout(() => openUrl(uiUrl), 900).unref?.();
-  }
   await waitForChildren([server, client]);
+}
+
+function validPort(port) {
+  return Number.isInteger(port) && port > 0 && port <= 65535;
+}
+
+async function stopCliChildren(children) {
+  await Promise.all(children.map(child => stopCliChild(child)));
+}
+
+function stopCliChild(child) {
+  if (!child || child.exitCode != null) return Promise.resolve();
+  return new Promise(resolve => {
+    const done = () => {
+      clearTimeout(killTimer);
+      clearTimeout(resolveTimer);
+      resolve();
+    };
+    const killTimer = setTimeout(() => {
+      if (child.exitCode == null) child.kill('SIGKILL');
+    }, 2500);
+    const resolveTimer = setTimeout(done, 5000);
+    killTimer.unref?.();
+    resolveTimer.unref?.();
+    child.once('close', done);
+    child.kill('SIGTERM');
+  });
+}
+
+function captureServerStatus(child) {
+  const status = { port: null };
+  child.on('message', message => {
+    if (message?.type === 'listening' && validPort(message.port)) status.port = message.port;
+  });
+  return status;
+}
+
+function captureAndForwardChildOutput(child) {
+  const output = { stdout: '', stderr: '' };
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', chunk => {
+    output.stdout += chunk;
+    process.stdout.write(chunk);
+  });
+  child.stderr.on('data', chunk => {
+    output.stderr += chunk;
+    process.stderr.write(chunk);
+  });
+  child.on('error', error => {
+    output.stderr += `${output.stderr ? '\n' : ''}${error.stack || error.message}`;
+  });
+  return output;
+}
+
+async function waitForServerPort(child, status, output, { timeoutMs = 45000 } = {}) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (child.exitCode != null) throw new Error(`API exited before reporting a port\nstdout=${output.stdout}\nstderr=${output.stderr}`);
+    if (status.port) return status.port;
+    const port = parseServerPort(output.stdout);
+    if (port) return port;
+    await sleep(50);
+  }
+  throw new Error(`API did not report a listening port\nstdout=${output.stdout}\nstderr=${output.stderr}`);
+}
+
+async function waitForChildPort(child, output, parsePort, label, { timeoutMs = 45000 } = {}) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (child.exitCode != null) throw new Error(`${label} exited before reporting a port\nstdout=${output.stdout}\nstderr=${output.stderr}`);
+    const port = parsePort(output.stdout);
+    if (port) return port;
+    await sleep(50);
+  }
+  throw new Error(`${label} did not report a listening port\nstdout=${output.stdout}\nstderr=${output.stderr}`);
+}
+
+function parseServerPort(stdout) {
+  const match = String(stdout || '').match(/http:\/\/[^:]+:(\d+) \(listening on /);
+  return match ? Number(match[1]) : null;
+}
+
+function parseVitePort(stdout) {
+  const match = String(stdout || '').match(/Local:\s+http:\/\/127\.0\.0\.1:(\d+)\//);
+  return match ? Number(match[1]) : null;
 }
 
 function liveCollectEnv({ enabled = false, runOnStart = false } = {}) {
@@ -915,8 +1010,9 @@ function printHelp() {
     '  token-work [--db data/usage.sqlite] [--no-collect|--dry-run-only]',
     '    Default real entry: coverage -> trusted Claude/Codex apply -> UI -> 60s live refresh.',
     '  token-work demo [--seed-only] [--db data/demo.sqlite]',
-    '  token-work start [--db data/usage.sqlite] [--api-port 4173] [--ui-port 5173]',
-    '  token-work open [--db data/usage.sqlite] [--api-port 4173] [--ui-port 5173]',
+    '  token-work start [--db data/usage.sqlite] [--api-port 4173|0] [--ui-port 5173|0]',
+    '  token-work open [--db data/usage.sqlite] [--api-port 4173|0] [--ui-port 5173|0]',
+    '    Use port 0 to let the OS assign a free local port.',
     '  token-work live [--db data/usage.sqlite]',
     '  token-work statusline [--db data/usage.sqlite] [--window-minutes 15] [--format text|json]',
     '  token-work collectors [--json]',

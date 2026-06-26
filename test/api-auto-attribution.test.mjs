@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,35 +8,17 @@ import {
   upsertSession,
   upsertSessionAnnotation
 } from '../src/db.mjs';
+import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('auto attribution API suggests, applies, protects manual rows, and undoes auto rows', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-api-auto-'));
   const dbPath = join(dir, 'usage.sqlite');
   const backupDir = join(dir, 'backups');
-  const port = 6300 + Math.floor(Math.random() * 1000);
   seedDb(dbPath);
-
-  const child = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DB_PATH: dbPath,
-      BACKUP_DIR: backupDir,
-      SCHEDULED_COLLECT_ENABLED: 'false'
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
-  });
-  let stdout = '';
-  let stderr = '';
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', chunk => { stdout += chunk; });
-  child.stderr.on('data', chunk => { stderr += chunk; });
+  const server = startTestServer({ dbPath, env: { BACKUP_DIR: backupDir } });
 
   try {
-    await waitForApi(port, () => ({ stdout, stderr, exited: child.exitCode != null, exitCode: child.exitCode }));
+    const port = await waitForTestServer(server);
 
     const suggestions = await getJson(port, '/api/auto-attribution/suggestions');
     assert.equal(suggestions.ok, true);
@@ -81,7 +62,7 @@ test('auto attribution API suggests, applies, protects manual rows, and undoes a
     assert.equal(afterUndo.sessions.find(session => session.sessionId === 'codex:one').annotationSource, null);
     assert.equal(afterUndo.sessions.find(session => session.sessionId === 'claude:two').annotationSource, 'manual');
   } finally {
-    await stopChild(child);
+    await stopTestServer(server.child);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -123,22 +104,6 @@ function seedDb(dbPath) {
   }
 }
 
-async function waitForApi(port, diagnostics) {
-  const start = Date.now();
-  let lastError = null;
-  while (Date.now() - start < 5000) {
-    try {
-      await getJson(port, '/api/data');
-      return;
-    } catch (error) {
-      lastError = error;
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-  }
-  const details = diagnostics ? diagnostics() : {};
-  throw new Error(`server did not start in time: ${lastError?.message || 'no response'}\nstdout=${details.stdout || ''}\nstderr=${details.stderr || ''}\nexit=${details.exited ? details.exitCode : 'running'}`);
-}
-
 async function getJson(port, path) {
   const response = await fetch(`http://127.0.0.1:${port}${path}`);
   if (!response.ok) assert.fail(await response.text());
@@ -160,10 +125,3 @@ async function assertRejectsWithStatus(responsePromise, expectedStatus) {
   assert.equal(response.status, expectedStatus, await response.text());
 }
 
-function stopChild(child) {
-  if (child.exitCode != null) return Promise.resolve();
-  return new Promise(resolve => {
-    child.once('close', resolve);
-    child.kill();
-  });
-}

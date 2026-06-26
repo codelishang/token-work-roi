@@ -1,33 +1,19 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { openDb, recordRun, upsertSession, upsertTokenEvent } from '../src/db.mjs';
+import { startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.mjs';
 
 test('source health API returns safe coverage metadata', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-source-health-api-'));
   const dbPath = join(dir, 'usage.sqlite');
-  const port = await freePort(6400);
   seedDb(dbPath);
-
-  const child = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DB_PATH: dbPath,
-      TOKEN_WORK_DEMO_MODE: '1',
-      SCHEDULED_COLLECT_ENABLED: 'false'
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
-  });
+  const server = startTestServer({ dbPath, env: { TOKEN_WORK_DEMO_MODE: '1' } });
 
   try {
-    await waitForApi(port);
+    const port = await waitForTestServer(server, { path: '/api/source-health' });
     const health = await getJson(port, '/api/source-health');
     const codex = health.sources.find(row => row.id === 'codex');
     assert.equal(codex.health, 'has-data');
@@ -61,7 +47,7 @@ test('source health API returns safe coverage metadata', async () => {
     assert.equal(collectResponse.status, 400);
     assert.match(await collectResponse.text(), /Demo Mode/);
   } finally {
-    await stopChild(child);
+    await stopTestServer(server.child);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -69,23 +55,11 @@ test('source health API returns safe coverage metadata', async () => {
 test('data API labels real aggregate-only databases as not event verified', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-data-mode-aggregate-'));
   const dbPath = join(dir, 'usage.sqlite');
-  const port = await freePort(7400);
   seedAggregateDb(dbPath);
-
-  const child = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DB_PATH: dbPath,
-      SCHEDULED_COLLECT_ENABLED: 'false'
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
-  });
+  const server = startTestServer({ dbPath });
 
   try {
-    await waitForApi(port);
+    const port = await waitForTestServer(server, { path: '/api/source-health' });
     const data = await getJson(port, '/api/data');
     assert.equal(data.meta.demoMode, false);
     assert.equal(data.meta.dataMode.id, 'real-aggregate-only');
@@ -94,7 +68,7 @@ test('data API labels real aggregate-only databases as not event verified', asyn
     assert.equal(data.meta.runtime.collectionCoverageAvailable, true);
     assert.doesNotMatch(JSON.stringify(data.meta.runtime), /C:\\\\Users|D:\\\\HighROIProjects|prompt|response|transcript|diff/);
   } finally {
-    await stopChild(child);
+    await stopTestServer(server.child);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -102,23 +76,11 @@ test('data API labels real aggregate-only databases as not event verified', asyn
 test('data API labels event rows without a verified run as needing coverage', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-data-mode-event-'));
   const dbPath = join(dir, 'usage.sqlite');
-  const port = await freePort(8400);
   seedEventDb(dbPath, { verifiedRun: false });
-
-  const child = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DB_PATH: dbPath,
-      SCHEDULED_COLLECT_ENABLED: 'false'
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
-  });
+  const server = startTestServer({ dbPath });
 
   try {
-    await waitForApi(port);
+    const port = await waitForTestServer(server, { path: '/api/source-health' });
     const data = await getJson(port, '/api/data');
     assert.equal(data.meta.demoMode, false);
     assert.equal(data.meta.dataMode.id, 'real-event-unverified');
@@ -126,7 +88,7 @@ test('data API labels event rows without a verified run as needing coverage', as
     assert.equal(data.meta.runtime.db.kind, 'real sqlite');
     assert.equal(data.meta.runtime.db.fileName, 'usage.sqlite');
   } finally {
-    await stopChild(child);
+    await stopTestServer(server.child);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -134,23 +96,11 @@ test('data API labels event rows without a verified run as needing coverage', as
 test('data API labels verified event-level databases as event verified', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-data-mode-event-verified-'));
   const dbPath = join(dir, 'usage.sqlite');
-  const port = await freePort(8500);
   seedEventDb(dbPath, { verifiedRun: true });
-
-  const child = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DB_PATH: dbPath,
-      SCHEDULED_COLLECT_ENABLED: 'false'
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
-  });
+  const server = startTestServer({ dbPath });
 
   try {
-    await waitForApi(port);
+    const port = await waitForTestServer(server, { path: '/api/source-health' });
     const data = await getJson(port, '/api/data');
     assert.equal(data.meta.demoMode, false);
     assert.equal(data.meta.dataMode.id, 'real-event-verified');
@@ -158,7 +108,7 @@ test('data API labels verified event-level databases as event verified', async (
     assert.equal(data.meta.runtime.db.kind, 'real sqlite');
     assert.equal(data.meta.runtime.db.fileName, 'usage.sqlite');
   } finally {
-    await stopChild(child);
+    await stopTestServer(server.child);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -222,46 +172,9 @@ function seedAggregateDb(dbPath) {
   }
 }
 
-async function waitForApi(port) {
-  const start = Date.now();
-  while (Date.now() - start < 5000) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/source-health`);
-      if (response.ok) return;
-    } catch {
-      // Retry while the server starts.
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  throw new Error('server did not start in time');
-}
-
 async function getJson(port, path) {
   const response = await fetch(`http://127.0.0.1:${port}${path}`);
   if (!response.ok) assert.fail(await response.text());
   return response.json();
 }
 
-function stopChild(child) {
-  if (child.exitCode != null) return Promise.resolve();
-  return new Promise(resolve => {
-    child.once('close', resolve);
-    child.kill();
-  });
-}
-
-async function freePort(start) {
-  for (let port = start; port < start + 1000; port += 1) {
-    if (await canListen(port)) return port;
-  }
-  throw new Error(`No free port found near ${start}`);
-}
-
-function canListen(port) {
-  return new Promise(resolvePort => {
-    const server = createServer();
-    server.once('error', () => resolvePort(false));
-    server.once('listening', () => server.close(() => resolvePort(true)));
-    server.listen(port, '127.0.0.1');
-  });
-}
