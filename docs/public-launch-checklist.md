@@ -6,11 +6,12 @@ Use this checklist before pushing a public GitHub release or publishing an npm p
 
 ```bash
 npm test
+npm run typecheck:tools
 npm run build
 npm run privacy:check
 npm run pricing:update
-node src/cli.mjs privacy-check --include-untracked
-node src/cli.mjs coverage --sources=claude,codex,cursor --json
+node src/cli.ts privacy-check --include-untracked
+node src/cli.ts coverage --sources=claude,codex,cursor --json
 npm view token-work version
 npm audit --audit-level=low
 npm run smoke:npx
@@ -42,7 +43,7 @@ Real local validation screenshots:
 - Generate local QA screenshots only when needed:
 
 ```bash
-TOKEN_WORK_CAPTURE_REAL=1 node scripts/capture-real-screenshots.mjs
+TOKEN_WORK_CAPTURE_REAL=1 node scripts/capture-real-screenshots.ts
 ```
 
 - Inspect local-only outputs under `tmp/qa-screenshots/` before any manual sharing.
@@ -50,7 +51,7 @@ TOKEN_WORK_CAPTURE_REAL=1 node scripts/capture-real-screenshots.mjs
 ## GitHub Release
 
 - Repository name: `token-work-roi`.
-- Current local version: `v1.0.0`.
+- Current local version: `v2.0.0`.
 - Suggested topics: `ai-coding`, `token-usage`, `cost-tracking`, `local-first`, `privacy-first`, `roi`, `codex-cli`, `claude-code`.
 - Release notes should say cost is official public token-price conversion, not a provider invoice.
 - Release notes must not claim complete historical coverage. Say Token Work covers local history that still exists and contains reliable token fields, with `coverage` reporting gaps and reasons.
@@ -71,13 +72,13 @@ TOKEN_WORK_CAPTURE_REAL=1 node scripts/capture-real-screenshots.mjs
 - Do not publish until `token-work coverage` shows Claude/Codex event-level rows or explains why they are unavailable. Cursor detected-only must not be marketed as successful native usage collection.
 - If the package name is unavailable, publish the fallback only after updating README, package metadata, and release notes consistently.
 - `npm whoami` must succeed before running `npm publish --access public`.
-- After publish, run `npm run smoke:published -- --version 1.0.0` and verify npm latest resolves to `1.0.0`.
+- After publish, run `npm run smoke:published -- --version 2.0.0` and verify npm latest resolves to `2.0.0`.
 - If using GitHub Trusted Publishing, trigger `.github/workflows/publish-npm.yml` manually only after `release-gate` is green.
 
 ## Pricing Refresh
 
 - `.github/workflows/update-pricing.yml` must run weekly at Monday 00:01 Asia/Shanghai (`1 16 * * 0` in UTC).
-- `npm run pricing:update` must fetch provider-owned pricing pages, write `data/official-pricing.json`, and update `src/pricing.mjs` only after at least one official source succeeds.
+- `npm run pricing:update` must fetch provider-owned pricing pages, write `data/official-pricing.json`, and update `src/pricing.ts` only after at least one official source succeeds.
 - If all official sources fail, the workflow should fail and leave the existing cache and built-in table unchanged.
 - RMB prices may be converted to internal USD cost math using the captured USD/CNY refresh rate, but README/release notes must keep the “not a provider invoice” boundary.
 

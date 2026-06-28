@@ -1,0 +1,71 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { rmSync } from 'node:fs';
+import { resolve } from 'node:path';
+import test from 'node:test';
+
+const root = resolve(import.meta.dirname, '..');
+
+test('Dockerfile matches package runtime and only copies existing paths', () => {
+  const dockerfile = readFileSync(resolve(root, 'Dockerfile'), 'utf8');
+  assert.match(dockerfile, /^FROM node:24-alpine/m);
+  assert.doesNotMatch(dockerfile, /pricing-litellm|pricing-openrouter/);
+  assert.match(dockerfile, /^COPY public \.\/public$/m);
+  assert.match(dockerfile, /^COPY data\/\.gitkeep \.\/data\/\.gitkeep$/m);
+  assert.match(dockerfile, /^COPY data\/official-pricing\.json \.\/data\/official-pricing\.json$/m);
+  assert.match(dockerfile, /^COPY scripts\/build-runtime\.ts \.\/scripts\/build-runtime\.ts$/m);
+  assert.match(dockerfile, /npm run build && node scripts\/build-runtime\.ts && npm prune --omit=dev/);
+  assert.match(dockerfile, /^CMD \["node", "dist-runtime\/server\.mjs"\]$/m);
+  assert.doesNotMatch(dockerfile, /^CMD \["node", "src\/server\.ts"\]$/m);
+
+  for (const match of dockerfile.matchAll(/^COPY\s+(.+?)\s+(.+)$/gm)) {
+    const sources = match[1].split(/\s+/).filter(item => item !== '--from');
+    for (const source of sources) {
+      if (source.startsWith('--')) continue;
+      assert.equal(existsSync(resolve(root, source)), true, `Dockerfile COPY source must exist: ${source}`);
+    }
+  }
+});
+
+test('runtime package build does not emit declaration files as modules', () => {
+  const result = spawnSync(process.execPath, ['scripts/build-runtime.ts'], {
+    cwd: root,
+    encoding: 'utf8'
+  });
+  try {
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(readFileSync(resolve(root, 'dist-runtime', 'cli.mjs'), 'utf8'), /^#!\/usr\/bin\/env node/);
+    assert.doesNotMatch(readFileSync(resolve(root, 'dist-runtime', 'collector-registry.mjs'), 'utf8'), /\.\/collectors\/[^'"]+\.ts/);
+  } finally {
+    rmSync(resolve(root, 'dist-runtime'), { recursive: true, force: true });
+  }
+});
+
+test('package bin uses a stable checked-in launcher', () => {
+  const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+  assert.equal(pkg.bin?.['token-work'], 'bin/token-work.mjs');
+  const launcher = readFileSync(resolve(root, 'bin', 'token-work.mjs'), 'utf8');
+  assert.match(launcher, /^#!\/usr\/bin\/env node/);
+  assert.match(launcher, /dist-runtime', 'cli\.mjs'/);
+  assert.match(launcher, /src', 'cli\.ts'/);
+});
+
+test('docker compose remote bind is explicit and keeps collector home read-only', () => {
+  const compose = readFileSync(resolve(root, 'docker-compose.yml'), 'utf8');
+  assert.match(compose, /HOST:\s+"0\.0\.0\.0"/);
+  assert.match(compose, /INGEST_TOKEN:/);
+  assert.match(compose, /TOKEN_WORK_ALLOW_REMOTE:\s+"1"/);
+  assert.match(compose, /TOKEN_WORK_COLLECTOR_HOME/);
+  assert.match(compose, /:\/collector-home:ro/);
+});
+
+test('.dockerignore excludes private runtime data from build context', () => {
+  const ignorePath = resolve(root, '.dockerignore');
+  assert.equal(existsSync(ignorePath), true);
+  const ignore = readFileSync(ignorePath, 'utf8');
+  assert.match(ignore, /^data\/\*$/m);
+  assert.match(ignore, /^!data\/\.gitkeep$/m);
+  assert.match(ignore, /^node_modules$/m);
+  assert.match(ignore, /^dist$/m);
+});

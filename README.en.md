@@ -10,6 +10,8 @@ Yuanheng is the Chinese short name. **Token Work ROI** is the English product id
 
 It is not a chat tool and not a provider billing system. Yuanheng reads structured usage records only. It does not store prompts, responses, full conversations, diffs, command bodies, or full local paths.
 
+The current version is **v2.0.0**. v2 moves the source entrypoints to TypeScript. The published-package command stays the same: use `npx token-work`.
+
 ## Who It Is For
 
 Use it if you:
@@ -45,13 +47,13 @@ To see a demo without scanning local logs:
 npx token-work demo
 ```
 
-From a source checkout:
+From a source checkout, do not use `npx token-work` as the local source entry. `npx` resolves an npm package; run the local file instead:
 
 ```bash
 git clone https://github.com/codelishang/token-work-roi.git
 cd token-work-roi
 npm install
-node src/cli.mjs
+node src/cli.ts
 ```
 
 ## What To Open First
@@ -211,9 +213,12 @@ It may store structured fields needed for review, such as time, source, model, t
 ```bash
 npm install
 npm test
+npm run typecheck:tools
 npm run build
 npm run privacy:check
 ```
+
+From a source checkout, use `node src/cli.ts`. Published-package users should continue to use `npx token-work`; command arguments remain stable. The old direct `.mjs` source paths are no longer v2 entrypoints.
 
 ## Name And Logo
 

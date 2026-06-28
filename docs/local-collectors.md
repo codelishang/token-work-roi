@@ -38,24 +38,26 @@ If explicit token fields are missing, Yuanheng reports detection status only and
 从源码运行时使用：
 
 ```bash
-node src/cli.mjs
-node src/cli.mjs --no-collect
-node src/cli.mjs --dry-run-only
-node src/cli.mjs coverage --sources=claude,codex,cursor --json
-node src/cli.mjs collect --dry-run --sources=claude,codex,cursor
-node src/cli.mjs collect --apply --yes --sources=claude,codex
-node src/cli.mjs compare-ccusage --report=session --json --yes
+node src/cli.ts
+node src/cli.ts --no-collect
+node src/cli.ts --dry-run-only
+node src/cli.ts coverage --sources=claude,codex,cursor --json
+node src/cli.ts collect --dry-run --sources=claude,codex,cursor
+node src/cli.ts collect --apply --yes --sources=claude,codex
+node src/cli.ts compare-ccusage --report=session --json --yes
 ```
 
-发布包用户可以把 `node src/cli.mjs` 换成 `npx token-work`。
+发布包用户可以把 `node src/cli.ts` 换成 `npx token-work`。在源码目录里不要用 `npx token-work` 作为本地入口；`npx` 会按 npm 包解析。
 
-Use `npx token-work` instead of `node src/cli.mjs` when using the published package.
+Use `npx token-work` instead of `node src/cli.ts` when using the published package.
+
+v2 源码入口使用 TypeScript 文件。旧的 `.mjs` 源码直跑路径不再作为 v2 入口；npm 用户命令保持不变。
 
 ## 命令怎么选 / Which Command To Use
 
 | 命令 | 作用 |
 |---|---|
-| `node src/cli.mjs` | 默认入口，先检查来源，再写入可信 Claude/Codex 事件级记录，最后打开浏览器 |
+| `node src/cli.ts` | 默认入口，先检查来源，再写入可信 Claude/Codex 事件级记录，最后打开浏览器 |
 | `--no-collect` | 只打开当前 SQLite，不扫描本机日志 |
 | `--dry-run-only` | 只预检，不写入数据库 |
 | `coverage` | 查看每个来源是否有可靠词元字段，以及 daily/session/event 是否能对上 |
@@ -65,7 +67,7 @@ Use `npx token-work` instead of `node src/cli.mjs` when using the published pack
 
 ## 写入前的保护 / Write Safety
 
-`collect` 必须显式选择 `--dry-run` 或 `--apply`。直接运行 `node src/collect.mjs` 或 `npm run collect` 不会绕过确认流程。
+`collect` 必须显式选择 `--dry-run` 或 `--apply`。直接运行 `node src/collect.ts` 或 `npm run collect` 不会绕过确认流程。
 
 `collect` requires either `--dry-run` or `--apply`. Running the lower-level script directly will not bypass the confirmation boundary.
 
