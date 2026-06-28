@@ -52,6 +52,7 @@ const fmtUS = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD
 const fmtUS4 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 });
 const fmtCNY = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const FALLBACK_USD_CNY_RATE = 7.2;
+const LEGAL_NOTICE = 'AGPL-3.0-only 协议，版权所有 © 2026 coderlishang，All rights reserved.';
 let exchangeRate = {
   base: 'USD',
   quote: 'CNY',
@@ -301,6 +302,7 @@ function alpha(color, a) {
 
 export const U = {
   PALETTE, PALETTE_FALLBACK, getSourceColor,
+  LEGAL_NOTICE,
   fmt, fmtUS, fmtUS4, fmtCNY,
   money, money4, compactMoney,
   getExchangeRate, setExchangeRate, loadExchangeRate, exchangeRateLabel, exchangeRateSourceLabel,

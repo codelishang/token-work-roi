@@ -3025,6 +3025,13 @@ section.story:last-of-type  { padding-bottom: 0; }
   justify-content: center;
   gap: 28px;
 }
+.review-legal-notice {
+  grid-column: 1 / -1;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
 
 .period-jump {
   display: inline-flex;

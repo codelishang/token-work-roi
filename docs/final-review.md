@@ -36,7 +36,7 @@ Token Work ROI is considered feature-complete for the current `v1.0.0` local rel
 - Desktop Pulse keeps Electron `contextIsolation`, `nodeIntegration: false`, sandbox, web security, denied permission requests, denied new windows, and local-only navigation.
 - Markdown report includes Local Trust, Coverage-to-Evidence, output evidence, model strategy, and action trend sections.
 - Privacy check passes and publish tarballs contain no real SQLite databases, `.env`, AI logs, real exports, or personal paths.
-- License files and package metadata consistently state `AGPL-3.0-only` with commercial dual licensing available under separate written terms.
+- License files and package metadata consistently state the latest notice: `AGPL-3.0-only license. Copyright © 2026 coderlishang. All rights reserved.`
 - Public README uses demo/sanitized screenshots only. Real local validation screenshots stay in local QA artifacts such as `tmp/qa-screenshots/` and are not committed under `docs/assets`.
 
 ## Stop Rules

@@ -1189,6 +1189,7 @@ function Dashboard({
       )}
       </>
       )}
+      <footer className="app-legal-notice">{U.LEGAL_NOTICE}</footer>
     </div>
   );
 }

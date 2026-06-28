@@ -223,4 +223,4 @@ Logo 和品牌使用说明见 [docs/brand.md](https://github.com/codelishang/tok
 
 ## 开源协议
 
-本项目采用 AGPL-3.0-only，并提供商业双授权说明。商业使用前请阅读 [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)。
+AGPL-3.0-only 协议，版权所有 © 2026 coderlishang，All rights reserved.

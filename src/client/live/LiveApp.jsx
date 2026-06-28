@@ -168,6 +168,7 @@ export function LiveApp() {
         <span>窗口：近 24 小时</span>
         <span>最新 token 事件：{formatChinaStandardTime(snapshot?.latestEventAt)}</span>
         <span>数据仅保存在本地，不读取正文</span>
+        <span className="pulse-legal-notice">{U.LEGAL_NOTICE}</span>
       </footer>
     </main>
   );

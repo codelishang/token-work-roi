@@ -4181,3 +4181,13 @@ table.dt input[type="checkbox"] {
     background: var(--surface);
   }
 }
+
+.app-legal-notice {
+  margin: 18px 0 0;
+  padding: 14px 4px 0;
+  border-top: 1px solid var(--line);
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}

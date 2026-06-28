@@ -1,10 +1,9 @@
 # Notice
 
 Token Work ROI is licensed under the GNU Affero General Public License v3.0 only.
-Commercial dual licensing is available under separate written terms; see
-`COMMERCIAL-LICENSE.md`.
+AGPL-3.0-only license. Copyright © 2026 coderlishang. All rights reserved.
 
-Token Work ROI is a standalone public packaging and productization effort by ryan.
+Token Work ROI is a standalone public packaging and productization effort by coderlishang@gmail.com.
 
 Token Work ROI adds and productizes the following first-class features:
 

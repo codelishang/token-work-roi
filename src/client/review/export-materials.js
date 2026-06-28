@@ -17,7 +17,7 @@ export function buildProfessionalEvidencePack({
   const evidence = evidenceSummary({ evidenceFlywheel, roiEvidence, evidenceAutopilotState });
   const actions = nextActions({ sessions, evidenceAutopilotState, evidenceFlywheel });
 
-  return [
+  return withLegalNotice([
     '# Token Work ROI Review Evidence',
     '',
     '> 用途：这是一份可复制到周报、项目 README、博客草稿或面试准备文档的复盘证据包。它只使用本地结构化 token/session 元数据，不包含 prompt、response、transcript、diff 或完整本机路径。',
@@ -99,7 +99,7 @@ export function buildProfessionalEvidencePack({
     '- 成本口径：官方价不是账单；这里只使用官方公开 token 价格换算，用于复盘和策略模拟，不用于财务对账。',
     '- 隐私口径：不保存 prompt、response、transcript、diff、command body 或完整本机路径。',
     '- 证据口径：manual > auto high-confidence > draft > missing；任何自动推断都必须标明来源和置信度。'
-  ].join('\n');
+  ].join('\n'));
 }
 
 export function buildTechnicalBlogDraft({
@@ -118,7 +118,7 @@ export function buildTechnicalBlogDraft({
   const savings = savingsSimulation?.recommendations || savingsSimulation?.items || [];
   const strategyCoverage = modelStrategy?.coverage?.sampleShare ?? modelStrategy?.coverage?.strategySampleShare ?? null;
 
-  return [
+  return withLegalNotice([
     '# 我为什么做 Token Work ROI：把 AI 编程 token 变成可复盘的工作证据',
     '',
     '## 标题候选',
@@ -202,7 +202,7 @@ export function buildTechnicalBlogDraft({
     '## 下一步',
     '',
     '下一步不是继续堆功能，而是优先处理最高成本的待确认证据队列：补项目、任务、阶段、价值和产出链接。只有证据变完整，Savings Simulator 和 Model Strategy 才会给出更可信的建议。'
-  ].join('\n');
+  ].join('\n'));
 }
 
 export function buildResumeAndInterviewPack({
@@ -225,7 +225,7 @@ export function buildResumeAndInterviewPack({
     : 'structured token metadata';
   const flywheelPhrase = `${evidenceFlywheel?.completedSteps || 0}/${evidenceFlywheel?.totalSteps || 6} evidence-flywheel steps`;
 
-  return [
+  return withLegalNotice([
     '# Token Work ROI Resume / Interview Pack',
     '',
     '## 中文简历版',
@@ -261,6 +261,16 @@ export function buildResumeAndInterviewPack({
     '- 不写“精确账单”或“真实节省金额”，只写“官方公开 token 价格换算 / 策略模拟”。',
     '- 不写“自动判断产出质量”，只写“结构化证据和人工确认”。',
     '- 不写“覆盖所有工具”，只写“原生可信 + ccusage bridge + detected-only 透明解释”。'
+  ].join('\n'));
+}
+
+function withLegalNotice(markdown) {
+  return [
+    markdown,
+    '',
+    '---',
+    '',
+    U.LEGAL_NOTICE
   ].join('\n');
 }
 

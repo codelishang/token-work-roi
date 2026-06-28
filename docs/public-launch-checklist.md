@@ -85,5 +85,6 @@ TOKEN_WORK_CAPTURE_REAL=1 node scripts/capture-real-screenshots.mjs
 
 - `package.json` must use `AGPL-3.0-only`.
 - `LICENSE` must contain GNU Affero General Public License v3.0.
-- `COMMERCIAL-LICENSE.md` must explain the commercial dual-license path for closed-source distribution, proprietary hosted services, and private modifications outside AGPL obligations.
+- English docs must use: `AGPL-3.0-only license. Copyright © 2026 coderlishang. All rights reserved.`
+- Chinese UI and docs must use: `AGPL-3.0-only 协议，版权所有 © 2026 coderlishang，All rights reserved.`
 - `NOTICE.md` must not contain obsolete attribution wording.

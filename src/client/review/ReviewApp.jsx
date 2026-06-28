@@ -1002,6 +1002,7 @@ function ReviewDashboard({ rawData, onReloadData }) {
             </svg>
             导出 Markdown 复盘报告
           </button>
+          <div className="review-legal-notice">{U.LEGAL_NOTICE}</div>
         </div>
       </footer>
 

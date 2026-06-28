@@ -223,4 +223,4 @@ Logo rationale and usage notes are in [docs/brand.md](https://github.com/codelis
 
 ## License
 
-This project uses AGPL-3.0-only with a commercial dual-licensing note. Read [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) before commercial use.
+AGPL-3.0-only license. Copyright © 2026 coderlishang. All rights reserved.

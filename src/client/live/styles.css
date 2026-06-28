@@ -986,6 +986,12 @@ body.desktop-pulse-body::before {
   white-space: nowrap;
 }
 
+.pulse-footer .pulse-legal-notice {
+  grid-column: 1 / -1;
+  white-space: normal;
+  text-align: center;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .pulse-badge::before,
   .pulse-logo {
