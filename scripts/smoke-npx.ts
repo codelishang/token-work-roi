@@ -30,8 +30,7 @@ try {
 
   const apiPort = await freePort(4180);
   const uiPort = await freePort(apiPort + 1000);
-  const child = spawn(process.execPath, [
-    cliPath,
+  const child = spawnInstalledCli(cliPath, [
     '--db', dbPath,
     '--api-port', String(apiPort),
     '--ui-port', String(uiPort),
@@ -41,9 +40,7 @@ try {
     env: safeEnv({
       TOKEN_WORK_CONFIG: join(fixtureDir, 'collectors.json'),
       NODE_OPTIONS: '--no-warnings'
-    }),
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
+    })
   });
   let stdout = '';
   let stderr = '';
@@ -169,6 +166,22 @@ function spawnNpm(args, { cwd }) {
   return spawn('npm', args, {
     cwd,
     env: safeEnv(),
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+}
+
+function spawnInstalledCli(command, args, { cwd, env }) {
+  if (process.platform === 'win32') {
+    return spawn('cmd.exe', ['/d', '/s', '/c', [command, ...args].map(quoteWindowsArg).join(' ')], {
+      cwd,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    });
+  }
+  return spawn(command, args, {
+    cwd,
+    env,
     stdio: ['ignore', 'pipe', 'pipe']
   });
 }

@@ -51,6 +51,13 @@ test('package bin uses a stable checked-in launcher', () => {
   assert.match(launcher, /src', 'cli\.ts'/);
 });
 
+test('npx smoke runs the installed command wrapper directly', () => {
+  const smoke = readFileSync(resolve(root, 'scripts', 'smoke-npx.ts'), 'utf8');
+  assert.match(smoke, /spawnInstalledCli\(cliPath,/);
+  assert.match(smoke, /cmd\.exe/);
+  assert.doesNotMatch(smoke, /spawn\(process\.execPath,\s*\[\s*cliPath/);
+});
+
 test('docker compose remote bind is explicit and keeps collector home read-only', () => {
   const compose = readFileSync(resolve(root, 'docker-compose.yml'), 'utf8');
   assert.match(compose, /HOST:\s+"0\.0\.0\.0"/);
