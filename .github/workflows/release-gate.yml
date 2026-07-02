@@ -18,6 +18,8 @@ jobs:
   release-gate:
     name: ${{ matrix.os }} / Node ${{ matrix.node }}
     runs-on: ${{ matrix.os }}
+    env:
+      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
     strategy:
       fail-fast: false
       matrix:
@@ -32,7 +34,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
 
-      - run: npm ci
+      - run: npm ci --registry=https://registry.npmmirror.com
 
       - run: npm test
 
@@ -44,7 +46,7 @@ jobs:
 
       - run: npm run privacy:check
 
-      - run: npm audit --audit-level=low
+      - run: npm audit --audit-level=low --registry=https://registry.npmmirror.com
 
       - run: npm run smoke:npx
 

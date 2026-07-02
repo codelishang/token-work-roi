@@ -14,7 +14,7 @@ npm run desktop:install
 npm run desktop
 ```
 
-如果第一次启动时看到 Electron 下载失败，先运行一次 `npm run desktop:install`。安装脚本默认使用 Electron 官方下载源；国内网络需要加速时，可以显式设置 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
+如果第一次启动时看到 Electron 下载失败，先运行一次 `npm run desktop:install`。安装脚本默认使用 npmmirror 的 Electron 镜像；如需改用其他下载源，可以通过 `ELECTRON_MIRROR` 环境变量覆盖。
 
 ## 它会做什么
 

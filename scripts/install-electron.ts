@@ -10,6 +10,7 @@ if (!existsSync(installScript)) {
 }
 
 const env = {
+  ELECTRON_MIRROR: 'https://npmmirror.com/mirrors/electron/',
   ...process.env
 };
 

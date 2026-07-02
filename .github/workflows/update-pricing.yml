@@ -21,7 +21,7 @@ jobs:
           node-version: '24.x'
           cache: npm
 
-      - run: npm ci
+      - run: npm ci --registry=https://registry.npmmirror.com
       - run: npm run typecheck:tools
 
       - name: Refresh official pricing
