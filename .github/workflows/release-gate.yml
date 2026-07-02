@@ -46,7 +46,7 @@ jobs:
 
       - run: npm run privacy:check
 
-      - run: npm audit --audit-level=low --registry=https://registry.npmmirror.com
+      - run: npm audit --audit-level=low --registry=https://registry.npmjs.org
 
       - run: npm run smoke:npx
 
