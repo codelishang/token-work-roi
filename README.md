@@ -2,7 +2,7 @@
 
 [English](README.en.md) | **中文**
 
-元衡是一个在本机运行的 AI 编程用量复盘工具。它帮你看清楚三件事：
+元衡是一个本机运行的 AI 编程用量复盘工具，主要看三件事：
 
 1. 最近用了多少词元（token），大概花了多少钱。
 2. 这些用量来自哪些工具、模型和项目。
@@ -14,14 +14,12 @@
 
 ## 适合谁
 
-适合：
-
 - 经常用 Claude Code、Codex CLI、Cursor、Gemini CLI 等工具写代码的人。
 - 想知道 AI 编程成本主要花在哪些项目和模型上。
 - 想把一周的 AI 使用情况整理成复盘报告。
 - 想给自己设置预算提醒，而不是等到账单出来才发现用量过高。
 
-不适合：
+不适合这些场景：
 
 - 想查看完整聊天内容。
 - 想做团队账号、云同步或多人权限管理。
@@ -35,19 +33,19 @@
 npx token-work
 ```
 
-命令执行后会做三件事：
+启动后会：
 
 1. 只读检查本机默认来源是否有结构化用量记录。
 2. 仅在通过可信门槛时，把 Claude/Codex 事件级用量写入本地 SQLite 数据库。
 3. 打开浏览器页面。
 
-如果你只想看演示，不想扫描本机日志：
+只看演示数据：
 
 ```bash
 npx token-work demo
 ```
 
-如果你已经克隆源码，不要在源码目录里用 `npx token-work` 作为本地入口。`npx` 会按 npm 包解析；源码目录请直接运行本地文件：
+源码目录不要用 `npx token-work` 作为本地入口。`npx` 会按 npm 包解析；源码目录请运行本地文件：
 
 ```bash
 git clone https://github.com/codelishang/token-work-roi.git
@@ -56,7 +54,7 @@ npm install
 node src/cli.ts
 ```
 
-## 第一次打开看哪里
+## 先看哪里
 
 | 页面 | 用途 |
 |---|---|
@@ -66,11 +64,7 @@ node src/cli.ts
 | 实时 | 看近 24 小时词元压力、burn rate、预算状态和当前建议 |
 | 导入/预算弹窗 | 从看板顶部打开，用于导入结构化 JSON 和创建预算窗口 |
 
-最简单的使用顺序：
-
-1. 先看“可信度”，确认数据是不是可信事件级记录。
-2. 再看“看板”，了解今天或本周主要用量。
-3. 最后到“复盘”，把高消耗 session 关联到项目和产出。
+第一次打开建议先看“可信度”，再看“看板”，最后到“复盘”补项目和产出。
 
 ## 常用命令
 
@@ -116,7 +110,7 @@ npx token-work privacy-check
 
 ## 结构化 JSON 导入
 
-元衡可以导入外部工具生成的结构化 JSON。例如，如果你已经在用 ccusage，可以把它生成的 JSON 导入元衡。
+元衡可以导入外部工具生成的结构化 JSON，例如 ccusage。
 
 ```bash
 npx token-work import-usage --format=ccusage-json --file ccusage.json --dry-run
@@ -138,7 +132,7 @@ npx token-work import-usage --format=ccusage-cli --report=session --dry-run --ye
 
 ## 预算提醒
 
-元衡支持自定义预算窗口，例如：
+预算窗口可以这样设：
 
 - 最近 60 分钟最多使用多少词元。
 - 每天从固定时间开始计算预算。
@@ -149,7 +143,7 @@ npx token-work import-usage --format=ccusage-cli --report=session --dry-run --ye
 
 ## 桌面小窗（源码入口）
 
-桌面小窗目前是源码仓库里的开发入口，不是签名安装包，也不是 npm 包的一键桌面能力。需要先克隆仓库并安装开发依赖：
+桌面小窗目前是源码仓库入口，不是签名安装包，也不是 npm 包的一键桌面功能：
 
 ```bash
 npm install
@@ -157,7 +151,7 @@ npm run desktop:install
 npm run desktop
 ```
 
-桌面小窗适合放在旁边看实时用量。它打开的仍然是本机元衡服务，不会在桌面壳里实现另一套采集器。默认启动桌面小窗不会自动执行定时采集；如需要实时刷新，可在确认采集边界后显式配置本地服务。
+桌面小窗只负责打开本机元衡服务里的实时页面，不实现另一套采集器。默认不会启动即采集，也不会开启定时采集。
 
 桌面版适合：
 
@@ -165,7 +159,7 @@ npm run desktop
 - 从托盘快速打开实时、看板、复盘和可信度。
 - 工作时看 burn rate、预算和当前建议。
 
-完整复盘、导入和报告导出仍建议在浏览器里完成。更多说明见 [desktop/README.md](https://github.com/codelishang/token-work-roi/blob/main/desktop/README.md) 和 [docs/desktop-pulse.md](https://github.com/codelishang/token-work-roi/blob/main/docs/desktop-pulse.md)。
+复盘、导入和报告导出仍建议在浏览器里完成。更多说明见 [desktop/README.md](https://github.com/codelishang/token-work-roi/blob/main/desktop/README.md) 和 [docs/desktop-pulse.md](https://github.com/codelishang/token-work-roi/blob/main/docs/desktop-pulse.md)。
 
 ## 截图
 
