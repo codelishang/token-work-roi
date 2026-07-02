@@ -228,8 +228,6 @@ async function ensureLocalService() {
     cwd: packageRoot,
     env: {
       ...process.env,
-      SCHEDULED_COLLECT_ENABLED: process.env.SCHEDULED_COLLECT_ENABLED || '0',
-      SCHEDULED_COLLECT_RUN_ON_START: process.env.SCHEDULED_COLLECT_RUN_ON_START || '0',
       SCHEDULED_COLLECT_INTERVAL_SECONDS: String(liveCollectIntervalSeconds()),
       TOKEN_WORK_LIVE_COLLECT_INTERVAL_SECONDS: String(liveCollectIntervalSeconds())
     },

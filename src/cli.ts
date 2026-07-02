@@ -31,13 +31,13 @@ try {
   if (command === 'auto') {
     await autoCommand();
   } else if (command === 'start') {
-    await startCommand({ demo: false });
+    await autoCommand({ defaultOpenBrowser: false });
   } else if (command === 'open') {
-    await startCommand({ demo: false, openBrowser: true });
+    await autoCommand({ defaultOpenBrowser: true });
   } else if (command === 'demo') {
     await demoCommand();
   } else if (command === 'live') {
-    await startCommand({ demo: false, route: '/live' });
+    await autoCommand({ route: '/live', defaultOpenBrowser: false });
   } else if (command === 'statusline') {
     await statuslineCommand();
   } else if (command === 'collect') {
@@ -69,15 +69,15 @@ try {
   process.exit(1);
 }
 
-async function autoCommand() {
+async function autoCommand({ route = '/', defaultOpenBrowser = true } = {}) {
   const dbPath = cliDbPath();
   const coverageSources = args.sources || args.collectors || 'claude,codex,cursor';
   const applySources = args.applySources || args.writeSources || 'claude,codex';
-  const openBrowser = args.noOpen ? false : true;
+  const openBrowser = args.noOpen ? false : defaultOpenBrowser;
 
   if (args.noCollect) {
     console.log('[token-work] auto collect skipped (--no-collect). Starting local UI.');
-    await startCommand({ demo: false, dbPath, openBrowser, liveCollect: false });
+    await startCommand({ demo: false, dbPath, route, openBrowser, liveCollect: false });
     return;
   }
 
@@ -89,13 +89,13 @@ async function autoCommand() {
   } catch (error) {
     console.error(`[token-work] coverage failed: ${error.message}`);
     console.error('[token-work] SQLite was not modified. Starting local UI so the failure is visible.');
-    await startCommand({ demo: false, dbPath, openBrowser, liveCollect: false });
+    await startCommand({ demo: false, dbPath, route, openBrowser, liveCollect: false });
     return;
   }
 
   if (args.dryRunOnly) {
     console.log('[token-work] dry-run only; SQLite was not modified. Starting local UI.');
-    await startCommand({ demo: false, dbPath, openBrowser, liveCollect: false });
+    await startCommand({ demo: false, dbPath, route, openBrowser, liveCollect: false });
     return;
   }
 
@@ -115,7 +115,7 @@ async function autoCommand() {
     console.log('[token-work] no trusted Claude/Codex event-level history found; SQLite was not modified.');
   }
 
-  await startCommand({ demo: false, dbPath, openBrowser, liveCollect: true });
+  await startCommand({ demo: false, dbPath, route, openBrowser, liveCollect: true });
 }
 
 async function demoCommand() {
@@ -994,10 +994,10 @@ function printHelp() {
     '  token-work [--db data/usage.sqlite] [--no-collect|--dry-run-only]',
     '    Default real entry: coverage -> trusted Claude/Codex apply -> UI -> 60s live refresh.',
     '  token-work demo [--seed-only] [--db data/demo.sqlite]',
-    '  token-work start [--db data/usage.sqlite] [--api-port 4173|0] [--ui-port 5173|0]',
-    '  token-work open [--db data/usage.sqlite] [--api-port 4173|0] [--ui-port 5173|0]',
+    '  token-work start [--db data/usage.sqlite] [--api-port 4173|0] [--ui-port 5173|0] [--no-collect|--dry-run-only]',
+    '  token-work open [--db data/usage.sqlite] [--api-port 4173|0] [--ui-port 5173|0] [--no-collect|--dry-run-only]',
     '    Use port 0 to let the OS assign a free local port.',
-    '  token-work live [--db data/usage.sqlite]',
+    '  token-work live [--db data/usage.sqlite] [--no-collect|--dry-run-only]',
     '  token-work statusline [--db data/usage.sqlite] [--window-minutes 15] [--format text|json]',
     '  token-work collectors [--json]',
     '  token-work collectors --audit [--json]',

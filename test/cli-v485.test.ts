@@ -77,7 +77,7 @@ test('bare CLI no-collect starts UI without scanning or writing usage', async ()
   }
 });
 
-test('start command accepts OS-assigned API and UI ports', async () => {
+test('start command applies trusted usage before opening UI', async () => {
   const fixture = createAutoFixture();
   const { child, output, cli } = startCli(fixture, ['start']);
 
@@ -86,7 +86,40 @@ test('start command accepts OS-assigned API and UI ports', async () => {
     assert.match(output.stdout, /\[token-work\] UI  http:\/\/127\.0\.0\.1:\d+/);
     assert.match(output.stdout, /\[token-work\] API http:\/\/127\.0\.0\.1:\d+/);
     const data = await waitForData(apiPort);
+    assert.equal(data.meta.runtime.counts.tokenEventRows, 1);
+    assert.equal(data.meta.dataMode.id, 'real-event-verified');
+  } finally {
+    await stopChild(child);
+    cleanupFixture(fixture);
+  }
+});
+
+test('start command keeps explicit no-collect read-only', async () => {
+  const fixture = createAutoFixture();
+  const { child, output, cli } = startCli(fixture, ['start'], ['--no-collect']);
+
+  try {
+    const apiPort = await waitForCliApiPort(child, output, cli);
+    const data = await waitForData(apiPort);
+    assert.equal(data.meta.runtime.counts.tokenEventRows, 0);
     assert.equal(data.meta.dataMode.id, 'empty');
+  } finally {
+    await stopChild(child);
+    cleanupFixture(fixture);
+  }
+});
+
+test('live command applies trusted usage and opens live route', async () => {
+  const fixture = createAutoFixture();
+  const { child, output, cli } = startCli(fixture, ['live']);
+
+  try {
+    const apiPort = await waitForCliApiPort(child, output, cli);
+    assert.match(output.stdout, /\[token-work\] UI  http:\/\/127\.0\.0\.1:\d+\/live/);
+    const data = await waitForData(apiPort);
+    assert.equal(data.meta.runtime.counts.tokenEventRows, 1);
+    const live = await getJson(apiPort, '/api/live');
+    assert.equal(live.autoCollectEnabled, true);
   } finally {
     await stopChild(child);
     cleanupFixture(fixture);
