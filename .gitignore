@@ -8,14 +8,8 @@ node_modules/
 .vite/
 .npm-cache/
 dist/
-dist-runtime/
 release/
 .env
 .env.*
 .claude/
 .codex/
-
-# Local
-docs/user-manual.md
-docs/dist/
-scripts/export-user-manual-pdf.mjs

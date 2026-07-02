@@ -18,8 +18,6 @@
   "files": [
     "bin",
     "src",
-    "dist",
-    "!dist/token-work-icon.icns",
     "dist-runtime",
     "config",
     "public/manifest.webmanifest",
@@ -64,7 +62,7 @@
     "desktop": "node scripts/run-desktop.ts",
     "desktop:install": "node scripts/install-electron.ts",
     "desktop:smoke": "node scripts/smoke-desktop.ts",
-    "prepack": "npm run build && node scripts/build-runtime.ts",
+    "prepack": "node scripts/build-runtime.ts",
     "postpack": "node scripts/clean-runtime.ts",
     "typecheck:tools": "tsc --noEmit",
     "test": "node --test"

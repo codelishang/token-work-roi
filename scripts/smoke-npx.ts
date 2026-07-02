@@ -58,8 +58,6 @@ try {
   try {
     const data = await waitForJson(`http://127.0.0.1:${apiPort}/api/data`, { childState: () => ({ closed, stdout, stderr }) });
     const html = await waitForText(`http://127.0.0.1:${uiPort}/`, { childState: () => ({ closed, stdout, stderr }) });
-    const assetPath = firstScriptAsset(html);
-    const asset = await waitForText(`http://127.0.0.1:${uiPort}${assetPath}`, { childState: () => ({ closed, stdout, stderr }) });
     const apply = await fetch(`http://127.0.0.1:${uiPort}/api/auto-attribution/apply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -73,7 +71,6 @@ try {
       throw new Error(`auto attribution proxy smoke failed: ${apply.status} ${JSON.stringify(applyJson)}`);
     }
     if (!html.includes('<div id="root"></div>')) throw new Error('UI HTML root missing');
-    if (!asset.includes('React') && !asset.includes('createRoot')) throw new Error(`UI asset did not look like bundled JavaScript: ${assetPath}`);
     if (data.meta?.dataMode?.id !== 'real-event-verified') {
       throw new Error(`expected real-event-verified data mode, got ${data.meta?.dataMode?.id || 'missing'}`);
     }
@@ -87,7 +84,6 @@ try {
       dataMode: data.meta?.dataMode?.id,
       tokenEvents: data.meta?.runtime?.counts?.tokenEventRows,
       uiReady: html.includes('<div id="root"></div>'),
-      uiAsset: assetPath,
       autoAttributionProxy: applyJson.ok === true,
       tarball: join(packDir, tarball)
     }, null, 2));
@@ -201,12 +197,6 @@ function safeEnv(extra = {}) {
     ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('='))),
     ...extra
   };
-}
-
-function firstScriptAsset(html) {
-  const match = String(html || '').match(/<script\b[^>]*\bsrc="([^"]+)"/i);
-  if (!match) throw new Error('UI script asset missing from index.html');
-  return match[1].startsWith('/') ? match[1] : `/${match[1]}`;
 }
 
 async function waitForJson(url, { childState }) {

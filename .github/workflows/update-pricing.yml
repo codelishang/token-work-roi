@@ -36,5 +36,5 @@ jobs:
       - name: Commit pricing updates
         uses: stefanzweifel/git-auto-commit-action@v6
         with:
-          commit_message: "chore: 更新模型价格"
+          commit_message: "chore: refresh official model pricing"
           file_pattern: "src/pricing.ts data/official-pricing.json"
