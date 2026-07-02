@@ -45,6 +45,7 @@ test('runtime package build does not emit declaration files as modules', () => {
 test('package bin uses a stable checked-in launcher', () => {
   const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
   assert.equal(pkg.bin?.['token-work'], 'bin/token-work.mjs');
+  assert.equal(pkg.files.includes('dist'), true, 'published package must include built UI assets');
   const launcher = readFileSync(resolve(root, 'bin', 'token-work.mjs'), 'utf8');
   assert.match(launcher, /^#!\/usr\/bin\/env node/);
   assert.match(launcher, /dist-runtime', 'cli\.mjs'/);

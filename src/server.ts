@@ -2,7 +2,7 @@ import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync } f
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { basename, dirname, extname, join, resolve } from 'node:path';
-import { URL } from 'node:url';
+import { fileURLToPath, URL } from 'node:url';
 import {
   attachOfficialPricing,
   loadPricing,
@@ -77,11 +77,11 @@ validateHostConfiguration(host, {
   allowRemote: remoteAccessEnabled(),
   ingestToken: process.env.INGEST_TOKEN
 });
-const staticDir = existsSync(resolve(process.cwd(), 'dist'))
-  ? resolve(process.cwd(), 'dist')
-  : resolve(process.cwd(), 'public');
+const SOURCE_DIR = dirname(fileURLToPath(import.meta.url));
+const PACKAGE_ROOT = resolve(SOURCE_DIR, '..');
+const staticDir = resolveStaticDir();
 const dbPath = process.env.DB_PATH || defaultDbPath;
-const pricingCachePath = resolve(process.cwd(), 'data', 'official-pricing.json');
+const pricingCachePath = resolve(PACKAGE_ROOT, 'data', 'official-pricing.json');
 const packageVersion = readPackageVersion();
 const db = openDb(dbPath);
 let activeCollection = null;
@@ -1881,9 +1881,19 @@ function contentType(filePath) {
   return types[extname(filePath)] || 'application/octet-stream';
 }
 
+function resolveStaticDir() {
+  const candidates = [
+    resolve(PACKAGE_ROOT, 'dist'),
+    resolve(process.cwd(), 'dist'),
+    resolve(PACKAGE_ROOT, 'public'),
+    resolve(process.cwd(), 'public')
+  ];
+  return candidates.find(path => existsSync(resolve(path, 'index.html'))) || candidates[0];
+}
+
 function readPackageVersion() {
   try {
-    const pkg = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8'));
+    const pkg = JSON.parse(readFileSync(resolve(PACKAGE_ROOT, 'package.json'), 'utf8'));
     return typeof pkg.version === 'string' ? pkg.version : 'unknown';
   } catch {
     return 'unknown';
