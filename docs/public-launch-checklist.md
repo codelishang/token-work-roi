@@ -13,7 +13,7 @@ npm run pricing:update
 node src/cli.ts privacy-check --include-untracked
 node src/cli.ts coverage --sources=claude,codex,cursor --json
 npm view token-work version
-npm audit --audit-level=low
+npm audit --audit-level=low --registry=https://registry.npmjs.org
 npm run smoke:npx
 npm run smoke:browser
 npm run desktop:smoke
