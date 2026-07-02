@@ -6,6 +6,8 @@ This guide is for the first run: what to open first, what to click, and what not
 
 ## 1. 启动 / Start
 
+发布包用户使用：
+
 ```bash
 npx token-work
 ```
@@ -25,12 +27,14 @@ It checks local structured usage metadata in read-only mode, writes trusted Clau
 
 It does not store prompts, responses, full conversations, diffs, command bodies, or full local paths.
 
-从源码运行：
+从源码运行时不要在源码目录里用 `npx token-work` 作为本地入口。`npx` 会按 npm 包解析；源码目录请直接运行本地文件：
 
 ```bash
 npm install
-node src/cli.mjs
+node src/cli.ts
 ```
+
+v2 源码入口使用 TypeScript 文件。发布包用户仍使用 `npx token-work`，命令参数保持稳定。
 
 只看演示数据：
 

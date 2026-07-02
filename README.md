@@ -10,6 +10,8 @@
 
 英文标识为 **Token Work ROI**，npm 命令名为 `token-work`。它不是聊天工具，也不是服务商账单系统。元衡只读取结构化用量记录，不保存 prompt、response、完整对话、diff、命令正文或完整本机路径。
 
+当前版本为 **v2.0.0**。v2 将项目源码入口迁移到 TypeScript；发布包命令保持不变，仍然使用 `npx token-work`。
+
 ## 适合谁
 
 适合：
@@ -45,13 +47,13 @@ npx token-work
 npx token-work demo
 ```
 
-如果你已经克隆源码：
+如果你已经克隆源码，不要在源码目录里用 `npx token-work` 作为本地入口。`npx` 会按 npm 包解析；源码目录请直接运行本地文件：
 
 ```bash
 git clone https://github.com/codelishang/token-work-roi.git
 cd token-work-roi
 npm install
-node src/cli.mjs
+node src/cli.ts
 ```
 
 ## 第一次打开看哪里
@@ -211,9 +213,12 @@ npm run pricing:update
 ```bash
 npm install
 npm test
+npm run typecheck:tools
 npm run build
 npm run privacy:check
 ```
+
+源码运行时使用 `node src/cli.ts`。发布包用户仍使用 `npx token-work`，命令参数保持稳定；旧的源码直跑 `.mjs` 路径已不再作为 v2 入口。
 
 ## 名称和 Logo
 

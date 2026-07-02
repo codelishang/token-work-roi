@@ -25,9 +25,9 @@ npx token-work statusline --format=text --window-minutes=15 --max-width=100
 npx token-work statusline --format=json --window-minutes=15
 ```
 
-源码运行时，把 `npx token-work` 换成 `node src/cli.mjs`。
+源码运行时，把 `npx token-work` 换成 `node src/cli.ts`。
 
-From a source checkout, replace `npx token-work` with `node src/cli.mjs`.
+From a source checkout, replace `npx token-work` with `node src/cli.ts`.
 
 ## Claude Code
 

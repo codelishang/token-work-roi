@@ -1,7 +1,7 @@
 {
   "name": "token-work",
-  "version": "1.0.0",
-  "description": "Token Work ROI: local-first token usage, output evidence, and model strategy review for AI coding.",
+  "version": "2.0.0",
+  "description": "Token Work ROI: A local-first token usage, output evidence, and model strategy review for AI coding.",
   "license": "AGPL-3.0-only",
   "type": "module",
   "repository": {
@@ -13,10 +13,15 @@
   },
   "homepage": "https://github.com/codelishang/token-work-roi#readme",
   "bin": {
-    "token-work": "src/cli.mjs"
+    "token-work": "bin/token-work.mjs"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org"
   },
   "files": [
+    "bin",
     "src",
+    "dist-runtime",
     "config",
     "public/manifest.webmanifest",
     "public/token-work-icon.png",
@@ -27,7 +32,8 @@
     "docs/demo-data/token-work-demo.json",
     "!docs/demo-data/README.md",
     "index.html",
-    "vite.config.js",
+    "tsconfig.json",
+    "vite.config.ts",
     "README.md",
     "README.en.md",
     "LICENSE",
@@ -39,26 +45,29 @@
     "render.yaml"
   ],
   "scripts": {
-    "start": "node src/cli.mjs start",
-    "demo": "node src/cli.mjs demo",
-    "collect": "node src/collect.mjs",
-    "doctor": "node src/cli.mjs doctor",
-    "privacy:check": "node src/cli.mjs privacy-check",
-    "closure:check": "node src/closure-check.mjs",
-    "closure:import": "node src/closure-import.mjs",
-    "pricing:update": "node src/update-pricing.mjs",
-    "dev": "node src/dev.mjs",
+    "start": "node src/cli.ts start",
+    "demo": "node src/cli.ts demo",
+    "collect": "node src/collect.ts",
+    "doctor": "node src/cli.ts doctor",
+    "privacy:check": "node src/cli.ts privacy-check",
+    "closure:check": "node src/closure-check.ts",
+    "closure:import": "node src/closure-import.ts",
+    "pricing:update": "node src/update-pricing.ts",
+    "dev": "node src/dev.ts",
     "dev:client": "vite --host 127.0.0.1 --port 5173",
-    "dev:server": "node src/server.mjs",
+    "dev:server": "node src/server.ts",
     "build": "vite build",
-    "preview": "npm run build && node src/server.mjs",
-    "serve": "node src/server.mjs",
-    "smoke:npx": "node scripts/smoke-npx.mjs",
-    "smoke:browser": "node scripts/smoke-browser-console.mjs",
-    "smoke:published": "node scripts/smoke-published.mjs",
-    "desktop": "node scripts/run-desktop.mjs",
-    "desktop:install": "node scripts/install-electron.mjs",
-    "desktop:smoke": "node scripts/smoke-desktop.mjs",
+    "preview": "npm run build && node src/server.ts",
+    "serve": "node src/server.ts",
+    "smoke:npx": "node scripts/smoke-npx.ts",
+    "smoke:browser": "node scripts/smoke-browser-console.ts",
+    "smoke:published": "node scripts/smoke-published.ts",
+    "desktop": "node scripts/run-desktop.ts",
+    "desktop:install": "node scripts/install-electron.ts",
+    "desktop:smoke": "node scripts/smoke-desktop.ts",
+    "prepack": "node scripts/build-runtime.ts",
+    "postpack": "node scripts/clean-runtime.ts",
+    "typecheck:tools": "tsc --noEmit",
     "test": "node --test"
   },
   "engines": {
@@ -66,12 +75,16 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.2",
-    "echarts": "^6.0.0",
+    "echarts": "^6.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "vite": "^8.0.16"
   },
   "devDependencies": {
-    "electron": "^42.4.1"
+    "@types/node": "^24.13.2",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "electron": "^42.4.1",
+    "typescript": "^6.0.3"
   }
 }

@@ -11,6 +11,8 @@ jobs:
   publish:
     name: Publish token-work to npm
     runs-on: ubuntu-latest
+    env:
+      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
     steps:
       - uses: actions/checkout@v4
 
@@ -20,17 +22,19 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
 
-      - run: npm ci
+      - run: npm ci --registry=https://registry.npmmirror.com
 
       - run: npm test
 
-      - run: node src/cli.mjs privacy-check --include-untracked
+      - run: npm run typecheck:tools
+
+      - run: node src/cli.ts privacy-check --include-untracked
 
       - run: npm run build
 
       - run: npm run privacy:check
 
-      - run: npm audit --audit-level=low
+      - run: npm audit --audit-level=low --registry=https://registry.npmjs.org
 
       - run: npm run smoke:npx
 
@@ -44,4 +48,4 @@ jobs:
 
       - run: git diff --check
 
-      - run: npm publish --provenance --access public
+      - run: npm publish --provenance --access public --registry=https://registry.npmjs.org

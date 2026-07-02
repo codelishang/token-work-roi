@@ -21,7 +21,8 @@ jobs:
           node-version: '24.x'
           cache: npm
 
-      - run: npm ci
+      - run: npm ci --registry=https://registry.npmmirror.com
+      - run: npm run typecheck:tools
 
       - name: Refresh official pricing
         run: npm run pricing:update
@@ -36,4 +37,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v6
         with:
           commit_message: "chore: refresh official model pricing"
-          file_pattern: "src/pricing.mjs data/official-pricing.json"
+          file_pattern: "src/pricing.ts data/official-pricing.json"

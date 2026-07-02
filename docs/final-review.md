@@ -1,6 +1,6 @@
 # Token Work ROI Final Review
 
-Token Work ROI is considered feature-complete for the current `v1.0.0` local release line. The product direction is fixed as:
+Token Work ROI is considered feature-complete for the current `v2.0.0` local release line. The product direction is fixed as:
 
 > Local real token data -> trusted coverage -> automatic evidence queue -> ROI review -> model strategy -> action report.
 
@@ -41,7 +41,7 @@ Token Work ROI is considered feature-complete for the current `v1.0.0` local rel
 
 ## Stop Rules
 
-After `v1.0.0`, do not add unrelated large features unless a future plan has a clearly new user benefit. Maintenance is limited to:
+After `v2.0.0`, do not add unrelated large features unless a future plan has a clearly new user benefit. Maintenance is limited to:
 
 - real bugs that affect startup, collection, UI, reports, or data integrity;
 - security or privacy issues;
@@ -59,6 +59,8 @@ Explicit non-goals:
 
 ## Release Position
 
-`v1.0.0` is the current local latest version. npm publishing, GitHub release notes, or public promotion should only happen after the local gate, GitHub release gate, tarball smoke, browser smoke, desktop smoke, real screenshot inspection, and npm post-publish smoke pass.
+`v2.0.0` is the current local latest version. npm publishing, GitHub release notes, or public promotion should only happen after the local gate, GitHub release gate, tarball smoke, browser smoke, desktop smoke, real screenshot inspection, and npm post-publish smoke pass.
 
 The current release line keeps `/api/live` 24-hour token events derived from the requested window instead of a fixed row sample, and it standardizes release gates on Node.js 24 for `node:sqlite`.
+
+The current release keeps the published command surface stable. End users still run `npx token-work`; source checkouts now use TypeScript entrypoints such as `node src/cli.ts`.
