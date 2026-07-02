@@ -1,22 +1,37 @@
-# 首次使用指南 / First Run Guide
+# 首次使用指南
 
-这份文档只解决一个问题：第一次运行元衡后，应该先看哪里、点什么、哪些地方不要误解。
+第一次启动后，按这里的顺序看就够了。
 
-This guide is for the first run: what to open first, what to click, and what not to misunderstand.
+## 快速开始
 
-## 1. 启动 / Start
+需要 Node.js 24.0.0 或更高版本。
 
-发布包用户使用：
+发布包用户：
 
 ```bash
 npx token-work
 ```
 
-它会先只读检查本机 Claude、Codex、Cursor 等工具的结构化用量记录，然后把可信的 Claude/Codex 事件级记录写入本地 SQLite，最后打开浏览器。
+只看演示数据：
 
-It checks local structured usage metadata in read-only mode, writes trusted Claude/Codex event-level rows into local SQLite, then opens the browser.
+```bash
+npx token-work demo
+```
 
-不会保存：
+源码目录用户：
+
+```bash
+npm install
+node src/cli.ts
+```
+
+启动后先看：可信度、看板、复盘。
+
+## 启动后会发生什么
+
+直接运行 `npx token-work` 时，软件会检查本机默认来源里的结构化用量记录。只有通过可信门槛的 Claude/Codex 事件级数据才会写入本地 SQLite，然后打开浏览器。
+
+不保存这些内容：
 
 - prompt
 - response
@@ -25,156 +40,86 @@ It checks local structured usage metadata in read-only mode, writes trusted Clau
 - 命令正文
 - 完整本机路径
 
-It does not store prompts, responses, full conversations, diffs, command bodies, or full local paths.
+在源码目录里不要把 `npx token-work` 当作本地入口。`npx` 会解析 npm 包，源码目录请使用 `node src/cli.ts`。
 
-从源码运行时不要在源码目录里用 `npx token-work` 作为本地入口。`npx` 会按 npm 包解析；源码目录请直接运行本地文件：
-
-```bash
-npm install
-node src/cli.ts
-```
-
-v2 源码入口使用 TypeScript 文件。发布包用户仍使用 `npx token-work`，命令参数保持稳定。
-
-只看演示数据：
-
-```bash
-npx token-work demo
-```
-
-只打开已有数据库、不扫描日志：
+只想打开已有数据库、不扫描日志：
 
 ```bash
 npx token-work --no-collect
 ```
 
-## 2. 先看可信度 / Check Trust First
+只想预检、不写入数据库：
 
-第一次打开后，建议先看“可信度”页面。
+```bash
+npx token-work --dry-run-only
+```
 
-Look at the Trust page first.
+## 先看可信度
 
-你要确认的是：
+第一次打开先看“可信度”：
 
 - 当前是不是演示数据。
 - 是否有事件级词元记录。
-- 哪些来源只是“检测到目录”，但没有可靠词元字段。
-- daily、session、event 三类统计是否能对上。
+- 哪些来源只是检测到目录，但没有可靠词元字段。
 
-Check whether:
+如果页面显示 aggregate-only 或 detected-only，只适合粗略观察，不适合直接写成复盘结论。
 
-- the data is demo data,
-- event-level token rows exist,
-- some sources are detected-only,
-- daily/session/event totals reconcile.
+## 再看看板
 
-如果可信度页面显示“aggregate only”或“detected only”，说明它只能支持粗略观察，不适合直接写强复盘结论。
-
-If it says aggregate-only or detected-only, use it for rough observation only. Do not treat it as strong ROI evidence.
-
-## 3. 再看看板 / Open Dashboard Next
-
-看板适合回答：
+看板主要看：
 
 - 今天或本周用了多少词元。
 - 哪些来源和模型占比最高。
 - 哪些项目或 session 消耗最多。
-- 哪些模型没有官方价格。
+- 哪些模型还没有官方价格。
 
-Dashboard answers:
+如果数据库为空，可以先用 `npx token-work demo` 熟悉界面，或者在“导入/预算”里导入结构化 JSON。
 
-- token usage today or this week,
-- top sources and models,
-- high-cost projects or sessions,
-- unpriced models.
+## 导入前先预检
 
-如果数据为空，可以先用 `demo` 看界面，或者到“导入/预算”导入 ccusage JSON。
-
-If the database is empty, use `demo` to inspect the UI or import ccusage JSON from Import / Budget.
-
-## 4. 导入前先预检 / Dry-run Before Import
-
-打开“导入/预算”，粘贴 ccusage JSON 或选择本地 JSON 文件，然后先点 dry-run。
-
-Open Import / Budget, paste ccusage JSON or choose a local JSON file, then run dry-run first.
-
-dry-run 会告诉你：
-
-- JSON 是哪种结构。
-- 有多少 daily、session 和 event 记录。
-- 是否含有不安全字段。
-- 哪些模型没有官方价格。
-- 写入后大概会新增多少数据。
-
-Only apply after the dry-run looks right.
-
-命令行方式：
+导入外部 JSON 时，先 dry-run，再写入。
 
 ```bash
 npx token-work import-usage --format=ccusage-json --file ccusage.json --dry-run
 npx token-work import-usage --format=ccusage-json --file ccusage.json --apply --yes
 ```
 
-如果要让元衡调用 ccusage CLI：
+也可以让软件调用 ccusage CLI：
 
 ```bash
 npx token-work import-usage --format=ccusage-cli --report=session --dry-run --yes
 ```
 
-浏览器页面只生成可复制命令，不会偷偷运行外部扫描器。
+浏览器里的辅助命令只负责生成可复制命令，不会自动运行外部扫描器。
 
-The browser only generates copyable commands. It does not secretly run external scanners.
+## 设置预算
 
-## 5. 设置预算 / Add A Budget
+预算是本地提醒规则，不是服务商套餐。常见用法：
 
-预算是你自己的提醒规则，不是服务商套餐。
-
-Budgets are your own guardrails, not provider subscription quotas.
-
-常见设置：
-
-- 最近 60 分钟最多使用多少词元。
-- 每天固定时间重置预算。
-- 只统计 Codex CLI 或 Claude Code。
+- 最近 60 分钟词元上限。
+- 每日固定时间重置。
+- 只统计某个来源。
 - 只统计重模型。
-- 达到 75% 时提醒。
+- 达到指定比例后提醒。
 
-Common settings:
+## 做复盘
 
-- token budget for the last 60 minutes,
-- fixed daily reset time,
-- source-specific budget,
-- heavy-model-only budget,
-- warning at 75%.
+打开“复盘”页面，优先处理高消耗 session。建议补齐：
 
-## 6. 做复盘 / Review Work
+- 项目
+- 任务类型
+- 工作阶段
+- 产出状态
+- 产出链接
+- 下次是否还适合用同一类模型
 
-打开“复盘”页面，先处理高消耗 session。
+复盘报告导出为 Markdown，适合再手工整理。
 
-Open Review and start from high-cost sessions.
+## 实时和桌面版
 
-建议补充：
+实时页面适合看最近 24 小时压力；复盘仍在浏览器里做。
 
-- 项目。
-- 任务类型。
-- 工作阶段。
-- 产出状态。
-- 产出链接。
-- 是否值得继续用同样模型。
-
-Add project, task type, stage, output state, output link, and model-choice notes.
-
-复盘报告是 Markdown，可以直接导出后再人工整理。
-
-The review report is Markdown and can be edited manually after export.
-
-## 7. 可选：实时和桌面版 / Optional Live And Desktop
-
-实时页面适合看最近 24 小时压力，不适合做完整复盘。
-
-Live is for recent 24-hour pressure, not full review.
-
-桌面版启动：
+桌面版目前是源码仓库里的本地小窗：
 
 ```bash
 npm install
@@ -182,28 +127,22 @@ npm run desktop:install
 npm run desktop
 ```
 
-桌面版目前是源码仓库里的本地小窗，复用同一套本地服务。默认不会启动即采集或开启定时采集。完整导入、复盘和报告导出仍建议用浏览器。
+桌面版复用同一套本地服务。默认不会启动即采集，也不会开启定时采集。导入、复盘和报告导出仍建议用浏览器完成。
 
-The desktop app is currently a source-checkout local window using the same service. It does not collect on startup or enable scheduled collection by default. Use the browser for import, review, and export.
+## 终端状态栏
 
-## 8. 终端状态栏 / Terminal Statusline
-
-如果只想在终端看一个简短状态：
+只想在终端看一行状态：
 
 ```bash
 npx token-work statusline --format=text --window-minutes=15
 ```
 
-它只读 SQLite，不扫描日志，也不启动后台进程。
+这个命令只读 SQLite，不扫描日志，也不启动后台进程。
 
-It reads SQLite only. It does not scan logs or start a background process.
-
-## 9. 发布前检查 / Before Publishing
+## 发布前检查
 
 ```bash
 npm run privacy:check
 ```
 
-这个命令用于检查是否误带真实数据库、AI 日志目录、`.env`、私密导出文件或个人路径。
-
-This checks for real databases, AI log directories, `.env`, private exports, and personal paths.
+用于检查是否误带真实数据库、AI 日志目录、`.env`、私密导出文件或个人路径。
