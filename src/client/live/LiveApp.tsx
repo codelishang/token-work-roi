@@ -25,8 +25,10 @@ export function LiveApp() {
 
   useEffect(() => {
     let alive = true;
-    U.loadExchangeRate().then(() => {
-      if (alive) setExchangeRateVersion(version => version + 1);
+    const stopExchangeRateRefresh = U.startExchangeRateRefresh(() => {
+      if (alive) {
+        setExchangeRateVersion(version => version + 1);
+      }
     });
     async function load() {
       try {
@@ -43,6 +45,7 @@ export function LiveApp() {
     const timer = setInterval(load, REFRESH_MS);
     return () => {
       alive = false;
+      stopExchangeRateRefresh();
       clearInterval(timer);
     };
   }, []);

@@ -560,13 +560,9 @@ function Dashboard({
   });
 
   useEffect(() => {
-    let alive = true;
-    U.loadExchangeRate().then(() => {
-      if (alive) setExchangeRateVersion(version => version + 1);
+    return U.startExchangeRateRefresh(() => {
+      setExchangeRateVersion(version => version + 1);
     });
-    return () => {
-      alive = false;
-    };
   }, []);
 
   // Build option lists

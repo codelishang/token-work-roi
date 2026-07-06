@@ -64,6 +64,12 @@ export const OFFICIAL_PRICING_SOURCES = [
     label: 'Kimi API pricing',
     url: 'https://platform.kimi.com/docs/pricing/chat',
     note: 'Official Kimi API RMB prices converted to USD for internal cost math.'
+  },
+  {
+    provider: 'Qwen',
+    label: 'Alibaba Cloud Model Studio pricing',
+    url: 'https://help.aliyun.com/zh/model-studio/billing-for-model-studio',
+    note: 'Official Alibaba Cloud Model Studio RMB prices converted to USD for internal cost math; short-context public rates are used by default.'
   }
 ];
 
@@ -407,6 +413,90 @@ export const OFFICIAL_PRICE_TABLE = [
     output: 3.094187509825887,
     source: "Kimi",
     note: "Official Kimi API RMB rate converted to USD at the last verified refresh rate."
+  }),
+  officialRate({
+    provider: "Qwen",
+    model: "qwen3.7-plus",
+    aliases: ["qwen3-7-plus"],
+    input: 0.2946845247453226,
+    cachedInput: 0.2946845247453226,
+    cacheWrite5m: 0.2946845247453226,
+    cacheWrite1h: 0.2946845247453226,
+    output: 1.1787380989812903,
+    source: "Qwen",
+    note: "Official Alibaba Cloud Model Studio RMB short-context rate converted to USD at the last verified refresh rate."
+  }),
+  officialRate({
+    provider: "Qwen",
+    model: "qwen3.7-max",
+    aliases: ["qwen3-7-max"],
+    input: 1.7681071484719355,
+    cachedInput: 1.7681071484719355,
+    cacheWrite5m: 1.7681071484719355,
+    cacheWrite1h: 1.7681071484719355,
+    output: 5.304321445415806,
+    source: "Qwen",
+    note: "Official Alibaba Cloud Model Studio RMB rate converted to USD at the last verified refresh rate."
+  }),
+  officialRate({
+    provider: "Qwen",
+    model: "qwen3.6-flash",
+    aliases: ["qwen3-6-flash"],
+    input: 0.17681071484719355,
+    cachedInput: 0.17681071484719355,
+    cacheWrite5m: 0.17681071484719355,
+    cacheWrite1h: 0.17681071484719355,
+    output: 1.0608642890831612,
+    source: "Qwen",
+    note: "Official Alibaba Cloud Model Studio RMB rate converted to USD at the last verified refresh rate."
+  }),
+  officialRate({
+    provider: "Qwen",
+    model: "qwen3-coder-plus",
+    aliases: ["qwen3-coder-plus", "qwen3-coder"],
+    input: 0.5893690494906452,
+    cachedInput: 0.5893690494906452,
+    cacheWrite5m: 0.5893690494906452,
+    cacheWrite1h: 0.5893690494906452,
+    output: 2.3574761979625807,
+    source: "Qwen",
+    note: "Official Alibaba Cloud Model Studio RMB short-context Coder rate converted to USD at the last verified refresh rate."
+  }),
+  officialRate({
+    provider: "Qwen",
+    model: "qwen3-coder-flash",
+    aliases: ["qwen3-coder-flash"],
+    input: 0.1473422623726613,
+    cachedInput: 0.1473422623726613,
+    cacheWrite5m: 0.1473422623726613,
+    cacheWrite1h: 0.1473422623726613,
+    output: 0.5893690494906452,
+    source: "Qwen",
+    note: "Official Alibaba Cloud Model Studio RMB short-context Coder rate converted to USD at the last verified refresh rate."
+  }),
+  officialRate({
+    provider: "Qwen",
+    model: "qwen-coder-plus",
+    aliases: ["qwen-coder-plus"],
+    input: 0.5156979183043146,
+    cachedInput: 0.5156979183043146,
+    cacheWrite5m: 0.5156979183043146,
+    cacheWrite1h: 0.5156979183043146,
+    output: 1.031395836608629,
+    source: "Qwen",
+    note: "Official Alibaba Cloud Model Studio RMB Coder rate converted to USD at the last verified refresh rate."
+  }),
+  officialRate({
+    provider: "Qwen",
+    model: "qwen-coder-turbo",
+    aliases: ["qwen-coder-turbo"],
+    input: 0.2946845247453226,
+    cachedInput: 0.2946845247453226,
+    cacheWrite5m: 0.2946845247453226,
+    cacheWrite1h: 0.2946845247453226,
+    output: 0.8840535742359678,
+    source: "Qwen",
+    note: "Official Alibaba Cloud Model Studio RMB Coder rate converted to USD at the last verified refresh rate."
   })
 ];
 
@@ -768,6 +858,7 @@ function canonicalProvider(value) {
   if (['volcengine', 'volc engine', 'ark', 'doubao', 'doubao seed', 'doubaoseed', 'bytedance'].includes(normalized)) return 'DoubaoSeed';
   if (['google', 'gemini'].includes(normalized)) return 'Gemini';
   if (['moonshot', 'moonshot ai', 'moonshotai', 'kimi'].includes(normalized)) return 'Kimi';
+  if (['qwen', 'tongyi', 'tongyi qianwen', 'aliyun', 'alibaba', 'alibaba cloud', 'dashscope', 'model studio'].includes(normalized)) return 'Qwen';
   return String(value || '').trim();
 }
 

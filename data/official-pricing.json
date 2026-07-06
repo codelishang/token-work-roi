@@ -121,6 +121,17 @@
       "httpStatus": 200,
       "contentLength": 231499,
       "assets": []
+    },
+    {
+      "provider": "Qwen",
+      "label": "Alibaba Cloud Model Studio pricing",
+      "url": "https://help.aliyun.com/zh/model-studio/billing-for-model-studio",
+      "note": "Official Alibaba Cloud Model Studio RMB prices converted to USD for internal cost math; short-context public rates are used by default.",
+      "fetchedAt": "2026-06-23T10:05:57.310Z",
+      "fetchStatus": "fallback-table",
+      "httpStatus": null,
+      "contentLength": null,
+      "assets": []
     }
   ],
   "models": [
@@ -775,6 +786,231 @@
       "sourceProvider": "Kimi",
       "pricingFetchStatus": "fallback-table",
       "note": "Official Kimi API RMB rate converted to USD at the last verified refresh rate."
+    },
+    {
+      "provider": "Qwen",
+      "model": "qwen3.7-plus",
+      "aliases": [
+        "qwen3-7-plus"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 0.2946845247453226,
+        "cachedInput": 0.2946845247453226,
+        "cacheWrite5m": 0.2946845247453226,
+        "cacheWrite1h": 0.2946845247453226,
+        "output": 1.1787380989812903
+      },
+      "officialRatesPerMTok": {
+        "currency": "CNY",
+        "unit": "1M tokens",
+        "ratesPerMTok": {
+          "input": 2,
+          "output": 8,
+          "cachedInput": 2,
+          "cacheWrite5m": 2,
+          "cacheWrite1h": 2
+        },
+        "exchangeRate": 6.786919,
+        "sourceUnit": "元 / 1M tokens"
+      },
+      "sourceProvider": "Qwen",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Official Alibaba Cloud Model Studio RMB short-context rate converted to USD at the last verified refresh rate."
+    },
+    {
+      "provider": "Qwen",
+      "model": "qwen3.7-max",
+      "aliases": [
+        "qwen3-7-max"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 1.7681071484719355,
+        "cachedInput": 1.7681071484719355,
+        "cacheWrite5m": 1.7681071484719355,
+        "cacheWrite1h": 1.7681071484719355,
+        "output": 5.304321445415806
+      },
+      "officialRatesPerMTok": {
+        "currency": "CNY",
+        "unit": "1M tokens",
+        "ratesPerMTok": {
+          "input": 12,
+          "output": 36,
+          "cachedInput": 12,
+          "cacheWrite5m": 12,
+          "cacheWrite1h": 12
+        },
+        "exchangeRate": 6.786919,
+        "sourceUnit": "元 / 1M tokens"
+      },
+      "sourceProvider": "Qwen",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Official Alibaba Cloud Model Studio RMB rate converted to USD at the last verified refresh rate."
+    },
+    {
+      "provider": "Qwen",
+      "model": "qwen3.6-flash",
+      "aliases": [
+        "qwen3-6-flash"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 0.17681071484719355,
+        "cachedInput": 0.17681071484719355,
+        "cacheWrite5m": 0.17681071484719355,
+        "cacheWrite1h": 0.17681071484719355,
+        "output": 1.0608642890831612
+      },
+      "officialRatesPerMTok": {
+        "currency": "CNY",
+        "unit": "1M tokens",
+        "ratesPerMTok": {
+          "input": 1.2,
+          "output": 7.2,
+          "cachedInput": 1.2,
+          "cacheWrite5m": 1.2,
+          "cacheWrite1h": 1.2
+        },
+        "exchangeRate": 6.786919,
+        "sourceUnit": "元 / 1M tokens"
+      },
+      "sourceProvider": "Qwen",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Official Alibaba Cloud Model Studio RMB rate converted to USD at the last verified refresh rate."
+    },
+    {
+      "provider": "Qwen",
+      "model": "qwen3-coder-plus",
+      "aliases": [
+        "qwen3-coder-plus",
+        "qwen3-coder"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 0.5893690494906452,
+        "cachedInput": 0.5893690494906452,
+        "cacheWrite5m": 0.5893690494906452,
+        "cacheWrite1h": 0.5893690494906452,
+        "output": 2.3574761979625807
+      },
+      "officialRatesPerMTok": {
+        "currency": "CNY",
+        "unit": "1M tokens",
+        "ratesPerMTok": {
+          "input": 4,
+          "output": 16,
+          "cachedInput": 4,
+          "cacheWrite5m": 4,
+          "cacheWrite1h": 4
+        },
+        "exchangeRate": 6.786919,
+        "sourceUnit": "元 / 1M tokens"
+      },
+      "sourceProvider": "Qwen",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Official Alibaba Cloud Model Studio RMB short-context Coder rate converted to USD at the last verified refresh rate."
+    },
+    {
+      "provider": "Qwen",
+      "model": "qwen3-coder-flash",
+      "aliases": [
+        "qwen3-coder-flash"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 0.1473422623726613,
+        "cachedInput": 0.1473422623726613,
+        "cacheWrite5m": 0.1473422623726613,
+        "cacheWrite1h": 0.1473422623726613,
+        "output": 0.5893690494906452
+      },
+      "officialRatesPerMTok": {
+        "currency": "CNY",
+        "unit": "1M tokens",
+        "ratesPerMTok": {
+          "input": 1,
+          "output": 4,
+          "cachedInput": 1,
+          "cacheWrite5m": 1,
+          "cacheWrite1h": 1
+        },
+        "exchangeRate": 6.786919,
+        "sourceUnit": "元 / 1M tokens"
+      },
+      "sourceProvider": "Qwen",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Official Alibaba Cloud Model Studio RMB short-context Coder rate converted to USD at the last verified refresh rate."
+    },
+    {
+      "provider": "Qwen",
+      "model": "qwen-coder-plus",
+      "aliases": [
+        "qwen-coder-plus"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 0.5156979183043146,
+        "cachedInput": 0.5156979183043146,
+        "cacheWrite5m": 0.5156979183043146,
+        "cacheWrite1h": 0.5156979183043146,
+        "output": 1.031395836608629
+      },
+      "officialRatesPerMTok": {
+        "currency": "CNY",
+        "unit": "1M tokens",
+        "ratesPerMTok": {
+          "input": 3.5,
+          "output": 7,
+          "cachedInput": 3.5,
+          "cacheWrite5m": 3.5,
+          "cacheWrite1h": 3.5
+        },
+        "exchangeRate": 6.786919,
+        "sourceUnit": "元 / 1M tokens"
+      },
+      "sourceProvider": "Qwen",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Official Alibaba Cloud Model Studio RMB Coder rate converted to USD at the last verified refresh rate."
+    },
+    {
+      "provider": "Qwen",
+      "model": "qwen-coder-turbo",
+      "aliases": [
+        "qwen-coder-turbo"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 0.2946845247453226,
+        "cachedInput": 0.2946845247453226,
+        "cacheWrite5m": 0.2946845247453226,
+        "cacheWrite1h": 0.2946845247453226,
+        "output": 0.8840535742359678
+      },
+      "officialRatesPerMTok": {
+        "currency": "CNY",
+        "unit": "1M tokens",
+        "ratesPerMTok": {
+          "input": 2,
+          "output": 6,
+          "cachedInput": 2,
+          "cacheWrite5m": 2,
+          "cacheWrite1h": 2
+        },
+        "exchangeRate": 6.786919,
+        "sourceUnit": "元 / 1M tokens"
+      },
+      "sourceProvider": "Qwen",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Official Alibaba Cloud Model Studio RMB Coder rate converted to USD at the last verified refresh rate."
     }
   ]
 }

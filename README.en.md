@@ -178,7 +178,8 @@ These screenshots use demo or sanitized synthetic data. They do not contain real
 Yuanheng shows “official public price conversion”, not a provider invoice.
 
 - USD prices are calculated as USD per 1M tokens.
-- The software preserves the official source currency and displays a CNY reference value using the USD/CNY rate captured during refresh.
+- The software preserves the official source currency and displays a CNY reference value using the USD/CNY rate captured during the weekly pricing refresh.
+- CNY estimates in the UI prefer the exchange rate stored in the local pricing cache. When the pricing cache refresh succeeds, the exchange rate is updated with it.
 - Models without verified official prices stay unpriced and are not treated as zero-cost.
 
 Refresh model pricing manually:
