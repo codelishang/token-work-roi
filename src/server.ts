@@ -1709,6 +1709,7 @@ function providerFromSource(source) {
   if (value.includes('mimo') || value.includes('xiaomi')) return 'xiaomi';
   if (value.includes('glm') || value.includes('zai') || value.includes('zhipu') || value.includes('bigmodel')) return 'Zhipu GLM';
   if (value.includes('doubao') || value.includes('ark') || value.includes('volc') || value.includes('bytedance')) return 'DoubaoSeed';
+  if (value.includes('qwen') || value.includes('tongyi') || value.includes('aliyun') || value.includes('alibaba') || value.includes('dashscope')) return 'Qwen';
   return null;
 }
 

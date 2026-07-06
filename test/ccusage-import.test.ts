@@ -67,6 +67,49 @@ test('ccusage import supports session, blocks and monthly reports', () => {
   }
 });
 
+test('ccusage import supports top-level session report with npx preamble', () => {
+  const payload = parseCcusageJsonText(`[npm] notice
+Need to install the following packages:
+ccusage@20.0.14
+Ok to proceed? (y)
+{
+  "session": [
+    {
+      "agent": "codex",
+      "period": "2026/05/22/rollout-test",
+      "inputTokens": 100,
+      "outputTokens": 20,
+      "cacheReadTokens": 30,
+      "metadata": {
+        "lastActivity": "2026-06-01T06:14:32.011Z",
+        "reasoningOutputTokens": 5
+      },
+      "modelsUsed": ["gpt-5.5"],
+      "modelBreakdowns": [
+        {
+          "modelName": "gpt-5.5",
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "cacheReadTokens": 30
+        }
+      ],
+      "totalTokens": 155
+    }
+  ]
+}`);
+  const plan = planCcusageImport(payload, { device: 'other-device' });
+
+  assert.equal(plan.detectedShape, 'session');
+  assert.equal(plan.daily.length, 1);
+  assert.equal(plan.sessions.length, 1);
+  assert.equal(plan.tokenEvents.length, 1);
+  assert.equal(plan.daily[0].device, 'other-device');
+  assert.equal(plan.daily[0].source, 'codex');
+  assert.equal(plan.daily[0].usageDate, '2026-06-01');
+  assert.equal(plan.sessions[0].sessionId, '2026/05/22/rollout-test');
+  assert.equal(plan.tokenEvents[0].reasoningTokens, 5);
+});
+
 test('ccusage apply is idempotent and dry-run plans do not write', () => {
   const db = tempDb();
   const payload = {

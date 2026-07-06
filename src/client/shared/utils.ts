@@ -52,6 +52,7 @@ const fmtUS = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD
 const fmtUS4 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 });
 const fmtCNY = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const FALLBACK_USD_CNY_RATE = 7.2;
+const EXCHANGE_RATE_REFRESH_MS = 60 * 60 * 1000;
 const LEGAL_NOTICE = 'AGPL-3.0-only 协议，版权所有 © 2026 coderlishang，All rights reserved.';
 let exchangeRate = {
   base: 'USD',
@@ -126,6 +127,23 @@ async function loadExchangeRate() {
   } catch {
     return getExchangeRate();
   }
+}
+
+function startExchangeRateRefresh(onChange) {
+  let stopped = false;
+  async function refresh() {
+    const before = getExchangeRate();
+    const after = await loadExchangeRate();
+    if (!stopped && (before.rate !== after.rate || before.fetchedAt !== after.fetchedAt)) {
+      onChange?.(after);
+    }
+  }
+  refresh();
+  const timer = window.setInterval(refresh, EXCHANGE_RATE_REFRESH_MS);
+  return () => {
+    stopped = true;
+    window.clearInterval(timer);
+  };
 }
 
 function exchangeRateLabel() {
@@ -305,7 +323,7 @@ export const U = {
   LEGAL_NOTICE,
   fmt, fmtUS, fmtUS4, fmtCNY,
   money, money4, compactMoney,
-  getExchangeRate, setExchangeRate, loadExchangeRate, exchangeRateLabel, exchangeRateSourceLabel,
+  getExchangeRate, setExchangeRate, loadExchangeRate, startExchangeRateRefresh, exchangeRateLabel, exchangeRateSourceLabel,
   compact, compactCN, pct, deltaPct, formatTs,
   localDateStr, daysAgo, addDays, rangeDates,
   filterDaily, aggregateTotals, groupByDate, uniqueValues,

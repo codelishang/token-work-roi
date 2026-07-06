@@ -26,9 +26,15 @@ export function readCcusageImportInput(file) {
 export function parseCcusageJsonText(text) {
   let payload;
   try {
-    payload = JSON.parse(String(text || ''));
+    payload = JSON.parse(String(text || '').trim());
   } catch (error) {
-    throw new Error(`Invalid ccusage JSON: ${error.message}`);
+    const extracted = extractJsonPayload(String(text || ''));
+    if (!extracted) throw new Error(`Invalid ccusage JSON: ${error.message}`);
+    try {
+      payload = JSON.parse(extracted);
+    } catch {
+      throw new Error(`Invalid ccusage JSON: ${error.message}`);
+    }
   }
   const unsafePath = firstUnsafeKeyPath(payload);
   if (unsafePath) {
@@ -169,7 +175,10 @@ function detectShape(payload) {
     const type = String(payload.type).toLowerCase();
     if (['daily', 'weekly', 'session', 'blocks', 'monthly'].includes(type)) return type;
   }
-  throw new Error('Unsupported ccusage JSON shape. Expected daily, project daily, weekly, session, blocks, or monthly output.');
+  for (const type of ['weekly', 'session', 'blocks', 'monthly']) {
+    if (Array.isArray(payload?.[type])) return type;
+  }
+  throw new Error('Unsupported ccusage JSON shape. Expected daily, project daily, weekly, session, blocks, monthly, or top-level report output.');
 }
 
 function extractUsageRows(payload, shape) {
@@ -182,6 +191,7 @@ function extractUsageRows(payload, shape) {
     }
     return rows;
   }
+  if (Array.isArray(payload[shape])) return payload[shape].map(row => ({ ...row }));
   return (payload.data || []).map(row => ({ ...row }));
 }
 
@@ -236,7 +246,13 @@ function tokenFields(row) {
     ?? row.cache_read_tokens
     ?? row.cachedInputTokens
   );
-  const reasoningOutputTokens = integer(row.reasoningTokens ?? row.reasoningOutputTokens ?? row.reasoning_output_tokens);
+  const reasoningOutputTokens = integer(
+    row.reasoningTokens
+    ?? row.reasoningOutputTokens
+    ?? row.reasoning_output_tokens
+    ?? row.metadata?.reasoningTokens
+    ?? row.metadata?.reasoningOutputTokens
+  );
   const explicitTotal = integer(row.totalTokens ?? row.total_tokens);
   const computedTotal = inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens + reasoningOutputTokens;
   return {
@@ -267,24 +283,24 @@ function hasTokenField(row) {
 }
 
 function sourceFromRow(row) {
-  return cleanText(row.source || row.tool || row.instance || row.provider, 80) || 'ccusage';
+  return cleanText(row.source || row.tool || row.instance || row.provider || row.agent, 80) || 'ccusage';
 }
 
 function usageDateFromRow(row) {
-  const raw = row.date || row.usageDate || row.week || row.weekStart || row.startDate || row.month || row.blockStart || row.firstActivity || row.lastActivity;
+  const raw = row.date || row.usageDate || row.week || row.weekStart || row.startDate || row.month || row.blockStart || row.firstActivity || row.lastActivity || row.metadata?.lastActivity || row.metadata?.firstActivity;
   const date = parseDate(raw);
   if (!date) throw new Error('ccusage row is missing a usable date/month/activity field');
   return formatDate(date);
 }
 
 function timestampFromRow(row, usageDate, now) {
-  const raw = row.lastActivity || row.blockEnd || row.firstActivity || row.blockStart || row.date || row.week || row.weekStart || row.startDate || row.month;
+  const raw = row.lastActivity || row.metadata?.lastActivity || row.blockEnd || row.firstActivity || row.metadata?.firstActivity || row.blockStart || row.date || row.week || row.weekStart || row.startDate || row.month;
   const date = parseDate(raw) || parseDate(usageDate) || new Date(now);
   return date.toISOString();
 }
 
 function sessionIdFromRow(row, shape, usageDate, model, projectPath) {
-  const raw = row.session || row.sessionId || row.session_id || row.id || null;
+  const raw = row.session || row.sessionId || row.session_id || row.id || row.period || null;
   if (raw) return cleanText(raw, 240);
   const project = projectPath ? hashable(projectPath) : 'all';
   return `ccusage:${shape}:${project}:${usageDate}:${hashable(model)}`;
@@ -395,6 +411,24 @@ function hashable(value) {
     .slice(0, 80) || 'unknown';
 }
 
+function extractJsonPayload(text) {
+  const value = String(text || '');
+  const candidates = [
+    [value.indexOf('{'), value.lastIndexOf('}')],
+    [value.indexOf('['), value.lastIndexOf(']')]
+  ].filter(([start, end]) => start >= 0 && end > start);
+  for (const [start, end] of candidates) {
+    const candidate = value.slice(start, end + 1);
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      // Try the next possible JSON payload shape.
+    }
+  }
+  return null;
+}
+
 function providerFromSource(source) {
   const value = String(source || '').toLowerCase();
   if (value.includes('kimi') || value.includes('moonshot')) return 'Kimi';
@@ -404,6 +438,7 @@ function providerFromSource(source) {
   if (value.includes('mimo') || value.includes('xiaomi')) return 'xiaomi';
   if (value.includes('glm') || value.includes('zai') || value.includes('zhipu') || value.includes('bigmodel')) return 'Zhipu GLM';
   if (value.includes('doubao') || value.includes('ark') || value.includes('volc') || value.includes('bytedance')) return 'DoubaoSeed';
+  if (value.includes('qwen') || value.includes('tongyi') || value.includes('aliyun') || value.includes('alibaba') || value.includes('dashscope')) return 'Qwen';
   return null;
 }
 

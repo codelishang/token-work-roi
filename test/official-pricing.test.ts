@@ -63,19 +63,41 @@ test('calculates Kimi API USD price from official RMB rates', () => {
   assert.equal(light.totalUSD, 3.683556559316532);
 });
 
-test('provider additions keep Gemini before Kimi at the end', () => {
+test('calculates Qwen API USD price from official RMB rates', () => {
+  const coder = calculateOfficialCost('qwen3-coder', {
+    input: 1_000_000,
+    output: 1_000_000
+  }, { provider: 'aliyun' });
+  const plus = calculateOfficialCost('tongyi/qwen3.7-plus', {
+    input: 1_000_000,
+    output: 1_000_000
+  });
+
+  assert.equal(coder.priced, true);
+  assert.equal(coder.provider, 'Qwen');
+  assert.equal(coder.resolvedModel, 'qwen3-coder-plus');
+  assert.ok(Math.abs(coder.totalUSD - 2.946845247453226) < 1e-12);
+  assert.equal(plus.priced, true);
+  assert.equal(plus.provider, 'Qwen');
+  assert.ok(Math.abs(plus.totalUSD - 1.4734226237266128) < 1e-12);
+});
+
+test('provider additions keep Gemini, Kimi and Qwen at the end', () => {
   const pricing = loadPricing();
   return pricing.then(data => {
     const sourceProviders = data.sources.map(source => source.provider);
-    assert.deepEqual(sourceProviders.slice(-2), ['Gemini', 'Kimi']);
+    assert.deepEqual(sourceProviders.slice(-3), ['Gemini', 'Kimi', 'Qwen']);
 
     const modelProviders = data.models.map(model => model.provider);
     const firstGoogle = modelProviders.indexOf('Gemini');
     const firstKimi = modelProviders.indexOf('Kimi');
+    const firstQwen = modelProviders.indexOf('Qwen');
     assert.ok(firstGoogle > 0);
     assert.ok(firstKimi > firstGoogle);
+    assert.ok(firstQwen > firstKimi);
     assert.deepEqual(modelProviders.slice(firstGoogle, firstKimi), ['Gemini', 'Gemini', 'Gemini']);
-    assert.deepEqual(modelProviders.slice(firstKimi), ['Kimi', 'Kimi', 'Kimi', 'Kimi']);
+    assert.deepEqual(modelProviders.slice(firstKimi, firstQwen), ['Kimi', 'Kimi', 'Kimi', 'Kimi']);
+    assert.deepEqual(modelProviders.slice(firstQwen), ['Qwen', 'Qwen', 'Qwen', 'Qwen', 'Qwen', 'Qwen', 'Qwen']);
   });
 });
 
@@ -136,11 +158,17 @@ test('does not let a source provider hint hide explicit model provider pricing',
     input: 1_000_000,
     output: 1_000_000
   }, { provider: 'anthropic' });
+  const qwen = calculateOfficialCost('qwen3-coder-plus', {
+    input: 1_000_000,
+    output: 1_000_000
+  }, { provider: 'anthropic' });
 
   assert.equal(glm.priced, true);
   assert.equal(glm.provider, 'Zhipu GLM');
   assert.equal(mimo.priced, true);
   assert.equal(mimo.provider, 'xiaomi');
+  assert.equal(qwen.priced, true);
+  assert.equal(qwen.provider, 'Qwen');
 });
 
 test('does not price DoubaoSeed without parsed official billing rates', () => {

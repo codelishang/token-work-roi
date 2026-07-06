@@ -464,6 +464,7 @@ function providerFromSource(source) {
   if (value.includes('claude') || value.includes('anthropic')) return 'anthropic';
   if (value.includes('deepseek')) return 'deepseek';
   if (value.includes('mimo') || value.includes('xiaomi')) return 'xiaomi';
+  if (value.includes('qwen') || value.includes('tongyi') || value.includes('aliyun') || value.includes('alibaba') || value.includes('dashscope')) return 'Qwen';
   return null;
 }
 
