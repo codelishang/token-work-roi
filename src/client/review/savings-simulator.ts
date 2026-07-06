@@ -13,7 +13,8 @@ const TARGET_MODELS = {
     { model: 'mimo-v2.5', provider: 'xiaomi', label: 'MiMo v2.5' },
     { model: 'claude-haiku-4-5', provider: 'anthropic', label: 'Claude Haiku 4.5' },
     { model: 'gemini-2.5-flash', provider: 'Gemini', label: 'Gemini 2.5 Flash' },
-    { model: 'kimi-k2.5', provider: 'Kimi', label: 'Kimi K2.5' }
+    { model: 'kimi-k2.5', provider: 'Kimi', label: 'Kimi K2.5' },
+    { model: 'qwen3.6-flash', provider: 'Qwen', label: 'Qwen3.6 Flash' }
   ],
   mid: [
     { model: 'gpt-5.3-codex', provider: 'openai', label: 'GPT-5.3 Codex' },
@@ -21,7 +22,8 @@ const TARGET_MODELS = {
     { model: 'deepseek-v4-pro', provider: 'deepseek', label: 'DeepSeek V4 Pro' },
     { model: 'mimo-v2.5-pro', provider: 'xiaomi', label: 'MiMo v2.5 Pro' },
     { model: 'gemini-2.5-pro', provider: 'Gemini', label: 'Gemini 2.5 Pro' },
-    { model: 'kimi-k2.7-code', provider: 'Kimi', label: 'Kimi K2.7 Code' }
+    { model: 'kimi-k2.7-code', provider: 'Kimi', label: 'Kimi K2.7 Code' },
+    { model: 'qwen3-coder-plus', provider: 'Qwen', label: 'Qwen3 Coder Plus' }
   ]
 };
 
@@ -285,6 +287,7 @@ function providerFromSource(source) {
   if (value.includes('codex') || value.includes('openai')) return 'openai';
   if (value.includes('deepseek')) return 'deepseek';
   if (value.includes('mimo') || value.includes('xiaomi')) return 'xiaomi';
+  if (value.includes('qwen') || value.includes('tongyi') || value.includes('aliyun') || value.includes('alibaba') || value.includes('dashscope')) return 'Qwen';
   return null;
 }
 

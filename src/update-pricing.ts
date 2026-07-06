@@ -17,12 +17,20 @@ const STABLE_ALIASES = new Map([
   ['zhipu glm::glm-5.2', ['glm-5.2', 'glm-5-2']],
   ['zhipu glm::glm-5.1', ['glm-5.1', 'glm-5-1']],
   ['zhipu glm::glm-4.5-air', ['glm-4.5-air', 'glm-4-5-air']],
-  ['zhipu glm::glm-4.7', ['glm-4.7', 'glm-4-7']]
+  ['zhipu glm::glm-4.7', ['glm-4.7', 'glm-4-7']],
+  ['qwen::qwen3.7-plus', ['qwen3.7-plus', 'qwen3-7-plus']],
+  ['qwen::qwen3.7-max', ['qwen3.7-max', 'qwen3-7-max']],
+  ['qwen::qwen3.6-flash', ['qwen3.6-flash', 'qwen3-6-flash']],
+  ['qwen::qwen3-coder-plus', ['qwen3-coder-plus', 'qwen3-coder']],
+  ['qwen::qwen3-coder-flash', ['qwen3-coder-flash']],
+  ['qwen::qwen-coder-plus', ['qwen-coder-plus']],
+  ['qwen::qwen-coder-turbo', ['qwen-coder-turbo']]
 ]);
 const fetchedAt = new Date().toISOString();
 const exchangeRate = await getUsdCnyExchangeRate();
 const sources = await Promise.all(OFFICIAL_PRICING_SOURCES.map(source => fetchSourceStatus(source, exchangeRate)));
 const ok = sources.filter(source => source.fetchStatus === 'ok').length;
+const exchangeOk = !exchangeRate.isFallback;
 const fetchedRates = new Map(
   sources
     .flatMap(source => source.models || [])
@@ -56,8 +64,11 @@ const fetchedRates = new Map(
   })
 };
 
-if (ok === 0) {
-  console.log(`[pricing] skipped cache write; official sources reachable=0/${sources.length}`);
+if (ok === 0 || !exchangeOk) {
+  const reason = ok === 0
+    ? `official sources reachable=0/${sources.length}`
+    : `exchange rate unavailable (${exchangeRate.error || 'fallback rate'})`;
+  console.log(`[pricing] skipped cache write; ${reason}`);
   for (const source of sources) {
     console.log(`[pricing] ${source.provider}: ${source.fetchStatus} (${source.fetchError || source.httpStatus || 'unknown error'})`);
   }
@@ -239,6 +250,7 @@ function parseSourceModels(source, body, exchangeRate) {
   });
   if (isZhipuSource(source)) return parseZaiModels(body, exchangeRate);
   if (isDoubaoSource(source)) return parseVolcengineModels(body, exchangeRate);
+  if (isQwenSource(source)) return parseQwenModels(body, exchangeRate);
   return [];
 }
 
@@ -358,6 +370,56 @@ function parseVolcengineModels(body, exchangeRate) {
   }).filter(Boolean);
 }
 
+function parseQwenModels(body, exchangeRate) {
+  const pairs = [
+    ['qwen3.7-plus', 'qwen3.7-plus'],
+    ['qwen3.7-max', 'qwen3.7-max'],
+    ['qwen3.6-flash', 'qwen3.6-flash'],
+    ['qwen3-coder-plus', 'qwen3-coder-plus'],
+    ['qwen3-coder-flash', 'qwen3-coder-flash'],
+    ['qwen-coder-plus', 'qwen-coder-plus'],
+    ['qwen-coder-turbo', 'qwen-coder-turbo']
+  ];
+  return pairs
+    .map(([model, label]) => {
+      const rates = qwenRates(body, label);
+      if (!rates) return null;
+      return rateModel('Qwen', model, cnyToUsdRates({
+        ...rates,
+        cachedInput: rates.input,
+        cacheWrite5m: rates.input,
+        cacheWrite1h: rates.input
+      }, exchangeRate), 'Qwen', 'official-page', {
+        currency: 'CNY',
+        unit: '1M tokens',
+        ratesPerMTok: {
+          ...rates,
+          cachedInput: rates.input,
+          cacheWrite5m: rates.input,
+          cacheWrite1h: rates.input
+        },
+        exchangeRate: exchangeRate.rate,
+        sourceUnit: '元 / 1M tokens'
+      });
+    })
+    .filter(Boolean);
+}
+
+function qwenRates(body, label) {
+  const start = body.indexOf(label);
+  if (start < 0) return null;
+  const segment = body.slice(start, start + 5000);
+  const region = segment.indexOf('中国内地');
+  if (region < 0) return null;
+  const text = tableText(segment.slice(region));
+  const prices = Array.from(text.matchAll(/([0-9]+(?:\.[0-9]+)?)\|+\s*元/g), match => Number(match[1]));
+  if (prices.length < 2) return null;
+  return {
+    input: prices[0],
+    output: prices[1]
+  };
+}
+
 function volcengineInferenceRates(body, label) {
   const input = volcenginePriceFor(body, label, 'infer-prompt');
   const output = volcenginePriceFor(body, label, 'infer-completion');
@@ -469,10 +531,15 @@ function isDoubaoSource(source) {
   return providerKey(source?.provider) === 'doubaoseed';
 }
 
+function isQwenSource(source) {
+  return providerKey(source?.provider) === 'qwen';
+}
+
 function providerKey(provider) {
   const normalized = String(provider || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
   if (['zai', 'z ai', 'zhipu', 'zhipu ai', 'zhipu glm', 'bigmodel'].includes(normalized)) return 'zhipu glm';
   if (['volcengine', 'volc engine', 'ark', 'doubao', 'doubao seed', 'doubaoseed', 'bytedance'].includes(normalized)) return 'doubaoseed';
+  if (['qwen', 'tongyi', 'tongyi qianwen', 'aliyun', 'alibaba', 'alibaba cloud', 'dashscope', 'model studio'].includes(normalized)) return 'qwen';
   return normalized;
 }
 

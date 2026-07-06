@@ -1,11 +1,20 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 const FALLBACK_USD_CNY_RATE = 7.2;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 3500;
 const DEFAULT_SOURCE_URL = 'https://open.er-api.com/v6/latest/USD';
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
+const PACKAGE_ROOT = resolve(MODULE_DIR, '..');
 
 let cachedRate = null;
 
 export async function getUsdCnyExchangeRate({ now = Date.now(), fetchImpl = globalThis.fetch } = {}) {
+  const persisted = readPersistedExchangeRate(now);
+  if (persisted) return persisted;
+
   if (cachedRate && now - cachedRate.fetchedAtMs < CACHE_TTL_MS) {
     return { ...cachedRate, cached: true };
   }
@@ -52,4 +61,39 @@ export async function getUsdCnyExchangeRate({ now = Date.now(), fetchImpl = glob
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function readPersistedExchangeRate(now) {
+  if (process.env.PRICING_REFRESH === '1') return null;
+  const cachePath = resolvePricingCachePath();
+  try {
+    const payload = JSON.parse(readFileSync(cachePath, 'utf8'));
+    const rate = Number(payload?.exchangeRate?.rate);
+    if (!Number.isFinite(rate) || rate <= 0) return null;
+    if (payload.exchangeRate.isFallback) return null;
+    const fetchedAt = payload.exchangeRate.fetchedAt || payload.fetchedAt || payload.verifiedAt || new Date(now).toISOString();
+    return {
+      ...payload.exchangeRate,
+      base: payload.exchangeRate.base || 'USD',
+      quote: payload.exchangeRate.quote || 'CNY',
+      rate,
+      source: payload.exchangeRate.source || 'pricing-cache',
+      sourceUrl: payload.exchangeRate.sourceUrl || null,
+      fetchedAt,
+      fetchedAtMs: Date.parse(fetchedAt) || now,
+      isFallback: Boolean(payload.exchangeRate.isFallback),
+      cached: true
+    };
+  } catch {
+    return null;
+  }
+}
+
+function resolvePricingCachePath() {
+  if (process.env.TOKEN_WORK_PRICING_CACHE) return process.env.TOKEN_WORK_PRICING_CACHE;
+  const candidates = [
+    resolve(process.cwd(), 'data', 'official-pricing.json'),
+    resolve(PACKAGE_ROOT, 'data', 'official-pricing.json')
+  ];
+  return candidates.find(candidate => existsSync(candidate)) || candidates[0];
 }
