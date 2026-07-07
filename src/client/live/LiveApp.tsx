@@ -248,11 +248,28 @@ function TrendChart({ data }) {
         </g>
       ))}
       {chart.labels.map(label => (
-        <text key={label.x} x={label.x} y={chart.height - 16} className="chart-label">{label.text}</text>
+        <line key={`v-${label.index}`} x1={label.x} x2={label.x} y1={chart.top} y2={chart.plotBottom} className="chart-x-marker"/>
+      ))}
+      {chart.labels.map(label => (
+        <text
+          key={label.index}
+          x={label.x}
+          y={chart.height - 16}
+          className="chart-label"
+          textAnchor="middle"
+        >
+          {label.text}
+        </text>
       ))}
       <path d={chart.tokenAreaPath} className="chart-token-area"/>
       <polyline points={chart.tokenPolyline} className="chart-token-line"/>
       <polyline points={chart.costPolyline} className="chart-cost-line"/>
+      {chart.labels.map(label => (
+        <circle key={`token-dot-${label.index}`} cx={label.x} cy={label.tokenY} r="3.4" className="chart-point chart-point-token"/>
+      ))}
+      {chart.labels.map(label => (
+        <circle key={`cost-dot-${label.index}`} cx={label.x} cy={label.costY} r="2.8" className="chart-point chart-point-cost"/>
+      ))}
     </svg>
   );
 }
@@ -309,8 +326,10 @@ function ModelRows({ rows, totalTokens }) {
               <strong>{row.key}</strong>
               <i><span style={{ width: `${Math.min(100, share)}%` }}/></i>
             </div>
-            <b>{formatCompactTokens(row.totalTokens)}</b>
-            <small>{formatMoney(row.costUSD)}</small>
+            <div className="model-metrics">
+              <b>{formatCompactTokens(row.totalTokens)}</b>
+              <small>{formatMoney(row.costUSD)}</small>
+            </div>
           </div>
         );
       })}
@@ -327,8 +346,10 @@ function SourceDonut({ rows, totalTokens }) {
         {rows.map((row, index) => (
           <div key={row.key}>
             <i style={{ background: sourceColor(index) }}/>
-            <span>{row.key}</span>
-            <strong>{totalTokens ? `${((row.totalTokens / totalTokens) * 100).toFixed(1)}%` : '0.0%'}</strong>
+            <div className="source-meta">
+              <span>{row.key}</span>
+              <strong>{totalTokens ? `${((row.totalTokens / totalTokens) * 100).toFixed(1)}%` : '0.0%'}</strong>
+            </div>
           </div>
         ))}
       </div>
@@ -370,20 +391,26 @@ function buildTrendChart(data) {
   const innerHeight = height - top - bottom;
   const maxTokens = Math.max(1, ...rows.map(row => Number(row.totalTokens || 0)));
   const maxCost = Math.max(1, ...rows.map(row => Number(row.costUSD || 0)));
-  const pointFor = (row, index, value, max) => {
+  const coordFor = (row, index, value, max) => {
     const x = left + (rows.length === 1 ? innerWidth : (index / (rows.length - 1)) * innerWidth);
     const y = top + innerHeight - (Number(value || 0) / max) * innerHeight;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
+    return { x, y };
   };
-  const tokenPoints = rows.map((row, index) => pointFor(row, index, row.totalTokens, maxTokens));
-  const costPoints = rows.map((row, index) => pointFor(row, index, row.costUSD, maxCost));
+  const tokenCoords = rows.map((row, index) => coordFor(row, index, row.totalTokens, maxTokens));
+  const costCoords = rows.map((row, index) => coordFor(row, index, row.costUSD, maxCost));
+  const tokenPoints = tokenCoords.map(pointText);
+  const costPoints = costCoords.map(pointText);
   const firstX = tokenPoints[0].split(',')[0];
   const lastX = tokenPoints[tokenPoints.length - 1].split(',')[0];
   const tokenAreaPath = `M ${firstX} ${top + innerHeight} L ${tokenPoints.join(' L ')} L ${lastX} ${top + innerHeight} Z`;
-  const labelIndexes = [0, Math.floor((rows.length - 1) / 4), Math.floor((rows.length - 1) / 2), Math.floor((rows.length - 1) * 3 / 4), rows.length - 1];
-  const labels = [...new Set(labelIndexes)].map(index => ({
-    x: left + (rows.length === 1 ? innerWidth : (index / (rows.length - 1)) * innerWidth),
-    text: rows[index]?.label || ''
+  const labelIndexes = trendPointLabelIndexes(rows);
+  const xForIndex = index => left + (rows.length === 1 ? innerWidth : (index / (rows.length - 1)) * innerWidth);
+  const labels = labelIndexes.map(index => ({
+    index,
+    x: xForIndex(index),
+    tokenY: tokenCoords[index].y,
+    costY: costCoords[index].y,
+    text: formatChartTimeLabel(rows[index])
   }));
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map(ratio => ({
     y: top + innerHeight - ratio * innerHeight,
@@ -393,8 +420,10 @@ function buildTrendChart(data) {
   return {
     width,
     height,
+    top,
     left,
     plotRight: width - right,
+    plotBottom: top + innerHeight,
     points: tokenPoints,
     tokenPolyline: tokenPoints.join(' '),
     costPolyline: costPoints.join(' '),
@@ -402,6 +431,64 @@ function buildTrendChart(data) {
     labels,
     yTicks
   };
+}
+
+function pointText(point) {
+  return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+}
+
+function trendPointLabelIndexes(rows) {
+  const lastIndex = rows.length - 1;
+  if (lastIndex <= 0) return [0];
+  const values = rows.map(row => ({
+    tokens: Number(row.totalTokens || 0),
+    cost: Number(row.costUSD || 0),
+    requests: Number(row.requests || 0)
+  }));
+  const isActive = index => {
+    const row = values[index];
+    return Boolean(row && (row.tokens > 0 || row.cost > 0 || row.requests > 0));
+  };
+  const scoreAt = index => {
+    const current = values[index];
+    const prev = values[Math.max(0, index - 1)] || current;
+    const next = values[Math.min(lastIndex, index + 1)] || current;
+    const tokenSwing = Math.abs(current.tokens - prev.tokens) + Math.abs(next.tokens - current.tokens);
+    const costSwing = Math.abs(current.cost - prev.cost) + Math.abs(next.cost - current.cost);
+    let score = tokenSwing + costSwing * 100000;
+    if (current.tokens > prev.tokens && current.tokens >= next.tokens) score *= 1.5;
+    if (current.tokens < prev.tokens && current.tokens <= next.tokens) score *= 1.25;
+    if ((prev.tokens === 0 && current.tokens > 0) || (current.tokens > 0 && next.tokens === 0)) score *= 1.2;
+    return score;
+  };
+  const candidates = [];
+
+  for (let index = 0; index <= lastIndex; index += 1) {
+    const nearActivity = isActive(index) || isActive(index - 1) || isActive(index + 1);
+    if (nearActivity) {
+      const score = scoreAt(index);
+      if (score > 0) candidates.push({ index, score });
+    }
+  }
+
+  const picked = [0, lastIndex];
+  const maxLabels = 9;
+  const minGap = Math.max(1, Math.floor(lastIndex / maxLabels));
+  for (const candidate of candidates.sort((a, b) => b.score - a.score)) {
+    if (picked.length >= maxLabels) break;
+    if (picked.includes(candidate.index)) continue;
+    if (picked.some(index => Math.abs(index - candidate.index) < minGap)) continue;
+    picked.push(candidate.index);
+  }
+
+  if (picked.length < 5) {
+    [0.25, 0.5, 0.75].forEach(ratio => {
+      const index = Math.round(lastIndex * ratio);
+      if (!picked.includes(index)) picked.push(index);
+    });
+  }
+
+  return [...new Set(picked)].sort((a, b) => a - b).slice(0, maxLabels);
 }
 
 function sparklinePoints(values = []) {
@@ -468,6 +555,20 @@ function formatMoney(value) {
 
 function formatAxisMoney(value) {
   return U.compactMoney(value);
+}
+
+function formatChartTimeLabel(row) {
+  const value = row?.start || row?.timestamp || row?.label;
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return row?.label || '';
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).formatToParts(date);
+  const get = type => parts.find(part => part.type === type)?.value || '00';
+  return `${get('hour')}:${get('minute')}`;
 }
 
 function formatPercent(value) {

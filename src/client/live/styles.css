@@ -461,23 +461,24 @@ body.desktop-pulse-body::before {
 .trend-legend {
   padding: 6px 16px 0;
   display: flex;
+  flex-wrap: wrap;
   gap: 36px;
   color: var(--pulse-muted);
   font-size: 12px;
 }
 
 .browser-live .trend-legend {
-  padding: 6px 16px 0;
-  gap: 34px;
+  padding: 5px 16px 0;
+  gap: 18px;
   font-size: 13px;
 }
 
 .browser-live .trend-legend div {
-  gap: 4px;
+  gap: 6px;
 }
 
 .browser-live .trend-legend strong {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .browser-live .dot-cyan,
@@ -488,13 +489,17 @@ body.desktop-pulse-body::before {
 }
 
 .trend-legend div {
-  display: grid;
-  gap: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .trend-legend strong {
   color: var(--pulse-ink);
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
 .dot-cyan,
@@ -539,6 +544,7 @@ body.desktop-pulse-body::before {
 .chart-label {
   fill: var(--pulse-muted);
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .chart-axis {
@@ -550,6 +556,12 @@ body.desktop-pulse-body::before {
 
 .chart-axis-right {
   fill: var(--pulse-green);
+}
+
+.chart-x-marker {
+  stroke: color-mix(in srgb, var(--pulse-muted), transparent 88%);
+  stroke-width: 1;
+  stroke-dasharray: 3 6;
 }
 
 .chart-token-line,
@@ -575,6 +587,21 @@ body.desktop-pulse-body::before {
   fill: url(#tokenArea);
 }
 
+.chart-point {
+  stroke: var(--pulse-panel);
+  stroke-width: 1.4;
+}
+
+.chart-point-token {
+  fill: var(--pulse-cyan);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--pulse-cyan), transparent 35%));
+}
+
+.chart-point-cost {
+  fill: var(--pulse-green);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--pulse-green), transparent 35%));
+}
+
 .pulse-agent-panel {
   display: grid;
 }
@@ -590,8 +617,10 @@ body.desktop-pulse-body::before {
 
 .browser-live .agent-ring-wrap {
   min-height: 0;
-  padding: 0 14px clamp(10px, 1.2vh, 14px);
-  gap: 10px;
+  height: 100%;
+  padding: 0 14px clamp(14px, 1.7vh, 20px);
+  gap: clamp(5px, 0.8vh, 9px);
+  align-content: center;
 }
 
 .agent-ring {
@@ -604,7 +633,7 @@ body.desktop-pulse-body::before {
 }
 
 .browser-live .agent-ring {
-  width: clamp(190px, 14vw, 230px);
+  width: clamp(224px, 15vw, 288px);
 }
 
 .agent-ring svg {
@@ -644,8 +673,8 @@ body.desktop-pulse-body::before {
 }
 
 .browser-live .agent-ring-center {
-  width: clamp(106px, 7.5vw, 128px);
-  height: clamp(106px, 7.5vw, 128px);
+  width: clamp(118px, 7.8vw, 148px);
+  height: clamp(118px, 7.8vw, 148px);
 }
 
 .agent-ring strong {
@@ -655,7 +684,7 @@ body.desktop-pulse-body::before {
 }
 
 .browser-live .agent-ring strong {
-  font-size: clamp(36px, 2.75vw, 46px);
+  font-size: clamp(42px, 3vw, 56px);
 }
 
 .agent-ring span {
@@ -664,7 +693,7 @@ body.desktop-pulse-body::before {
 }
 
 .browser-live .agent-ring span {
-  font-size: clamp(19px, 1.55vw, 23px);
+  font-size: clamp(22px, 1.65vw, 28px);
 }
 
 .agent-ring-wrap > b {
@@ -677,12 +706,16 @@ body.desktop-pulse-body::before {
 }
 
 .browser-live .agent-ring-wrap > b {
-  padding: 5px 18px;
-  font-size: clamp(20px, 1.75vw, 25px);
+  padding: 4px 16px;
+  font-size: clamp(24px, 1.75vw, 30px);
+  line-height: 1.15;
 }
 
 .browser-live .agent-ring-wrap > span {
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.25;
+  max-width: 100%;
+  text-align: center;
 }
 
 .agent-ring-wrap > span {
@@ -715,7 +748,7 @@ body.desktop-pulse-body::before {
 
 .model-row {
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) auto auto;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
 }
@@ -746,12 +779,20 @@ body.desktop-pulse-body::before {
 }
 
 .browser-live .model-row {
-  grid-template-columns: 24px minmax(0, 1fr) minmax(70px, auto) minmax(58px, auto);
+  grid-template-columns: 24px minmax(0, 1fr) minmax(120px, auto);
 }
 
-.browser-live .model-row b,
-.browser-live .model-row small {
-  min-width: 58px;
+.model-metrics {
+  min-width: 92px;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.browser-live .model-metrics {
+  min-width: 120px;
+  gap: 5px;
 }
 
 .browser-live .model-row i {
@@ -776,8 +817,7 @@ body.desktop-pulse-body::before {
 
 .model-row b,
 .model-row small {
-  min-width: 72px;
-  text-align: right;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
@@ -836,13 +876,13 @@ body.desktop-pulse-body::before {
   gap: 12px;
 }
 
-.browser-live .source-list div {
+.browser-live .source-list > div {
   font-size: 13px;
 }
 
-.source-list div {
+.source-list > div {
   display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) auto;
+  grid-template-columns: 10px minmax(0, 1fr);
   gap: 9px;
   align-items: center;
   color: var(--pulse-muted);
@@ -864,6 +904,16 @@ body.desktop-pulse-body::before {
 .source-list strong {
   color: var(--pulse-ink);
   font-variant-numeric: tabular-nums;
+}
+
+.source-meta {
+  min-width: 0;
+  width: max-content;
+  max-width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  text-align: center;
 }
 
 .advice-list {
@@ -1058,6 +1108,27 @@ body.desktop-pulse-body::before {
   }
   .browser-live .trend-legend {
     font-size: 11px;
+    gap: 12px;
+  }
+  .browser-live .trend-legend strong {
+    font-size: 12px;
+  }
+  .browser-live .agent-ring {
+    width: clamp(176px, 12.8vw, 220px);
+  }
+  .browser-live .agent-ring-center {
+    width: clamp(98px, 7vw, 122px);
+    height: clamp(98px, 7vw, 122px);
+  }
+  .browser-live .agent-ring strong {
+    font-size: clamp(32px, 2.45vw, 40px);
+  }
+  .browser-live .agent-ring-wrap > b {
+    font-size: clamp(18px, 1.45vw, 22px);
+  }
+  .browser-live .agent-ring-wrap {
+    padding-bottom: 12px;
+    gap: 5px;
   }
   .browser-live .model-list,
   .browser-live .advice-list {
