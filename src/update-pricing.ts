@@ -244,6 +244,7 @@ function discoverAssetUrls(source, body) {
 
 function parseSourceModels(source, body, exchangeRate) {
   if (isOpenAiGpt56Source(source)) return parseOpenAiGpt56Models(body);
+  if (source.provider === 'xai') return parseXaiModels(body);
   if (source.provider === 'anthropic') return parseAnthropicModels(body);
   if (source.provider === 'deepseek') return parseDeepSeekModels(body);
   if (source.provider === 'xiaomi') return parseColumnPricingTable(body, {
@@ -313,13 +314,27 @@ function parseAnthropicModels(body) {
     }));
 
   const opus = rates.find(rate => rate.input === 5 && rate.output === 25);
+  const fable = rates.find(rate => rate.input === 10 && rate.output === 50);
   const sonnet = rates.find(rate => rate.input === 3 && rate.output === 15);
   const haiku = rates.find(rate => rate.input === 1 && rate.output === 5);
   return [
+    rateModel('anthropic', 'claude-fable-5', fable, 'anthropic', 'official-page', null, 'First-party Claude Fable 5 pricing; cache write defaults to 5-minute prompt caching.'),
     ...['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6'].map(model => rateModel('anthropic', model, opus, 'anthropic')),
     rateModel('anthropic', 'claude-sonnet-4-6', sonnet, 'anthropic'),
     rateModel('anthropic', 'claude-haiku-4-5', haiku, 'anthropic')
   ].filter(Boolean);
+}
+
+function parseXaiModels(body) {
+  const text = tableText(body).toLowerCase();
+  if (!text.includes('grok-4.5') || !mentionsUsdPrice(text, 2) || !mentionsUsdPrice(text, 6)) return [];
+  return [rateModel('xai', 'grok-4.5', {
+    input: 2,
+    cachedInput: 2,
+    cacheWrite5m: 2,
+    cacheWrite1h: 2,
+    output: 6
+  }, 'xai', 'official-page', null, 'xAI Grok 4.5 launch API price. No separate cache-read or cache-write discount is applied by default.')];
 }
 
 function parseDeepSeekModels(body) {

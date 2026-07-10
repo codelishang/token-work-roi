@@ -50,6 +50,17 @@
       "assets": []
     },
     {
+      "provider": "xai",
+      "label": "xAI Grok 4.5 launch pricing",
+      "url": "https://x.ai/news/grok-4-5",
+      "note": "Grok 4.5 launch API price. No separate cache-read or cache-write discount is applied by default.",
+      "fetchedAt": "2026-06-23T10:05:57.310Z",
+      "fetchStatus": "fallback-table",
+      "httpStatus": null,
+      "contentLength": null,
+      "assets": []
+    },
+    {
       "provider": "anthropic",
       "label": "Claude API pricing",
       "url": "https://claude.com/pricing",
@@ -273,6 +284,46 @@
       "sourceProvider": "openai-codex",
       "pricingFetchStatus": "fallback-table",
       "note": "Codex ChatGPT-plan credits are documented separately; API-key mode uses OpenAI API pricing."
+    },
+    {
+      "provider": "xai",
+      "model": "grok-4.5",
+      "aliases": [
+        "grok-4-5"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 2,
+        "cachedInput": 2,
+        "cacheWrite5m": 2,
+        "cacheWrite1h": 2,
+        "output": 6
+      },
+      "officialRatesPerMTok": null,
+      "sourceProvider": "xai",
+      "pricingFetchStatus": "fallback-table",
+      "note": "xAI Grok 4.5 launch API price. No separate cache-read or cache-write discount is applied by default."
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "aliases": [
+        "claude-fable-5"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 10,
+        "cachedInput": 1,
+        "cacheWrite5m": 12.5,
+        "cacheWrite1h": 20,
+        "output": 50
+      },
+      "officialRatesPerMTok": null,
+      "sourceProvider": "anthropic",
+      "pricingFetchStatus": "fallback-table",
+      "note": "First-party Claude Fable 5 pricing; cache write defaults to 5-minute prompt caching."
     },
     {
       "provider": "anthropic",

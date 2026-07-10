@@ -148,6 +148,34 @@ test('calculates Claude prompt-cache cost with official 5-minute cache write def
   assert.equal(cost.ratesPerMTok.cacheWrite, 6.25);
 });
 
+test('calculates Grok 4.5 and Claude Fable 5 official prices', () => {
+  const grok = calculateOfficialCost('xai/grok-4-5', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    cacheWrite: 1_000_000,
+    output: 1_000_000
+  });
+  const fable = calculateOfficialCost('claude-fable-5', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    cacheWrite: 1_000_000,
+    output: 1_000_000
+  });
+  const fableHour = calculateOfficialCost('claude-fable-5', {
+    cacheWrite: 1_000_000
+  }, { anthropicCacheWriteTtl: '1h' });
+
+  assert.equal(grok.priced, true);
+  assert.equal(grok.provider, 'xai');
+  assert.equal(grok.resolvedModel, 'grok-4.5');
+  assert.equal(grok.totalUSD, 12);
+  assert.equal(fable.priced, true);
+  assert.equal(fable.provider, 'anthropic');
+  assert.equal(fable.totalUSD, 73.5);
+  assert.equal(fable.ratesPerMTok.cacheWrite, 12.5);
+  assert.equal(fableHour.ratesPerMTok.cacheWrite, 20);
+});
+
 test('supports official DeepSeek and Xiaomi cache-hit pricing', () => {
   const deepseek = calculateOfficialCost('deepseek-v4-pro', {
     input: 1_000_000,
