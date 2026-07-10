@@ -12,6 +12,9 @@ process.env.PRICING_REFRESH = '1';
 const pricingCachePath = resolve(process.cwd(), 'data', 'official-pricing.json');
 const pricingSourcePath = resolve(process.cwd(), 'src', 'pricing.ts');
 const STABLE_ALIASES = new Map([
+  ['openai::gpt-5-6-sol', ['gpt-5.6-sol', 'gpt-5-6-sol']],
+  ['openai::gpt-5-6-terra', ['gpt-5.6-terra', 'gpt-5-6-terra']],
+  ['openai::gpt-5-6-luna', ['gpt-5.6-luna', 'gpt-5-6-luna']],
   ['deepseek::deepseek-v4-flash', ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner']],
   ['xiaomi::mimo-v2.5-pro', ['mimo-v2.5-pro', 'mimo-v2-pro']],
   ['zhipu glm::glm-5.2', ['glm-5.2', 'glm-5-2']],
@@ -240,6 +243,7 @@ function discoverAssetUrls(source, body) {
 }
 
 function parseSourceModels(source, body, exchangeRate) {
+  if (isOpenAiGpt56Source(source)) return parseOpenAiGpt56Models(body);
   if (source.provider === 'anthropic') return parseAnthropicModels(body);
   if (source.provider === 'deepseek') return parseDeepSeekModels(body);
   if (source.provider === 'xiaomi') return parseColumnPricingTable(body, {
@@ -252,6 +256,48 @@ function parseSourceModels(source, body, exchangeRate) {
   if (isDoubaoSource(source)) return parseVolcengineModels(body, exchangeRate);
   if (isQwenSource(source)) return parseQwenModels(body, exchangeRate);
   return [];
+}
+
+function parseOpenAiGpt56Models(body) {
+  const text = tableText(body).toLowerCase();
+  const expected = [
+    ['gpt-5.6-sol', 5, 30, 'OpenAI GPT-5.6 Sol flagship launch rate. Cache write is input × 1.25; cache read is input × 0.1.'],
+    ['gpt-5.6-terra', 2.5, 15, 'OpenAI GPT-5.6 Terra balanced launch rate. Cache write is input × 1.25; cache read is input × 0.1.'],
+    ['gpt-5.6-luna', 1, 6, 'OpenAI GPT-5.6 Luna lightweight launch rate. Cache write is input × 1.25; cache read is input × 0.1.']
+  ];
+  const pageMentionsAllModels = expected.every(([model]) => text.includes(model));
+  const pageMentionsCacheRules = mentionsPercent(text, 90) && mentionsPercent(text, 25);
+  return expected
+    .filter(([model, input, output]) => {
+      if (!pageMentionsAllModels || !pageMentionsCacheRules) return false;
+      return mentionsUsdPrice(text, input) && mentionsUsdPrice(text, output);
+    })
+    .map(([model, inputRate, outputRate, note]) => rateModel('openai', model, {
+      input: inputRate,
+      cachedInput: inputRate * 0.1,
+      cacheWrite5m: inputRate * 1.25,
+      cacheWrite1h: inputRate * 1.25,
+      output: outputRate
+    }, 'openai-gpt-5.6', 'official-page', null, note));
+}
+
+function mentionsUsdPrice(text, value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return false;
+  const variants = new Set([
+    number.toString(),
+    number.toFixed(1),
+    number.toFixed(2)
+  ]);
+  return [...variants].some(item => new RegExp(`\\$\\s*${escapeRegex(item)}`).test(text));
+}
+
+function mentionsPercent(text, value) {
+  return new RegExp(`${value}\\s*%`).test(text);
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function parseAnthropicModels(body) {
@@ -462,7 +508,7 @@ function parseColumnPricingTable(body, { provider, sourceProvider, models, start
   }).filter(Boolean);
 }
 
-function rateModel(provider, model, rates, sourceProvider, pricingFetchStatus = 'official-page', officialRatesPerMTok = null) {
+function rateModel(provider, model, rates, sourceProvider, pricingFetchStatus = 'official-page', officialRatesPerMTok = null, note = null) {
   if (!rates || !isFiniteRate(rates.input) || !isFiniteRate(rates.output)) return null;
   const ratesPerMTok = {
     input: rates.input,
@@ -471,7 +517,7 @@ function rateModel(provider, model, rates, sourceProvider, pricingFetchStatus = 
   };
   if (isFiniteRate(rates.cacheWrite5m)) ratesPerMTok.cacheWrite5m = rates.cacheWrite5m;
   if (isFiniteRate(rates.cacheWrite1h)) ratesPerMTok.cacheWrite1h = rates.cacheWrite1h;
-  return {
+  const row = {
     provider,
     model,
     aliases: [model],
@@ -482,6 +528,8 @@ function rateModel(provider, model, rates, sourceProvider, pricingFetchStatus = 
     pricingFetchStatus,
     sourceProvider
   };
+  if (note) row.note = note;
+  return row;
 }
 
 function modelBlock(body, label) {
@@ -533,6 +581,10 @@ function isDoubaoSource(source) {
 
 function isQwenSource(source) {
   return providerKey(source?.provider) === 'qwen';
+}
+
+function isOpenAiGpt56Source(source) {
+  return providerKey(source?.provider) === 'openai gpt 5.6';
 }
 
 function providerKey(provider) {

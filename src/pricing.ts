@@ -7,7 +7,7 @@
  */
 
 const MTOK = 1_000_000;
-const VERIFIED_AT = '2026-06-23';
+const VERIFIED_AT = '2026-07-10';
 const DEFAULT_ANTHROPIC_CACHE_WRITE_TTL = '5m';
 
 export const OFFICIAL_PRICING_SOURCES = [
@@ -22,6 +22,12 @@ export const OFFICIAL_PRICING_SOURCES = [
     label: 'OpenAI Codex pricing',
     url: 'https://developers.openai.com/codex/pricing',
     note: 'Codex ChatGPT-plan credits are documented separately; API-key mode uses OpenAI API pricing.'
+  },
+  {
+    provider: 'openai-gpt-5.6',
+    label: 'OpenAI GPT-5.6 launch pricing',
+    url: 'https://openai.com/index/gpt-5-6/',
+    note: 'GPT-5.6 launch rates; cache write is 25% above input and cache read is 90% below input.'
   },
   {
     provider: 'anthropic',
@@ -74,6 +80,42 @@ export const OFFICIAL_PRICING_SOURCES = [
 ];
 
 export const OFFICIAL_PRICE_TABLE = [
+  officialRate({
+    provider: "openai",
+    model: "gpt-5.6-sol",
+    aliases: ["gpt-5-6-sol", "gpt-5.6-sol"],
+    input: 5,
+    cachedInput: 0.5,
+    cacheWrite5m: 6.25,
+    cacheWrite1h: 6.25,
+    output: 30,
+    source: "openai-gpt-5.6",
+    note: "OpenAI GPT-5.6 Sol flagship launch rate. Cache write is input × 1.25; cache read is input × 0.1."
+  }),
+  officialRate({
+    provider: "openai",
+    model: "gpt-5.6-terra",
+    aliases: ["gpt-5-6-terra", "gpt-5.6-terra"],
+    input: 2.5,
+    cachedInput: 0.25,
+    cacheWrite5m: 3.125,
+    cacheWrite1h: 3.125,
+    output: 15,
+    source: "openai-gpt-5.6",
+    note: "OpenAI GPT-5.6 Terra balanced launch rate. Cache write is input × 1.25; cache read is input × 0.1."
+  }),
+  officialRate({
+    provider: "openai",
+    model: "gpt-5.6-luna",
+    aliases: ["gpt-5-6-luna", "gpt-5.6-luna"],
+    input: 1,
+    cachedInput: 0.1,
+    cacheWrite5m: 1.25,
+    cacheWrite1h: 1.25,
+    output: 6,
+    source: "openai-gpt-5.6",
+    note: "OpenAI GPT-5.6 Luna lightweight launch rate. Cache write is input × 1.25; cache read is input × 0.1."
+  }),
   officialRate({
     provider: "openai",
     model: "gpt-5.5",

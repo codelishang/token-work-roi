@@ -82,7 +82,7 @@ function scopeMatcher(action = {}) {
     return matcher;
   }
 
-  if (/重模型|heavy|opus|gpt-5\.5/u.test(text)) {
+  if (/重模型|heavy|opus|gpt-5\.6-sol|gpt-5\.5/u.test(text)) {
     const matcher = session => modelTierLabel(session) === 'heavy';
     matcher.scopeLabel = '重模型 session';
     return matcher;
@@ -94,7 +94,7 @@ function scopeMatcher(action = {}) {
     return matcher;
   }
 
-  if (/中模型|mid|sonnet|codex/u.test(text)) {
+  if (/中模型|mid|sonnet|codex|gpt-5\.6-terra/u.test(text)) {
     const matcher = session => modelTierLabel(session) === 'mid';
     matcher.scopeLabel = '中模型 session';
     return matcher;
@@ -107,9 +107,9 @@ function scopeMatcher(action = {}) {
 
 function modelTierLabel(session = {}) {
   const model = String(session.model || session.pricingModel || '').toLowerCase();
-  if (/opus|gpt-5\.5|gemini-2\.5-pro-long-context/.test(model)) return 'heavy';
-  if (/sonnet|codex|pro|kimi-k2[.-][67]/.test(model)) return 'mid';
-  if (/haiku|flash|deepseek|mimo|kimi-k2[.-]5/.test(model)) return 'light';
+  if (/opus|gpt-5\.6-sol|gpt-5\.5|gemini-2\.5-pro-long-context/.test(model)) return 'heavy';
+  if (/gpt-5\.6-terra|sonnet|codex|pro|kimi-k2[.-][67]/.test(model)) return 'mid';
+  if (/gpt-5\.6-luna|haiku|flash|deepseek|mimo|kimi-k2[.-]5/.test(model)) return 'light';
   return 'unknown';
 }
 
