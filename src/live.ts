@@ -614,7 +614,7 @@ function isUnpricedModel(model) {
 
 function isHeavyModel(model) {
   const value = String(model || '').toLowerCase();
-  return value.includes('opus') || value.includes('gpt-5.5') || value.includes('gemini-2.5-pro-long-context');
+  return value.includes('opus') || value.includes('gpt-5.6-sol') || value.includes('gpt-5.5') || value.includes('gemini-2.5-pro-long-context');
 }
 
 function isLightModel(model) {
@@ -622,6 +622,7 @@ function isLightModel(model) {
   return value.includes('haiku')
     || value.includes('flash')
     || value.includes('spark')
+    || value.includes('gpt-5.6-luna')
     || value.includes('deepseek')
     || value.includes('mimo')
     || value.includes('gemini-2.5-flash')

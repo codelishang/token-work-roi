@@ -9,6 +9,7 @@ const EXPLORATION_STAGES = new Set(['探索', '验证']);
 const CONTEXT_PURPOSES = new Set(['上下文整理']);
 const TARGET_MODELS = {
   light: [
+    { model: 'gpt-5.6-luna', provider: 'openai', label: 'GPT-5.6 Luna' },
     { model: 'deepseek-v4-flash', provider: 'deepseek', label: 'DeepSeek V4 Flash' },
     { model: 'mimo-v2.5', provider: 'xiaomi', label: 'MiMo v2.5' },
     { model: 'claude-haiku-4-5', provider: 'anthropic', label: 'Claude Haiku 4.5' },
@@ -17,6 +18,7 @@ const TARGET_MODELS = {
     { model: 'qwen3.6-flash', provider: 'Qwen', label: 'Qwen3.6 Flash' }
   ],
   mid: [
+    { model: 'gpt-5.6-terra', provider: 'openai', label: 'GPT-5.6 Terra' },
     { model: 'gpt-5.3-codex', provider: 'openai', label: 'GPT-5.3 Codex' },
     { model: 'claude-sonnet-4-6', provider: 'anthropic', label: 'Claude Sonnet 4.6' },
     { model: 'deepseek-v4-pro', provider: 'deepseek', label: 'DeepSeek V4 Pro' },

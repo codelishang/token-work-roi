@@ -25,6 +25,39 @@ test('calculates OpenAI API standard USD price from official per-token rates', (
   assert.equal(cost.ratesPerMTok.output, 30);
 });
 
+test('calculates OpenAI GPT-5.6 launch prices and aliases', () => {
+  const sol = calculateOfficialCost('openai/gpt-5.6-sol', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    cacheWrite: 1_000_000,
+    output: 1_000_000
+  });
+  const terra = calculateOfficialCost('gpt-5-6-terra', {
+    input: 1_000_000,
+    output: 1_000_000
+  });
+  const luna = calculateOfficialCost('gpt-5.6-luna', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    cacheWrite: 1_000_000,
+    output: 1_000_000
+  });
+
+  assert.equal(sol.priced, true);
+  assert.equal(sol.provider, 'openai');
+  assert.equal(sol.resolvedModel, 'gpt-5.6-sol');
+  assert.equal(sol.ratesPerMTok.input, 5);
+  assert.equal(sol.ratesPerMTok.cachedInput, 0.5);
+  assert.equal(sol.ratesPerMTok.cacheWrite, 6.25);
+  assert.equal(sol.ratesPerMTok.output, 30);
+  assert.equal(sol.totalUSD, 41.75);
+  assert.equal(terra.priced, true);
+  assert.equal(terra.resolvedModel, 'gpt-5.6-terra');
+  assert.equal(terra.totalUSD, 17.5);
+  assert.equal(luna.priced, true);
+  assert.equal(luna.totalUSD, 8.35);
+});
+
 test('calculates Gemini API USD price from official rates', () => {
   const flash = calculateOfficialCost('gemini-2.5-flash', {
     input: 1_000_000,
