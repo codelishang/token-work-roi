@@ -447,6 +447,7 @@ function budgetEvidence(window) {
 function providerFromSource(source) {
   const value = String(source || '').toLowerCase();
   if (value.includes('codex') || value.includes('openai')) return 'openai';
+  if (value.includes('grok') || value.includes('xai') || value.includes('x.ai')) return 'xai';
   if (value.includes('claude') || value.includes('anthropic')) return 'anthropic';
   if (value.includes('deepseek')) return 'deepseek';
   if (value.includes('mimo') || value.includes('xiaomi')) return 'xiaomi';
@@ -614,7 +615,7 @@ function isUnpricedModel(model) {
 
 function isHeavyModel(model) {
   const value = String(model || '').toLowerCase();
-  return value.includes('opus') || value.includes('gpt-5.6-sol') || value.includes('gpt-5.5') || value.includes('gemini-2.5-pro-long-context');
+  return value.includes('fable') || value.includes('opus') || value.includes('gpt-5.6-sol') || value.includes('gpt-5.5') || value.includes('gemini-2.5-pro-long-context');
 }
 
 function isLightModel(model) {
@@ -632,6 +633,8 @@ function isLightModel(model) {
 function isMidModel(model) {
   const value = String(model || '').toLowerCase();
   return value.includes('sonnet')
+    || value.includes('grok-4.5')
+    || value.includes('grok-4-5')
     || value.includes('gpt-5.3')
     || value.includes('codex')
     || value.includes('gemini-2.5-pro')

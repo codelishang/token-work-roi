@@ -461,6 +461,7 @@ function summarizeSession(session = {}) {
 function providerFromSource(source) {
   const value = String(source || '').toLowerCase();
   if (value.includes('codex') || value.includes('openai')) return 'openai';
+  if (value.includes('grok') || value.includes('xai') || value.includes('x.ai')) return 'xai';
   if (value.includes('claude') || value.includes('anthropic')) return 'anthropic';
   if (value.includes('deepseek')) return 'deepseek';
   if (value.includes('mimo') || value.includes('xiaomi')) return 'xiaomi';

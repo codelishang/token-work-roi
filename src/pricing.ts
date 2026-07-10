@@ -30,6 +30,12 @@ export const OFFICIAL_PRICING_SOURCES = [
     note: 'GPT-5.6 launch rates; cache write is 25% above input and cache read is 90% below input.'
   },
   {
+    provider: 'xai',
+    label: 'xAI Grok 4.5 launch pricing',
+    url: 'https://x.ai/news/grok-4-5',
+    note: 'Grok 4.5 launch API price. No separate cache-read or cache-write discount is applied by default.'
+  },
+  {
     provider: 'anthropic',
     label: 'Claude API pricing',
     url: 'https://claude.com/pricing',
@@ -155,6 +161,30 @@ export const OFFICIAL_PRICE_TABLE = [
     source: "openai-codex",
     unavailableReason: "OpenAI Codex docs list GPT-5.3-Codex-Spark as research preview and do not publish a USD API token rate.",
     note: "Codex ChatGPT-plan credits are documented separately; API-key mode uses OpenAI API pricing."
+  }),
+  officialRate({
+    provider: "xai",
+    model: "grok-4.5",
+    aliases: ["grok-4-5"],
+    input: 2,
+    cachedInput: 2,
+    cacheWrite5m: 2,
+    cacheWrite1h: 2,
+    output: 6,
+    source: "xai",
+    note: "xAI Grok 4.5 launch API price. No separate cache-read or cache-write discount is applied by default."
+  }),
+  officialRate({
+    provider: "anthropic",
+    model: "claude-fable-5",
+    aliases: ["claude-fable-5"],
+    input: 10,
+    cachedInput: 1,
+    cacheWrite5m: 12.5,
+    cacheWrite1h: 20,
+    output: 50,
+    source: "anthropic",
+    note: "First-party Claude Fable 5 pricing; cache write defaults to 5-minute prompt caching."
   }),
   officialRate({
     provider: "anthropic",
