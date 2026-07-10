@@ -19,6 +19,7 @@ const TARGET_MODELS = {
   ],
   mid: [
     { model: 'gpt-5.6-terra', provider: 'openai', label: 'GPT-5.6 Terra' },
+    { model: 'grok-4.5', provider: 'xai', label: 'Grok 4.5' },
     { model: 'gpt-5.3-codex', provider: 'openai', label: 'GPT-5.3 Codex' },
     { model: 'claude-sonnet-4-6', provider: 'anthropic', label: 'Claude Sonnet 4.6' },
     { model: 'deepseek-v4-pro', provider: 'deepseek', label: 'DeepSeek V4 Pro' },
