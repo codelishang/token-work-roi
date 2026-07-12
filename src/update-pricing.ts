@@ -11,6 +11,9 @@ process.env.PRICING_REFRESH = '1';
 
 const pricingCachePath = resolve(process.cwd(), 'data', 'official-pricing.json');
 const pricingSourcePath = resolve(process.cwd(), 'src', 'pricing.ts');
+const MAX_PRICING_PAGE_BYTES = 8 * 1024 * 1024;
+const MAX_PRICING_ASSET_BYTES = 4 * 1024 * 1024;
+const MAX_PRICING_ASSETS = 4;
 const STABLE_ALIASES = new Map([
   ['openai::gpt-5-6-sol', ['gpt-5.6-sol', 'gpt-5-6-sol']],
   ['openai::gpt-5-6-terra', ['gpt-5.6-terra', 'gpt-5-6-terra']],
@@ -163,7 +166,7 @@ async function fetchSourceStatus(source, exchangeRate) {
         'user-agent': 'token-work-roi-pricing-cache/1.0'
       }
     });
-    const text = await response.text();
+    const text = await readResponseText(response, MAX_PRICING_PAGE_BYTES);
     const assets = response.ok ? await fetchSourceAssets(source, text) : [];
     const parseBody = [text, ...assets.map(asset => asset.body || '')].join('\n');
     const models = response.ok ? parseSourceModels(source, parseBody, exchangeRate) : [];
@@ -172,7 +175,7 @@ async function fetchSourceStatus(source, exchangeRate) {
       fetchedAt,
       fetchStatus: response.ok ? 'ok' : 'http-error',
       httpStatus: response.status,
-      contentLength: text.length,
+      contentLength: Buffer.byteLength(text, 'utf8'),
       assets: assets.map(({ body, ...asset }) => asset),
       models
     };
@@ -189,47 +192,83 @@ async function fetchSourceStatus(source, exchangeRate) {
 }
 
 async function fetchSourceAssets(source, body) {
-  const urls = source.assetUrls?.length ? source.assetUrls : discoverAssetUrls(source, body);
+  const urls = [...new Set((source.assetUrls?.length ? source.assetUrls : discoverAssetUrls(source, body))
+    .map(url => sameOriginHttpsAssetUrl(url, source.url))
+    .filter(Boolean))]
+    .slice(0, MAX_PRICING_ASSETS);
   if (!urls.length) return [];
   const assets = await Promise.all(urls.map(url => fetchAsset(url)));
-  const nestedUrls = assets.flatMap(asset => discoverAssetUrls(source, asset.body || ''));
+  const nestedUrls = [...new Set(assets.flatMap(asset => discoverAssetUrls(source, asset.body || '')))];
   const seen = new Set(assets.map(asset => asset.url));
   const nestedAssets = await Promise.all(
     nestedUrls
-      .filter(url => !seen.has(url))
+      .map(url => sameOriginHttpsAssetUrl(url, source.url))
+      .filter(url => url && !seen.has(url))
+      .slice(0, Math.max(0, MAX_PRICING_ASSETS - assets.length))
       .map(url => fetchAsset(url))
   );
   return [...assets, ...nestedAssets];
 }
 
+function sameOriginHttpsAssetUrl(value, sourceUrl) {
+  try {
+    const asset = new URL(value);
+    const source = new URL(sourceUrl);
+    if (asset.protocol !== 'https:' || asset.origin !== source.origin) return null;
+    return asset.toString();
+  } catch {
+    return null;
+  }
+}
+
 async function fetchAsset(url) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15_000);
-    try {
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          accept: 'text/javascript,application/javascript,text/plain,*/*;q=0.8',
-          'user-agent': 'token-work-roi-pricing-cache/1.0'
-        }
-      });
-      const body = await response.text();
-      return {
-        url,
-        fetchStatus: response.ok ? 'ok' : 'http-error',
-        httpStatus: response.status,
-        contentLength: body.length,
-        body: response.ok ? body : ''
-      };
-    } catch (error) {
-      return {
-        url,
-        fetchStatus: 'error',
-        fetchError: error?.name === 'AbortError' ? 'timeout' : error?.message || String(error)
-      };
-    } finally {
-      clearTimeout(timer);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        accept: 'text/javascript,application/javascript,text/plain,*/*;q=0.8',
+        'user-agent': 'token-work-roi-pricing-cache/1.0'
+      }
+    });
+    const body = await readResponseText(response, MAX_PRICING_ASSET_BYTES);
+    return {
+      url,
+      fetchStatus: response.ok ? 'ok' : 'http-error',
+      httpStatus: response.status,
+      contentLength: Buffer.byteLength(body, 'utf8'),
+      body: response.ok ? body : ''
+    };
+  } catch (error) {
+    return {
+      url,
+      fetchStatus: 'error',
+      fetchError: error?.name === 'AbortError' ? 'timeout' : error?.message || String(error)
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readResponseText(response, maxBytes) {
+  const advertisedLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(advertisedLength) && advertisedLength > maxBytes) {
+    throw new Error(`response exceeds ${maxBytes} bytes`);
+  }
+  if (!response.body) return '';
+
+  const chunks = [];
+  let totalBytes = 0;
+  for await (const chunk of response.body) {
+    const bytes = Buffer.from(chunk);
+    totalBytes += bytes.length;
+    if (totalBytes > maxBytes) {
+      throw new Error(`response exceeds ${maxBytes} bytes`);
     }
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 function discoverAssetUrls(source, body) {
@@ -327,14 +366,14 @@ function parseAnthropicModels(body) {
 
 function parseXaiModels(body) {
   const text = tableText(body).toLowerCase();
-  if (!text.includes('grok-4.5') || !mentionsUsdPrice(text, 2) || !mentionsUsdPrice(text, 6)) return [];
+  if (!/grok[\s-]*4\.5/.test(text) || !mentionsUsdPrice(text, 2) || !mentionsUsdPrice(text, 6)) return [];
   return [rateModel('xai', 'grok-4.5', {
     input: 2,
     cachedInput: 2,
     cacheWrite5m: 2,
     cacheWrite1h: 2,
     output: 6
-  }, 'xai', 'official-page', null, 'xAI Grok 4.5 launch API price. No separate cache-read or cache-write discount is applied by default.')];
+  }, 'xai', 'official-page', null, 'xAI Grok 4.5 public model page lists input and output rates; no separate cached-input rate is applied by default.')];
 }
 
 function parseDeepSeekModels(body) {

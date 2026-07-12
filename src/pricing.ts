@@ -32,8 +32,8 @@ export const OFFICIAL_PRICING_SOURCES = [
   {
     provider: 'xai',
     label: 'xAI Grok 4.5 launch pricing',
-    url: 'https://x.ai/news/grok-4-5',
-    note: 'Grok 4.5 launch API price. No separate cache-read or cache-write discount is applied by default.'
+    url: 'https://docs.x.ai/developers/models',
+    note: 'Grok 4.5 public model page lists input and output rates; no separate cached-input rate is applied by default.'
   },
   {
     provider: 'anthropic',
@@ -172,7 +172,7 @@ export const OFFICIAL_PRICE_TABLE = [
     cacheWrite1h: 2,
     output: 6,
     source: "xai",
-    note: "xAI Grok 4.5 launch API price. No separate cache-read or cache-write discount is applied by default."
+    note: "xAI Grok 4.5 public model page lists input and output rates; no separate cached-input rate is applied by default."
   }),
   officialRate({
     provider: "anthropic",

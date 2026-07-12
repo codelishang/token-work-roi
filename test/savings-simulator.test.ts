@@ -120,6 +120,29 @@ test('savings simulator ranks low-value abandoned high-cost sessions first', () 
   assert.ok(simulation.suggestions[0].savingsUSD > simulation.suggestions.at(-1).savingsUSD);
 });
 
+test('savings simulator handles Grok model variants as mid-tier work', () => {
+  const simulation = buildSavingsSimulation({
+    sessions: [{
+      sessionId: 'grok-waste',
+      source: 'xAI Console',
+      model: 'grok-4.5-prototype',
+      pricingStatus: 'priced',
+      workPurpose: '功能开发',
+      workStage: '实现',
+      valueLevel: '低',
+      outputStatus: '已废弃',
+      inputTokens: 1_000_000,
+      outputTokens: 100_000,
+      totalTokens: 1_100_000,
+      costUSD: 20
+    }]
+  });
+
+  assert.equal(simulation.suggestions[0].currentTier, 'mid');
+  assert.equal(simulation.suggestions[0].suggestedTier, 'light');
+  assert.ok(simulation.suggestions[0].savingsUSD > 0);
+});
+
 test('markdown report includes savings simulation without invoice wording', () => {
   const savingsSimulation = buildSavingsSimulation({
     sessions: [{

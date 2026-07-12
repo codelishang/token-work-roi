@@ -65,6 +65,7 @@ TOKEN_WORK_CAPTURE_REAL=1 node scripts/capture-real-screenshots.ts
 - Demo-only path: `npx token-work demo`.
 - Troubleshooting path: `npx token-work --dry-run-only`, then `npx token-work --no-collect` if you only want to inspect the current SQLite.
 - Do not publish until `npm pack --dry-run` shows no SQLite databases, logs, `.env`, `.claude`, `.codex`, `dist`, or `node_modules`.
+- `dist-runtime/` is different from `dist/`: `prepack` generates it for the tarball, while Git and Docker build contexts must ignore it.
 - Do not publish until the tarball includes `data/official-pricing.json`, `docs/demo-data/token-work-demo.json`, `LICENSE`, `COMMERCIAL-LICENSE.md`, `NOTICE.md`, `PRIVACY.md`, and no deprecated pricing cache files.
 - Do not publish until the tarball excludes `docs/assets/`, `desktop/`, Electron icon bundles, and local QA screenshots. README screenshots should use repository-hosted demo/sanitized image URLs, not npm package-local image paths.
 - Do not publish until `npm run smoke:npx` passes. This command installs the packed tarball in a fresh temp directory, runs the installed CLI, verifies event-level fixture collection, verifies UI/API readiness, and checks the auto-attribution proxy path.
@@ -74,6 +75,11 @@ TOKEN_WORK_CAPTURE_REAL=1 node scripts/capture-real-screenshots.ts
 - `npm whoami` must succeed before running `npm publish --access public`.
 - After publish, run `npm run smoke:published -- --version 2.0.0` and verify npm latest resolves to `2.0.0`.
 - If using GitHub Trusted Publishing, trigger `.github/workflows/publish-npm.yml` manually only after `release-gate` is green.
+
+## Deployment Boundary
+
+- The Dashboard, Trust, Review, and Live APIs are local-only. Do not add a public web deployment descriptor for them.
+- `docker-compose.yml` is an authenticated remote ingest node. It accepts structured writes with `INGEST_TOKEN`; it is not a remote Dashboard.
 
 ## Pricing Refresh
 

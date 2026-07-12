@@ -7,7 +7,7 @@ const DEFAULT_WORK_STAGE = '未说明';
 const DEFAULT_VALUE_LEVEL = '未评估';
 
 const HEAVY_MODEL_PATTERNS = [/^gpt-5\.6-sol/i, /^gpt-5\.5/i, /claude-fable/i, /claude-opus/i, /gemini-2\.5-pro-long-context/i];
-const MID_MODEL_PATTERNS = [/^gpt-5\.6-terra$/i, /^grok-4[.-]5$/i, /^gpt-5\.3-codex$/i, /claude-sonnet/i, /gemini-2\.5-pro/i, /kimi-k2[.-][67]/i];
+const MID_MODEL_PATTERNS = [/^gpt-5\.6-terra/i, /^grok-4[.-]5/i, /^gpt-5\.3-codex$/i, /claude-sonnet/i, /gemini-2\.5-pro/i, /kimi-k2[.-][67]/i];
 const LIGHT_MODEL_PATTERNS = [/^gpt-5\.6-luna$/i, /claude-haiku/i, /deepseek/i, /mimo/i, /gemini-2\.5-flash/i, /kimi-k2[.-]5/i];
 const EXPLORATION_PURPOSES = new Set(['测试验证', '上下文整理']);
 const EXPLORATION_STAGES = new Set(['探索', '验证']);
@@ -61,7 +61,7 @@ function buildAttributionSuggestion(sessions, total) {
     category: '补标注',
     impact: '高',
     tone: 'risk',
-    title: '先补齐高成本会话的用途和价值',
+    title: '先补齐高成本 session 的用途和价值',
     recommendation: '把当前最高成本的未归因 session 标上主要目的、工作阶段和产出价值。',
     reason: '没有用途和价值字段时，系统只能知道花了多少 token，无法判断这笔投入是否值得继续。',
     evidence: withAttributionEvidence(`${rows.length} 个 session 仍缺少任务/状态/目的/阶段/价值标注，占本期 ${pct(aggregate.totalTokens, total.totalTokens)} tokens；最高一条是 ${labelSession(top)}，官方价 ${money(top.costUSD)}。`, rows),
@@ -233,7 +233,7 @@ function compareCostThenTokens(a, b) {
 }
 
 function labelSession(session = {}) {
-  return session.projectAlias || session.projectPath || session.sessionId || '未命名会话';
+  return session.projectAlias || session.projectPath || session.sessionId || '未命名 session';
 }
 
 function shareScore(value, total) {

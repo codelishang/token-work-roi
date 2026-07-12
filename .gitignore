@@ -8,6 +8,7 @@ node_modules/
 .vite/
 .npm-cache/
 dist/
+dist-runtime/
 release/
 .env
 .env.*

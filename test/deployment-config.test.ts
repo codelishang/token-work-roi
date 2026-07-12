@@ -45,6 +45,7 @@ test('runtime package build does not emit declaration files as modules', () => {
 test('package bin uses a stable checked-in launcher', () => {
   const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
   assert.equal(pkg.bin?.['token-work'], 'bin/token-work.mjs');
+  assert.equal(pkg.files?.includes('render.yaml'), false);
   const launcher = readFileSync(resolve(root, 'bin', 'token-work.mjs'), 'utf8');
   assert.match(launcher, /^#!\/usr\/bin\/env node/);
   assert.match(launcher, /dist-runtime', 'cli\.mjs'/);
@@ -75,4 +76,5 @@ test('.dockerignore excludes private runtime data from build context', () => {
   assert.match(ignore, /^!data\/\.gitkeep$/m);
   assert.match(ignore, /^node_modules$/m);
   assert.match(ignore, /^dist$/m);
+  assert.match(ignore, /^dist-runtime$/m);
 });
