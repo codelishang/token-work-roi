@@ -41,8 +41,7 @@
     "NOTICE.md",
     "PRIVACY.md",
     "Dockerfile",
-    "docker-compose.yml",
-    "render.yaml"
+    "docker-compose.yml"
   ],
   "scripts": {
     "start": "node src/cli.ts start",

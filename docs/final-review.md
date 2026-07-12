@@ -19,6 +19,7 @@ Token Work ROI is considered feature-complete for the current `v2.0.0` local rel
 - It does not estimate token usage from text length when reliable token fields are missing.
 - It does not treat detected-only tools as collected usage.
 - It does not provide cloud sync, accounts, multi-user access, leaderboards, or a full TUI. Desktop Pulse is only a local companion for `/live`, not a second product or cloud client.
+- It does not expose Dashboard APIs as a public web service. Docker remote mode is limited to token-authenticated structured ingest.
 - It does not keep chasing every competitor feature outside the local ROI review boundary.
 
 ## Final Acceptance Checklist

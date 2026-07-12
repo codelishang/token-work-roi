@@ -3,6 +3,7 @@
 .idea
 node_modules
 dist
+dist-runtime
 desktop
 docs/assets
 data/*

@@ -161,6 +161,92 @@ test('live guardrail thresholds can be overridden', () => {
   assert.deepEqual(warnings, []);
 });
 
+test('live guardrails include reasoning tokens before warning on low response ratio', () => {
+  const warnings = buildLiveGuardrails({
+    totals: {
+      inputTokens: 20_000,
+      outputTokens: 500,
+      reasoningTokens: 4_000,
+      burnRateTokensPerHour: 10_000,
+      cacheHitRate: 50
+    },
+    byModel: [{ key: 'gpt-5.6-sol', totalTokens: 24_500 }]
+  }, {
+    highInputTokens: 10_000,
+    minOutputInputRatio: 0.15,
+    tokenBudgetPerHour: 100_000
+  });
+
+  assert.equal(warnings.some(item => item.type === 'low-output-input-ratio'), false);
+});
+
+test('live guardrails point advice at the highest token active window', () => {
+  const snapshot = buildLiveSnapshot({
+    now: new Date('2026-06-17T02:15:00Z'),
+    windowMinutes: 15,
+    sessions: [{
+      device: 'demo',
+      source: 'Codex CLI',
+      sessionId: 'small-window',
+      lastActivity: '2026-06-17T02:12:00Z',
+      model: 'gpt-5.3-codex',
+      inputTokens: 4_000,
+      outputTokens: 500,
+      totalTokens: 4_500
+    }, {
+      device: 'demo',
+      source: 'Claude Code',
+      sessionId: 'large-window-with-repeated-context',
+      lastActivity: '2026-06-17T02:13:00Z',
+      model: 'claude-fable-5',
+      inputTokens: 30_000,
+      outputTokens: 500,
+      totalTokens: 30_500
+    }]
+  });
+  const warning = snapshot.warnings.find(item => item.type === 'low-output-input-ratio');
+
+  assert.ok(warning);
+  assert.match(warning.evidence, /large-wi…ontext/);
+  assert.match(warning.evidence, /来源 Claude Code/);
+  assert.match(warning.evidence, /模型 claude-fable-5/);
+  assert.match(warning.action, /token 最高的窗口/);
+});
+
+test('live guardrails use complete current-window session totals for advice context', () => {
+  const now = new Date('2026-06-17T02:15:00Z');
+  const sessions = Array.from({ length: 12 }, (_, index) => ({
+    device: 'demo',
+    source: 'Codex CLI',
+    sessionId: `recent-${index + 1}`,
+    lastActivity: new Date(now.getTime() - (index + 1) * 1_000).toISOString(),
+    model: 'gpt-5.3-codex',
+    inputTokens: 3_000,
+    outputTokens: 100,
+    totalTokens: 3_100
+  }));
+  sessions.push({
+    device: 'demo',
+    source: 'Claude Code',
+    sessionId: 'highest-window-outside-active-list',
+    lastActivity: new Date(now.getTime() - 13_000).toISOString(),
+    model: 'claude-fable-5',
+    inputTokens: 40_000,
+    outputTokens: 500,
+    totalTokens: 40_500
+  });
+
+  const snapshot = buildLiveSnapshot({ now, windowMinutes: 15, sessions });
+  const warning = snapshot.warnings.find(item => item.type === 'low-output-input-ratio');
+
+  assert.equal(snapshot.activeSessions.some(item => item.sessionId === 'highest-window-outside-active-list'), false);
+  assert.equal('adviceContext' in snapshot, false);
+  assert.ok(warning);
+  assert.match(warning.evidence, /highest-…e-list/);
+  assert.match(warning.evidence, /来源 Claude Code/);
+  assert.match(warning.evidence, /模型 claude-fable-5/);
+});
+
 test('live snapshot builds budget windows and budget warnings', () => {
   const snapshot = buildLiveSnapshot({
     now: new Date('2026-06-17T02:15:00Z'),
@@ -356,4 +442,3 @@ test('live API does not cap 24h token event counts at 500', async () => {
     await removeTempDir(dir);
   }
 });
-

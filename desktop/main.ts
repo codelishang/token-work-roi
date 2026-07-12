@@ -336,12 +336,16 @@ async function waitForTokenWork(origin, label, probe) {
   throw new Error(`${label} did not become ready at ${origin}${lastError ? ` (${lastError})` : ''}`);
 }
 
-function freePort(start) {
+function freePort(start, maxPort = 65535) {
+  const candidate = Number(start);
+  if (!Number.isInteger(candidate) || candidate < 1 || candidate > maxPort) {
+    return Promise.reject(new Error(`No free port found near ${start}`));
+  }
   return new Promise((resolvePort, rejectPort) => {
     const server = createServer();
     server.once('error', async () => {
       try {
-        resolvePort(await freePort(Number(start) + 1));
+        resolvePort(await freePort(candidate + 1, maxPort));
       } catch (error) {
         rejectPort(error);
       }
@@ -350,6 +354,6 @@ function freePort(start) {
       const port = server.address().port;
       server.close(() => resolvePort(port));
     });
-    server.listen(Number(start), '127.0.0.1');
+    server.listen(candidate, '127.0.0.1');
   });
 }
