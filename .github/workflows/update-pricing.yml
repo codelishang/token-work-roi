@@ -19,17 +19,46 @@ permissions:
   contents: write
 
 jobs:
-  update-pricing:
-    name: Refresh official model pricing (${{ matrix.branch }})
+  update-pricing-main:
+    name: Refresh official model pricing (main)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        branch: ${{ github.event_name == 'schedule' && fromJSON('["main","test"]') || fromJSON(format('["{0}"]', inputs.target_branch || 'main')) }}
+    if: github.event_name == 'schedule' || inputs.target_branch == 'main'
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ matrix.branch }}
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+
+      - run: npm ci --registry=https://registry.npmmirror.com
+      - run: npm run typecheck:tools
+
+      - name: Refresh official pricing
+        run: npm run pricing:update
+
+      - run: npm test
+
+      - run: npm run build
+
+      - run: git diff --check
+
+      - name: Commit pricing updates
+        uses: stefanzweifel/git-auto-commit-action@v6
+        with:
+          commit_message: "chore: refresh official model pricing"
+          file_pattern: "src/pricing.ts data/official-pricing.json"
+
+  update-pricing-test:
+    name: Refresh official model pricing (test)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || inputs.target_branch == 'test'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test
 
       - uses: actions/setup-node@v4
         with:

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { calculateOfficialCost } from './pricing.ts';
+import { providerFromSource } from './provider.ts';
 import { recordRun, upsertDaily, upsertSession, upsertTokenEvent } from './db.ts';
 
 const UNSAFE_KEYS = new Set([
@@ -426,20 +427,6 @@ function extractJsonPayload(text) {
       // Try the next possible JSON payload shape.
     }
   }
-  return null;
-}
-
-function providerFromSource(source) {
-  const value = String(source || '').toLowerCase();
-  if (value.includes('kimi') || value.includes('moonshot')) return 'Kimi';
-  if (value.includes('codex') || value.includes('openai')) return 'openai';
-  if (value.includes('grok') || value.includes('xai') || value.includes('x.ai')) return 'xai';
-  if (value.includes('claude') || value.includes('anthropic')) return 'anthropic';
-  if (value.includes('deepseek')) return 'deepseek';
-  if (value.includes('mimo') || value.includes('xiaomi')) return 'xiaomi';
-  if (value.includes('glm') || value.includes('zai') || value.includes('zhipu') || value.includes('bigmodel')) return 'Zhipu GLM';
-  if (value.includes('doubao') || value.includes('ark') || value.includes('volc') || value.includes('bytedance')) return 'DoubaoSeed';
-  if (value.includes('qwen') || value.includes('tongyi') || value.includes('aliyun') || value.includes('alibaba') || value.includes('dashscope')) return 'Qwen';
   return null;
 }
 

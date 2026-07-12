@@ -15,6 +15,7 @@ import {
   matchProjectAliasRule
 } from './db.ts';
 import { attachOfficialPricing } from './pricing.ts';
+import { providerFromSource } from './provider.ts';
 import { buildReviewClosureProgress } from './client/review/closure-progress.ts';
 import { buildRoiAdvisor } from './client/review/roi-advisor.ts';
 
@@ -456,17 +457,6 @@ function summarizeSession(session = {}) {
     totalTokens: session.totalTokens || 0,
     costUSD: session.costUSD || 0
   };
-}
-
-function providerFromSource(source) {
-  const value = String(source || '').toLowerCase();
-  if (value.includes('codex') || value.includes('openai')) return 'openai';
-  if (value.includes('grok') || value.includes('xai') || value.includes('x.ai')) return 'xai';
-  if (value.includes('claude') || value.includes('anthropic')) return 'anthropic';
-  if (value.includes('deepseek')) return 'deepseek';
-  if (value.includes('mimo') || value.includes('xiaomi')) return 'xiaomi';
-  if (value.includes('qwen') || value.includes('tongyi') || value.includes('aliyun') || value.includes('alibaba') || value.includes('dashscope')) return 'Qwen';
-  return null;
 }
 
 function modelFromSessionId(sessionId) {

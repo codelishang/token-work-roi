@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -38,6 +39,37 @@ test('loopback GET APIs allow missing or local Origin', async () => {
       headers: { Origin: `http://127.0.0.1:${server.port}` }
     });
     assert.equal(withLocalOrigin.status, 200);
+  } finally {
+    await server.stop();
+  }
+});
+
+test('malformed Host header returns 400 instead of crashing server', async () => {
+  const server = await startServer();
+  try {
+    const response = await rawGet(server.port, '/api/data', { Host: '[' });
+    assert.equal(response.statusCode, 400);
+
+    const stillAlive = await fetch(`http://127.0.0.1:${server.port}/api/data`);
+    assert.equal(stillAlive.status, 200);
+  } finally {
+    await server.stop();
+  }
+});
+
+test('JSON write limits count UTF-8 bytes and keep the server available', async () => {
+  const server = await startServer();
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/api/budget-profiles`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: '测'.repeat(30_000) })
+    });
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /请求体过大/);
+
+    const stillAlive = await fetch(`http://127.0.0.1:${server.port}/api/data`);
+    assert.equal(stillAlive.status, 200);
   } finally {
     await server.stop();
   }
@@ -222,6 +254,17 @@ function postIngest(port, headers = {}, { body = {} } = {}) {
       ...headers
     },
     body: JSON.stringify(body)
+  });
+}
+
+function rawGet(port, path, headers = {}) {
+  return new Promise((resolveRequest, rejectRequest) => {
+    const req = request({ host: '127.0.0.1', port, path, method: 'GET', headers }, res => {
+      res.resume();
+      res.on('end', () => resolveRequest({ statusCode: res.statusCode, headers: res.headers }));
+    });
+    req.on('error', rejectRequest);
+    req.end();
   });
 }
 

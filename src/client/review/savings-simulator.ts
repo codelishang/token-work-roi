@@ -1,4 +1,5 @@
 import { calculateOfficialCost } from '../../pricing.ts';
+import { providerFromSource } from '../../provider.ts';
 import { modelTier } from './roi-advisor.ts';
 
 const PRODUCTIVE_STATUSES = new Set(['已完成', '已发布']);
@@ -282,16 +283,6 @@ function evidenceSummary(counts = new Map()) {
     .sort((a, b) => b[1] - a[1])
     .map(([label, count]) => `${label} ${count}`)
     .join(' / ') || '缺证据';
-}
-
-function providerFromSource(source) {
-  const value = String(source || '').toLowerCase();
-  if (value.includes('claude') || value.includes('anthropic')) return 'anthropic';
-  if (value.includes('codex') || value.includes('openai')) return 'openai';
-  if (value.includes('deepseek')) return 'deepseek';
-  if (value.includes('mimo') || value.includes('xiaomi')) return 'xiaomi';
-  if (value.includes('qwen') || value.includes('tongyi') || value.includes('aliyun') || value.includes('alibaba') || value.includes('dashscope')) return 'Qwen';
-  return null;
 }
 
 function positive(value) {

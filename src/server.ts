@@ -8,6 +8,7 @@ import {
   loadPricing,
   officialPricingMetadata
 } from './pricing.ts';
+import { providerFromSource } from './provider.ts';
 import {
   AUTO_ATTRIBUTION_THRESHOLD,
   buildAutoAttributionPlan
@@ -98,7 +99,8 @@ let collectionState = {
 };
 
 const server = createServer((req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  const url = parseRequestUrl(req, res);
+  if (!url) return;
   if (url.pathname.startsWith('/api/')) {
     handleApi(req, url, res).catch(error => {
       sendJson(res, { error: error.message }, 500);
@@ -107,6 +109,15 @@ const server = createServer((req, res) => {
   }
   serveStatic(url.pathname, res);
 });
+
+function parseRequestUrl(req, res) {
+  try {
+    return new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
+  } catch {
+    sendJson(res, { error: 'Bad request URL' }, 400);
+    return null;
+  }
+}
 
 server.listen(port, host, () => {
   const address = server.address();
@@ -1701,19 +1712,6 @@ function identityKey(row = {}) {
   return `${row.device || ''}::${row.source || ''}::${row.sessionId || row.session_id || ''}`;
 }
 
-function providerFromSource(source) {
-  const value = String(source || '').toLowerCase();
-  if (value.includes('codex') || value.includes('openai')) return 'openai';
-  if (value.includes('grok') || value.includes('xai') || value.includes('x.ai')) return 'xai';
-  if (value.includes('claude') || value.includes('anthropic')) return 'anthropic';
-  if (value.includes('deepseek')) return 'deepseek';
-  if (value.includes('mimo') || value.includes('xiaomi')) return 'xiaomi';
-  if (value.includes('glm') || value.includes('zai') || value.includes('zhipu') || value.includes('bigmodel')) return 'Zhipu GLM';
-  if (value.includes('doubao') || value.includes('ark') || value.includes('volc') || value.includes('bytedance')) return 'DoubaoSeed';
-  if (value.includes('qwen') || value.includes('tongyi') || value.includes('aliyun') || value.includes('alibaba') || value.includes('dashscope')) return 'Qwen';
-  return null;
-}
-
 function modelFromSessionId(sessionId) {
   const text = String(sessionId || '').trim();
   if (!text) return null;
@@ -1851,22 +1849,31 @@ function isJsonRequest(req) {
 function readJson(req, maxBytes = 50 * 1024 * 1024) {
   return new Promise((resolveRequest, rejectRequest) => {
     let body = '';
+    let byteLength = 0;
+    let tooLarge = false;
     req.setEncoding('utf8');
     req.on('data', (chunk) => {
-      body += chunk;
-      if (body.length > maxBytes) {
+      if (tooLarge) return;
+      byteLength += Buffer.byteLength(chunk, 'utf8');
+      if (byteLength > maxBytes) {
+        tooLarge = true;
         rejectRequest(new Error('请求体过大'));
-        req.destroy();
+        req.resume();
+        return;
       }
+      body += chunk;
     });
     req.on('end', () => {
+      if (tooLarge) return;
       try {
         resolveRequest(JSON.parse(body || '{}'));
       } catch (error) {
         rejectRequest(error);
       }
     });
-    req.on('error', rejectRequest);
+    req.on('error', error => {
+      if (!tooLarge) rejectRequest(error);
+    });
   });
 }
 

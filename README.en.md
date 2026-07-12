@@ -23,6 +23,7 @@ It is not for:
 
 - Reading full chat history.
 - Team accounts, cloud sync, or multi-user permissions.
+- Hosting the Dashboard as a public web application.
 - Replacing the official bill from a model provider.
 
 ## Quick Start

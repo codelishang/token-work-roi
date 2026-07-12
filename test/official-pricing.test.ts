@@ -168,6 +168,7 @@ test('calculates Grok 4.5 and Claude Fable 5 official prices', () => {
   assert.equal(grok.priced, true);
   assert.equal(grok.provider, 'xai');
   assert.equal(grok.resolvedModel, 'grok-4.5');
+  assert.equal(grok.ratesPerMTok.cachedInput, 2);
   assert.equal(grok.totalUSD, 12);
   assert.equal(fable.priced, true);
   assert.equal(fable.provider, 'anthropic');

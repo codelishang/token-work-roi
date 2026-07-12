@@ -52,8 +52,8 @@
     {
       "provider": "xai",
       "label": "xAI Grok 4.5 launch pricing",
-      "url": "https://x.ai/news/grok-4-5",
-      "note": "Grok 4.5 launch API price. No separate cache-read or cache-write discount is applied by default.",
+      "url": "https://docs.x.ai/developers/models",
+      "note": "Grok 4.5 public model page lists input and output rates; no separate cached-input rate is applied by default.",
       "fetchedAt": "2026-06-23T10:05:57.310Z",
       "fetchStatus": "fallback-table",
       "httpStatus": null,
@@ -303,7 +303,7 @@
       "officialRatesPerMTok": null,
       "sourceProvider": "xai",
       "pricingFetchStatus": "fallback-table",
-      "note": "xAI Grok 4.5 launch API price. No separate cache-read or cache-write discount is applied by default."
+      "note": "xAI Grok 4.5 public model page lists input and output rates; no separate cached-input rate is applied by default."
     },
     {
       "provider": "anthropic",

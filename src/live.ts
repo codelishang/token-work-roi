@@ -1,4 +1,5 @@
 import { calculateOfficialCost, resolveOfficialPricing } from './pricing.ts';
+import { providerFromSource } from './provider.ts';
 
 const DEFAULT_WINDOW_MINUTES = 15;
 const DEFAULT_TOKEN_BUDGET_PER_HOUR = 50_000;
@@ -31,8 +32,9 @@ export function buildLiveSnapshot({
   const recentSessions = normalizedSessions
     .filter(session => session.lastActivityMs >= sinceMs && session.lastActivityMs <= nowMs);
 
-  const sourceRows = aggregate(recentEvents.length ? recentEvents : recentSessions, 'source');
-  const modelRows = aggregate(recentEvents.length ? recentEvents : recentSessions, 'model');
+  const metricRows = recentEvents.length ? recentEvents : recentSessions;
+  const sourceRows = aggregate(metricRows, 'source');
+  const modelRows = aggregate(metricRows, 'model');
   const activeSessions = recentSessions
     .sort((a, b) => b.lastActivityMs - a.lastActivityMs)
     .slice(0, 12)
@@ -47,7 +49,7 @@ export function buildLiveSnapshot({
       costUSD: session.costUSD
     }));
 
-  const totals = sumRows(recentEvents.length ? recentEvents : recentSessions);
+  const totals = sumRows(metricRows);
   const requestCount = recentEvents.length || recentSessions.length;
   const cacheDenominator = totals.inputTokens + totals.cacheReadTokens + totals.cacheCreationTokens;
 
@@ -74,10 +76,11 @@ export function buildLiveSnapshot({
       cacheHitRate: cacheDenominator ? (totals.cacheReadTokens / cacheDenominator) * 100 : 0
     },
     pulse: buildPulseWindow({
-      rows: recentEvents.length ? recentEvents : recentSessions,
+      rows: metricRows,
       nowMs,
       windowMinutes
     }),
+    adviceContext: buildLiveAdviceContext(metricRows),
     activeSessions,
     bySource: sourceRows,
     byModel: modelRows,
@@ -97,11 +100,13 @@ export function buildLiveSnapshot({
     demoMode
   });
   const guardrails = liveGuardrailConfig(guardrailConfig);
+  const warnings = buildLiveGuardrails(snapshot, guardrails);
+  const { adviceContext: _adviceContext, ...publicSnapshot } = snapshot;
   return {
-    ...snapshot,
+    ...publicSnapshot,
     ...freshness,
     guardrails,
-    warnings: buildLiveGuardrails(snapshot, guardrails)
+    warnings
   };
 }
 
@@ -150,13 +155,13 @@ export function buildLiveDataFreshness({
   if (!latestRunMs) {
     return {
       dataFreshness: 'stale',
-      staleReason: '有历史 token_events，但当前服务还没有可见的采集运行记录。'
+      staleReason: '已有历史 token event，但当前服务还没有可见的采集运行记录。'
     };
   }
   if (nowMs - latestRunMs > intervalMs * 2) {
     return {
       dataFreshness: 'stale',
-      staleReason: '最近窗口没有 token，且距离上次后台刷新已超过两个刷新周期。'
+      staleReason: '最近窗口没有新 token，且距离上次后台刷新已超过两个刷新周期。'
     };
   }
   return {
@@ -169,19 +174,22 @@ export function buildLiveGuardrails(snapshot = {}, config = {}) {
   const guardrails = liveGuardrailConfig(config);
   const totals = snapshot.totals || {};
   const warnings = [];
+  const context = liveAdviceContext(snapshot);
   const inputTokens = number(totals.inputTokens);
   const outputTokens = number(totals.outputTokens);
+  const reasoningTokens = number(totals.reasoningTokens);
   const burnRate = number(totals.burnRateTokensPerHour);
   const cacheHitRate = Number(totals.cacheHitRate || 0);
-  const outputInputRatio = inputTokens ? outputTokens / inputTokens : 0;
+  const responseTokens = outputTokens + reasoningTokens;
+  const outputInputRatio = inputTokens ? responseTokens / inputTokens : 0;
 
   if (burnRate > guardrails.tokenBudgetPerHour) {
     warnings.push({
       type: 'high-burn-rate',
       level: burnRate > guardrails.tokenBudgetPerHour * 1.5 ? 'high' : 'medium',
       message: '最近窗口 token burn rate 超过预算线',
-      evidence: `${formatInt(burnRate)} tokens/hour > ${formatInt(guardrails.tokenBudgetPerHour)} tokens/hour`,
-      action: '暂停大上下文任务，拆成更小的验证步骤后再继续。'
+      evidence: joinEvidence(`${formatInt(burnRate)} tokens/hour > ${formatInt(guardrails.tokenBudgetPerHour)} tokens/hour`, context.focusEvidence),
+      action: context.focusAction || '暂停大上下文任务，拆成更小的验证步骤后再继续。'
     });
   }
 
@@ -189,9 +197,11 @@ export function buildLiveGuardrails(snapshot = {}, config = {}) {
     warnings.push({
       type: 'low-cache-hit',
       level: 'medium',
-      message: '输入 token 高但 cache 命中偏低',
-      evidence: `input ${formatInt(inputTokens)} tokens，cache hit ${cacheHitRate.toFixed(1)}% < ${guardrails.minCacheHitRate}%`,
-      action: '沉淀项目上下文摘要，避免每轮重复喂相同文件。'
+      message: 'Input tokens 高但 cache hit 偏低',
+      evidence: joinEvidence(`input ${formatInt(inputTokens)} tokens，cache hit ${cacheHitRate.toFixed(1)}% < ${guardrails.minCacheHitRate}%`, context.focusEvidence),
+      action: context.sessionCount > 1
+        ? '先固定同一窗口的项目摘要和验收标准，跨窗口继续时只带差异，不重复喂完整上下文。'
+        : '沉淀当前窗口的项目上下文摘要，避免每轮重复喂相同文件。'
     });
   }
 
@@ -199,9 +209,11 @@ export function buildLiveGuardrails(snapshot = {}, config = {}) {
     warnings.push({
       type: 'low-output-input-ratio',
       level: 'medium',
-      message: '输出/input 比偏低，可能在读过多上下文',
-      evidence: `output/input ${outputInputRatio.toFixed(2)} < ${guardrails.minOutputInputRatio}`,
-      action: '只保留当前问题直接相关的文件、错误和验收标准。'
+      message: '响应/输入比偏低，可能在读过多上下文',
+      evidence: joinEvidence(`响应/输入 ${outputInputRatio.toFixed(2)} < ${guardrails.minOutputInputRatio}`, context.focusEvidence),
+      action: context.sessionCount > 1
+        ? '先选 token 最高的窗口收敛问题边界；其它窗口只保留结论、错误和验收标准。'
+        : '只保留当前问题直接相关的文件、错误和验收标准。'
     });
   }
 
@@ -254,13 +266,76 @@ export function buildLiveGuardrails(snapshot = {}, config = {}) {
     warnings.push({
       type: 'heavy-model-stop-today',
       level: (snapshot.budgetWindows || []).some(window => ['over-pace', 'exceeded'].includes(window.status)) ? 'high' : 'medium',
-      message: '今天先暂停重模型',
+      message: '当前窗口先暂停重模型',
       evidence: `${heavyModels.slice(0, 3).map(row => row.key).join('、')} 最近窗口合计 ${formatInt(heavyModels.reduce((sum, row) => sum + number(row.totalTokens), 0))} tokens`,
       action: '测试、探索和上下文整理先切轻量/中模型；关键发布审查再恢复重模型。'
     });
   }
 
   return warnings;
+}
+
+function liveAdviceContext(snapshot = {}) {
+  const stored = snapshot.adviceContext?.topSession || null;
+  const fallback = (snapshot.activeSessions || [])
+    .slice()
+    .sort((a, b) => number(b.totalTokens) - number(a.totalTokens))[0] || null;
+  const topSession = stored || fallback;
+  const sessionCount = Number(snapshot.adviceContext?.sessionCount) || (snapshot.activeSessions || []).length;
+  const pieces = [];
+  if (topSession?.sessionId && topSession.sessionId !== 'unknown-session') {
+    pieces.push(`窗口 ${shortSessionId(topSession.sessionId)} ${formatInt(topSession.totalTokens)} tokens`);
+  }
+  if (topSession?.source && topSession.source !== 'unknown') {
+    pieces.push(`来源 ${topSession.source}`);
+  }
+  if (topSession?.model && topSession.model !== 'unknown') {
+    pieces.push(`模型 ${topSession.model}`);
+  }
+  const focusEvidence = pieces.length ? pieces.slice(0, 3).join(' · ') : '';
+  const focusAction = topSession?.sessionId && topSession.sessionId !== 'unknown-session'
+    ? `先处理窗口 ${shortSessionId(topSession.sessionId)}：拆分上下文、确认是否还需要继续当前任务。`
+    : '';
+  return { focusEvidence, focusAction, sessionCount };
+}
+
+function buildLiveAdviceContext(rows = []) {
+  const sessions = new Map();
+  for (const row of rows) {
+    const sessionId = String(row?.sessionId || '').trim();
+    if (!sessionId || sessionId === 'unknown-session') continue;
+    const key = [row.device || '', row.source || '', sessionId].join('::');
+    const current = sessions.get(key) || {
+      sessionId,
+      source: row.source || 'unknown',
+      model: row.model || 'unknown',
+      totalTokens: 0,
+      latestActivityMs: 0
+    };
+    current.totalTokens += number(row.totalTokens);
+    const activityMs = number(row.timestampMs ?? row.lastActivityMs);
+    if (activityMs >= current.latestActivityMs) {
+      current.latestActivityMs = activityMs;
+      current.source = row.source || current.source;
+      current.model = row.model || current.model;
+    }
+    sessions.set(key, current);
+  }
+  const ranked = Array.from(sessions.values())
+    .sort((a, b) => b.totalTokens - a.totalTokens || b.latestActivityMs - a.latestActivityMs);
+  return {
+    sessionCount: ranked.length,
+    topSession: ranked[0] || null
+  };
+}
+
+function joinEvidence(primary, extra) {
+  return extra ? `${primary} · ${extra}` : primary;
+}
+
+function shortSessionId(sessionId) {
+  const text = String(sessionId || '').trim();
+  return text.length > 18 ? `${text.slice(0, 8)}…${text.slice(-6)}` : text;
 }
 
 export function buildBudgetWindows({ rows = [], budgetProfiles = [], nowMs = Date.now() } = {}) {
@@ -442,19 +517,6 @@ function budgetEvidence(window) {
     pieces.push(`projected $${window.projectedCostUSD.toFixed(4)}`);
   }
   return pieces.join(' · ');
-}
-
-function providerFromSource(source) {
-  const value = String(source || '').toLowerCase();
-  if (value.includes('codex') || value.includes('openai')) return 'openai';
-  if (value.includes('grok') || value.includes('xai') || value.includes('x.ai')) return 'xai';
-  if (value.includes('claude') || value.includes('anthropic')) return 'anthropic';
-  if (value.includes('deepseek')) return 'deepseek';
-  if (value.includes('mimo') || value.includes('xiaomi')) return 'xiaomi';
-  if (value.includes('glm') || value.includes('zai') || value.includes('zhipu') || value.includes('bigmodel')) return 'Zhipu GLM';
-  if (value.includes('doubao') || value.includes('ark') || value.includes('volc') || value.includes('bytedance')) return 'DoubaoSeed';
-  if (value.includes('qwen') || value.includes('tongyi') || value.includes('aliyun') || value.includes('alibaba') || value.includes('dashscope')) return 'Qwen';
-  return null;
 }
 
 function aggregate(rows, field) {
