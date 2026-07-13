@@ -33,6 +33,7 @@ const STABLE_ALIASES = new Map([
   ['qwen::qwen-coder-turbo', ['qwen-coder-turbo']]
 ]);
 const fetchedAt = new Date().toISOString();
+const previousModels = await readPreviousPricingModels(pricingCachePath);
 const exchangeRate = await getUsdCnyExchangeRate();
 const sources = await Promise.all(OFFICIAL_PRICING_SOURCES.map(source => fetchSourceStatus(source, exchangeRate)));
 const ok = sources.filter(source => source.fetchStatus === 'ok').length;
@@ -50,11 +51,12 @@ const fetchedRates = new Map(
   sources: sources.map(({ body, models, ...source }) => source),
   models: serializeOfficialPricingModels(OFFICIAL_PRICE_TABLE).map(model => {
     const fetched = fetchedRates.get(pricingKey(model));
-    const aliases = Array.from(new Set([
+    const previous = previousModels.get(pricingKey(model));
+    const aliases = uniqueModelAliases([
       ...(STABLE_ALIASES.get(pricingKey(fetched || model)) || []),
       ...(model.aliases || []),
       ...(fetched?.aliases || [])
-    ]));
+    ]);
     return fetched
       ? {
           ...model,
@@ -66,7 +68,7 @@ const fetchedRates = new Map(
           },
           pricingFetchStatus: fetched.pricingFetchStatus || 'official-page'
         }
-      : { ...model, pricingFetchStatus: 'fallback-table' };
+      : fallbackPricingModel(model, previous, exchangeRate);
   })
 };
 
@@ -117,6 +119,41 @@ async function updateBuiltinPricingTable(filePath, pricing) {
   if (nextSource !== source) await writeFile(filePath, nextSource, 'utf8');
 }
 
+async function readPreviousPricingModels(filePath) {
+  try {
+    const payload = JSON.parse(await readFile(filePath, 'utf8'));
+    return new Map((payload.models || []).map(model => [pricingKey(model), model]));
+  } catch {
+    return new Map();
+  }
+}
+
+function fallbackPricingModel(model, previous, exchangeRate) {
+  const normalizedModel = {
+    ...model,
+    aliases: uniqueModelAliases(model.aliases || [model.model])
+  };
+  const officialRates = previous?.officialRatesPerMTok || model.officialRatesPerMTok || null;
+  if (officialRates?.currency !== 'CNY' || !officialRates.ratesPerMTok) {
+    return { ...normalizedModel, pricingFetchStatus: 'fallback-table' };
+  }
+  const ratesPerMTok = cnyToUsdRates(officialRates.ratesPerMTok, exchangeRate);
+  if (!ratesPerMTok || !isFiniteRate(ratesPerMTok.input) || !isFiniteRate(ratesPerMTok.output)) {
+    return { ...normalizedModel, pricingFetchStatus: 'fallback-table' };
+  }
+
+  return {
+    ...normalizedModel,
+    ratesPerMTok,
+    officialRatesPerMTok: {
+      ...officialRates,
+      exchangeRate: exchangeRate.rate
+    },
+    pricingFetchStatus: 'cached-official-cny',
+    note: previous?.note || model.note
+  };
+}
+
 function officialRateSource(model) {
   const lines = [
     `  officialRate({`,
@@ -153,6 +190,14 @@ function numberLiteral(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return '0';
   return Number.isInteger(number) ? String(number) : String(number);
+}
+
+function uniqueModelAliases(values) {
+  return Array.from(new Set(
+    values
+      .map(value => String(value || '').trim().toLowerCase().replace(/(?<=\d)\.(?=\d)/g, '-'))
+      .filter(Boolean)
+  ));
 }
 
 async function fetchSourceStatus(source, exchangeRate) {
@@ -294,6 +339,7 @@ function parseSourceModels(source, body, exchangeRate) {
   });
   if (isZhipuSource(source)) return parseZaiModels(body, exchangeRate);
   if (isDoubaoSource(source)) return parseVolcengineModels(body, exchangeRate);
+  if (source.provider === 'Kimi') return parseKimiModels(body, exchangeRate);
   if (isQwenSource(source)) return parseQwenModels(body, exchangeRate);
   return [];
 }
@@ -468,6 +514,37 @@ function parseVolcengineModels(body, exchangeRate) {
       sourceUnit: '元 / 1M tokens'
     });
   }).filter(Boolean);
+}
+
+function parseKimiModels(body, exchangeRate) {
+  const rows = Array.from(
+    body.matchAll(/\["(kimi-k2\.(?:7-code(?:-highspeed)?|6))",\s*"1M tokens",\s*"¥([0-9.]+)",\s*"¥([0-9.]+)",\s*"¥([0-9.]+)"/g),
+    match => ({
+      model: match[1],
+      cachedInput: Number(match[2]),
+      input: Number(match[3]),
+      output: Number(match[4])
+    })
+  );
+  return rows.map(row => rateModel('Kimi', row.model, cnyToUsdRates({
+    input: row.input,
+    cachedInput: row.cachedInput,
+    cacheWrite5m: row.input,
+    cacheWrite1h: row.input,
+    output: row.output
+  }, exchangeRate), 'Kimi', 'official-page-asset', {
+    currency: 'CNY',
+    unit: '1M tokens',
+    ratesPerMTok: {
+      input: row.input,
+      cachedInput: row.cachedInput,
+      cacheWrite5m: row.input,
+      cacheWrite1h: row.input,
+      output: row.output
+    },
+    exchangeRate: exchangeRate.rate,
+    sourceUnit: '元 / 1M tokens'
+  }, 'Official Kimi API CNY rate parsed from the current model pricing pages.')).filter(Boolean);
 }
 
 function parseQwenModels(body, exchangeRate) {
