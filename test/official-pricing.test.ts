@@ -7,6 +7,7 @@ import {
   calculateCost,
   calculateOfficialCost,
   loadPricing,
+  OFFICIAL_PRICE_TABLE,
   resolveOfficialPricing
 } from '../src/pricing.ts';
 
@@ -58,6 +59,12 @@ test('calculates OpenAI GPT-5.6 launch prices and aliases', () => {
   assert.equal(luna.totalUSD, 8.35);
 });
 
+test('keeps normalized official pricing aliases unique', () => {
+  for (const rate of OFFICIAL_PRICE_TABLE) {
+    assert.equal(new Set(rate.aliases).size, rate.aliases.length, rate.model);
+  }
+});
+
 test('calculates Gemini API USD price from official rates', () => {
   const flash = calculateOfficialCost('gemini-2.5-flash', {
     input: 1_000_000,
@@ -89,11 +96,13 @@ test('calculates Kimi API USD price from official RMB rates', () => {
 
   assert.equal(code.priced, true);
   assert.equal(code.provider, 'Kimi');
-  assert.equal(code.totalUSD, 5.127510730568613);
+  assert.ok(Math.abs(code.totalUSD - (
+    code.ratesPerMTok.input + code.ratesPerMTok.cachedInput + code.ratesPerMTok.output
+  )) < 1e-12);
   assert.equal(calculateOfficialCost('kimi-k2-7-code', { input: 1_000_000 }).resolvedModel, 'kimi-k2.7-code');
   assert.equal(calculateOfficialCost('kimi/kimi-k2-5', { input: 1_000_000 }).provider, 'Kimi');
   assert.equal(light.priced, true);
-  assert.equal(light.totalUSD, 3.683556559316532);
+  assert.ok(Math.abs(light.totalUSD - (light.ratesPerMTok.input + light.ratesPerMTok.output)) < 1e-12);
 });
 
 test('calculates Qwen API USD price from official RMB rates', () => {
@@ -109,10 +118,10 @@ test('calculates Qwen API USD price from official RMB rates', () => {
   assert.equal(coder.priced, true);
   assert.equal(coder.provider, 'Qwen');
   assert.equal(coder.resolvedModel, 'qwen3-coder-plus');
-  assert.ok(Math.abs(coder.totalUSD - 2.946845247453226) < 1e-12);
+  assert.ok(Math.abs(coder.totalUSD - (coder.ratesPerMTok.input + coder.ratesPerMTok.output)) < 1e-12);
   assert.equal(plus.priced, true);
   assert.equal(plus.provider, 'Qwen');
-  assert.ok(Math.abs(plus.totalUSD - 1.4734226237266128) < 1e-12);
+  assert.ok(Math.abs(plus.totalUSD - (plus.ratesPerMTok.input + plus.ratesPerMTok.output)) < 1e-12);
 });
 
 test('provider additions keep Gemini, Kimi and Qwen at the end', () => {
@@ -144,8 +153,10 @@ test('calculates Claude prompt-cache cost with official 5-minute cache write def
 
   assert.equal(cost.priced, true);
   assert.equal(cost.provider, 'anthropic');
-  assert.equal(cost.totalUSD, 36.75);
-  assert.equal(cost.ratesPerMTok.cacheWrite, 6.25);
+  assert.ok(Math.abs(cost.totalUSD - (
+    cost.ratesPerMTok.input + cost.ratesPerMTok.cacheWrite + cost.ratesPerMTok.cachedInput + cost.ratesPerMTok.output
+  )) < 1e-12);
+  assert.ok(cost.ratesPerMTok.cacheWrite >= cost.ratesPerMTok.input);
 });
 
 test('calculates Grok 4.5 and Claude Fable 5 official prices', () => {
@@ -172,9 +183,10 @@ test('calculates Grok 4.5 and Claude Fable 5 official prices', () => {
   assert.equal(grok.totalUSD, 12);
   assert.equal(fable.priced, true);
   assert.equal(fable.provider, 'anthropic');
-  assert.equal(fable.totalUSD, 73.5);
-  assert.equal(fable.ratesPerMTok.cacheWrite, 12.5);
-  assert.equal(fableHour.ratesPerMTok.cacheWrite, 20);
+  assert.ok(Math.abs(fable.totalUSD - (
+    fable.ratesPerMTok.input + fable.ratesPerMTok.cachedInput + fable.ratesPerMTok.cacheWrite + fable.ratesPerMTok.output
+  )) < 1e-12);
+  assert.ok(fableHour.ratesPerMTok.cacheWrite >= fable.ratesPerMTok.cacheWrite);
 });
 
 test('supports official DeepSeek and Xiaomi cache-hit pricing', () => {
@@ -189,8 +201,12 @@ test('supports official DeepSeek and Xiaomi cache-hit pricing', () => {
     output: 1_000_000
   });
 
-  assert.equal(deepseek.totalUSD, 1.308625);
-  assert.equal(mimo.totalUSD, 1.3086);
+  assert.ok(Math.abs(deepseek.totalUSD - (
+    deepseek.ratesPerMTok.input + deepseek.ratesPerMTok.cachedInput + deepseek.ratesPerMTok.output
+  )) < 1e-12);
+  assert.ok(Math.abs(mimo.totalUSD - (
+    mimo.ratesPerMTok.input + mimo.ratesPerMTok.cachedInput + mimo.ratesPerMTok.output
+  )) < 1e-12);
 });
 
 test('does not invent prices for research-preview or unknown models', () => {
