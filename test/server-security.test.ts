@@ -29,7 +29,7 @@ test('non-public GET APIs reject non-local Origin', async () => {
   }
 });
 
-test('loopback GET APIs allow missing or local Origin', async () => {
+test('loopback GET APIs and static PNG assets are served correctly', async () => {
   const server = await startServer();
   try {
     const withoutOrigin = await fetch(`http://127.0.0.1:${server.port}/api/data`);
@@ -39,14 +39,7 @@ test('loopback GET APIs allow missing or local Origin', async () => {
       headers: { Origin: `http://127.0.0.1:${server.port}` }
     });
     assert.equal(withLocalOrigin.status, 200);
-  } finally {
-    await server.stop();
-  }
-});
 
-test('static PNG assets use an image content type', async () => {
-  const server = await startServer();
-  try {
     const response = await fetch(`http://127.0.0.1:${server.port}/token-work-icon.png`);
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('content-type'), 'image/png');
