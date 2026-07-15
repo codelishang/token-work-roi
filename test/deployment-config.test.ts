@@ -28,6 +28,12 @@ test('Dockerfile matches package runtime and only copies existing paths', () => 
   }
 });
 
+test('production server serves every first-party SPA route', () => {
+  const source = readFileSync(resolve(root, 'src', 'server.ts'), 'utf8');
+  assert.match(source, /SPA_ROUTES\s*=\s*new Set\(\['\/', '\/review', '\/live', '\/trust'\]\)/);
+  assert.match(source, /SPA_ROUTES\.has\(pathname\)/);
+});
+
 test('runtime package build does not emit declaration files as modules', () => {
   const result = spawnSync(process.execPath, ['scripts/build-runtime.ts'], {
     cwd: root,
@@ -59,6 +65,12 @@ test('npx smoke runs the installed command wrapper directly', () => {
   assert.doesNotMatch(smoke, /spawn\(process\.execPath,\s*\[\s*cliPath/);
 });
 
+test('desktop keeps the tray alive without using a nonexistent close event argument', () => {
+  const source = readFileSync(resolve(root, 'desktop', 'main.ts'), 'utf8');
+  assert.match(source, /app\.on\('window-all-closed', \(\) =>/);
+  assert.doesNotMatch(source, /window-all-closed[\s\S]{0,100}preventDefault/);
+});
+
 test('docker compose remote bind is explicit and keeps collector home read-only', () => {
   const compose = readFileSync(resolve(root, 'docker-compose.yml'), 'utf8');
   assert.match(compose, /HOST:\s+"0\.0\.0\.0"/);
@@ -66,6 +78,14 @@ test('docker compose remote bind is explicit and keeps collector home read-only'
   assert.match(compose, /TOKEN_WORK_ALLOW_REMOTE:\s+"1"/);
   assert.match(compose, /TOKEN_WORK_COLLECTOR_HOME/);
   assert.match(compose, /:\/collector-home:ro/);
+});
+
+test('scheduled pricing refresh reuses the main pricing files on test', () => {
+  const workflow = readFileSync(resolve(root, '.github', 'workflows', 'update-pricing.yml'), 'utf8');
+  assert.match(workflow, /update-pricing-test:[\s\S]+needs: update-pricing-main/);
+  assert.match(workflow, /git fetch origin main --depth=1/);
+  assert.match(workflow, /git checkout FETCH_HEAD -- src\/pricing\.ts data\/official-pricing\.json/);
+  assert.match(workflow, /if: github\.event_name == 'workflow_dispatch'[\s\S]+run: npm run pricing:update/);
 });
 
 test('.dockerignore excludes private runtime data from build context', () => {

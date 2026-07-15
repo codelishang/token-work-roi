@@ -1,8 +1,21 @@
 # Changelog
 
+本文件记录公开版本的主要变化。完整提交记录见 Git 历史。
+
+## 2.0.0
+
+- 源码入口迁移到 TypeScript，npm 命令仍为 `npx token-work`。
+- 完善看板、可信度、复盘和实时页面。
+- 增加本地采集可信门槛、结构化 JSON 导入、预算提醒和终端状态栏。
+- 统一使用官方公开模型价格与缓存汇率计算参考成本。
+- 加强本地 API、远程 ingest、npm 包和隐私检查。
+
+## 1.1.0
+
+- 完善本地采集、数据可信度和桌面实时窗口。
+- 增加价格缓存更新和发布检查流程。
+
 ## 1.0.0
 
-- Set the local project version to `1.0.0`.
-- Kept the product boundary focused on local token coverage, ROI evidence, model strategy, reports, and optional Desktop Pulse.
-- Removed old version-tag wording from public docs and release checklists.
-- Kept pricing refresh, privacy checks, release gates, Docker packaging, and npm tarball checks aligned with the current release line.
+- 首个公开版本。
+- 提供本地 token 看板、复盘报告和演示模式。

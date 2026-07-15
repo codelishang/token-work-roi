@@ -12,12 +12,14 @@ import {
   listTokenEvents,
   listWorkItems,
   openDb,
+  upsertDaily,
   upsertAdvisorAction,
   upsertBudgetProfile,
   upsertSession,
   upsertTokenEvent,
   upsertWorkItem
 } from '../src/db.ts';
+import { buildTerminalReport } from '../src/terminal-report.ts';
 
 function tempDb() {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-roi-'));
@@ -55,6 +57,58 @@ test('token_events upsert is idempotent and privacy bounded', () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].inputTokens, 20);
   assert.equal(rows[0].privacyLevel, 'safe');
+  db.close();
+});
+
+test('usage rows persist session models and reject malformed numeric data', () => {
+  const db = tempDb();
+  upsertDaily(db, {
+    device: 'demo',
+    source: 'Codex CLI',
+    usageDate: '2026-07-15',
+    model: 'gpt-5.5',
+    inputTokens: 10,
+    outputTokens: 5,
+    cachedInputTokens: 7,
+    costUSD: 0.0002
+  });
+  upsertSession(db, {
+    device: 'demo',
+    source: 'Codex CLI',
+    sessionId: 'session-with-model',
+    lastActivity: '2026-07-15T01:00:00.000Z',
+    model: 'gpt-5.5',
+    inputTokens: 10,
+    outputTokens: 5,
+    costUSD: 0.0002
+  });
+  upsertSession(db, {
+    device: 'demo',
+    source: 'Codex CLI',
+    sessionId: 'session-with-model',
+    inputTokens: 20,
+    outputTokens: 10
+  });
+
+  const session = db.prepare('SELECT model, last_activity AS lastActivity, total_tokens AS totalTokens FROM session_usage').get();
+  assert.equal(session.model, 'gpt-5.5');
+  assert.equal(session.lastActivity, '2026-07-15T01:00:00.000Z');
+  assert.equal(session.totalTokens, 30);
+  const report = buildTerminalReport(db, { period: 'all' });
+  assert.equal(report.totals.totalTokens, 22);
+  assert.equal(report.totals.cacheReadTokens, 7);
+  assert.throws(() => upsertDaily(db, {
+    device: 'demo',
+    source: 'Codex CLI',
+    usageDate: '2026-02-30',
+    inputTokens: 1
+  }), /valid date/);
+  assert.throws(() => upsertSession(db, {
+    device: 'demo',
+    source: 'Codex CLI',
+    sessionId: 'bad-token-count',
+    inputTokens: -1
+  }), /non-negative integer/);
   db.close();
 });
 

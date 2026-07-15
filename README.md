@@ -1,52 +1,68 @@
-# 元衡
+<p align="center">
+  <img src="public/yuanheng-logo.svg" alt="元衡 Token Work ROI" width="420" />
+</p>
 
-[English](README.en.md) | **中文**
+<h1 align="center">元衡</h1>
 
-元衡是一个本机运行的 AI 编程用量复盘工具，主要看三件事：
+<p align="center">
+  <strong>把 AI 编程用量、成本与产出放到同一把尺上</strong><br>
+  本机运行的词元用量与投入产出复盘工具
+</p>
 
-1. 最近用了多少词元（token），大概花了多少钱。
-2. 这些用量来自哪些工具、模型和项目。
-3. 这些消耗有没有对应到任务、产出和下一步改进。
+<p align="center">
+  <a href="https://www.npmjs.com/package/token-work"><img src="https://img.shields.io/npm/v/token-work?label=npm" alt="npm version" /></a>
+  <img src="https://img.shields.io/badge/Node.js-%3E%3D24-339933" alt="Node.js 24 or newer" />
+  <img src="https://img.shields.io/badge/license-AGPL--3.0--only-1f6feb" alt="AGPL-3.0-only" />
+</p>
 
-英文标识为 **Token Work ROI**，npm 命令名为 `token-work`。它不是聊天工具，也不是服务商账单系统。元衡只读取结构化用量记录，不保存 prompt、response、完整对话、diff、命令正文或完整本机路径。
+<p align="center">
+  <strong>简体中文</strong> · <a href="README.en.md">English</a> ·
+  <a href="docs/first-run.md">首次使用</a>
+</p>
 
-当前版本为 **v2.0.0**。v2 将项目源码入口迁移到 TypeScript；发布包命令保持不变，仍然使用 `npx token-work`。
+---
 
-## 适合谁
+## 元衡是什么
 
-- 经常用 Claude Code、Codex CLI、Cursor、Gemini CLI 等工具写代码的人。
-- 想知道 AI 编程成本主要花在哪些项目和模型上。
-- 想把一周的 AI 使用情况整理成复盘报告。
-- 想给自己设置预算提醒，而不是等到账单出来才发现用量过高。
+元衡（Token Work ROI）用于整理本机 AI 编程工具产生的结构化用量记录。它可以回答三个实际问题：
 
-不适合这些场景：
+1. 最近用了多少 token，按官方公开单价估算是多少钱。
+2. 用量主要来自哪些工具、模型和项目。
+3. 这些消耗对应了什么任务和产出，下次是否需要调整模型选择。
 
-- 想查看完整聊天内容。
-- 想做团队账号、云同步或多人权限管理。
-- 想部署一个可从公网访问的看板。
-- 想用它替代模型服务商的正式账单。
+数据保存在本机 SQLite 中。元衡不保存 prompt、response、完整对话、diff 或命令正文，也不代替模型服务商账单。部分采集器会在本地保存 workspace/project path 用于项目归因；这些路径不会上传，公开截图和导出前仍应检查并脱敏。
+
+## 功能
+
+| 功能 | 说明 |
+|---|---|
+| 看板 | 按时间、来源、模型和项目查看 token 与官方价成本 |
+| 可信度 | 区分真实事件、聚合数据、仅检测到的来源和缺少 token 字段的来源 |
+| 复盘 | 给 session 补充项目、任务、阶段、价值和产出，导出 Markdown 报告 |
+| 实时 | 查看近 24 小时 burn rate、活跃 session、来源分布和预算提醒 |
+| 数据导入 | 预检并导入 ccusage JSON 或其他兼容的结构化 JSON |
+| 预算 | 按来源、模型组或固定时间窗口设置本地提醒 |
+| 终端状态栏 | 在 shell、tmux 或 Claude Code 状态栏中显示简短用量摘要 |
 
 ## 快速开始
 
-需要 Node.js 24 或更高版本。
+需要 Node.js 24.0.0 或更高版本。
 
 ```bash
 npx token-work
 ```
 
-启动后会：
+默认入口会先只读检查本机结构化来源。Claude Code 或 Codex CLI 的事件级记录通过可信门槛后，元衡会备份并更新本地 SQLite，然后打开浏览器页面。
 
-1. 只读检查本机默认来源是否有结构化用量记录。
-2. 仅在通过可信门槛时，把 Claude/Codex 事件级用量写入本地 SQLite 数据库。
-3. 打开浏览器页面。
-
-只看演示数据：
+首次使用只想看界面，可以选择以下方式：
 
 ```bash
-npx token-work demo
+npx token-work demo           # 使用合成演示数据
+npx token-work --dry-run-only # 检查来源，不写数据库
+npx token-work --no-collect   # 只打开已有数据库
 ```
 
-源码目录不要用 `npx token-work` 作为本地入口。`npx` 会按 npm 包解析；源码目录请运行本地文件：
+源码目录使用本地入口，不要用 `npx token-work` 代替当前源码：
 
 ```bash
 git clone https://github.com/codelishang/token-work-roi.git
@@ -55,96 +71,49 @@ npm install
 node src/cli.ts
 ```
 
-## 先看哪里
+第一次打开建议依次查看：**可信度 -> 看板 -> 复盘**。
 
-| 页面 | 用途 |
+## 界面
+
+截图使用合成或脱敏数据，不包含真实本机日志。
+
+![元衡看板](docs/assets/token-work-dashboard.png)
+
+![元衡可信度](docs/assets/token-work-trust.png)
+
+![元衡复盘](docs/assets/token-work-review.png)
+
+![元衡实时界面](docs/assets/token-work-live-pulse.png)
+
+## 数据来源
+
+| 类型 | 来源 |
 |---|---|
-| 看板 | 看总用量、费用、来源、模型、项目和明细 |
-| 可信度 | 判断当前数据是否可靠，哪些来源只是检测到、哪些真的有词元记录 |
-| 复盘 | 给 session 补项目、任务、阶段、产出，并导出 Markdown 复盘报告 |
-| 实时 | 看近 24 小时词元压力、burn rate、预算状态和当前建议 |
-| 导入/预算弹窗 | 从看板顶部打开，用于导入结构化 JSON 和创建预算窗口 |
+| 稳定采集 | Claude Code、Codex CLI、Gemini CLI、OpenCode、OpenClaw、Hermes Agent |
+| 实验采集 | Cursor、GitHub Copilot CLI、Qwen Code、Kimi、Goose |
+| 外部导入 | ccusage JSON、ccusage CLI 以及兼容的结构化 JSON |
 
-第一次打开建议先看“可信度”，再看“看板”，最后到“复盘”补项目和产出。
+只有存在明确 token 字段的记录才会写入。元衡不会按文本长度猜测 token，也不会把“检测到目录”当成“采集成功”。完整状态见[数据来源支持表](docs/collector-support-matrix.md)。
 
-## 常用命令
+## 导入另一台电脑的数据
 
-```bash
-npx token-work
-npx token-work demo
-npx token-work --no-collect
-npx token-work --dry-run-only
-npx token-work coverage --sources=claude,codex,cursor --json
-npx token-work collect --dry-run --sources=claude,codex,cursor --json
-npx token-work collect --apply --yes --sources=claude,codex
-npx token-work import-usage --format=ccusage-cli --report=session --dry-run --yes
-npx token-work statusline --format=text
-npx token-work privacy-check
-```
-
-命令说明：
-
-- `demo`：只看演示数据，不代表真实采集成功。
-- `--no-collect`：只打开已有数据库，不扫描本机日志。
-- `--dry-run-only`：只预检，不写入用量。
-- `coverage`：查看哪些来源有可靠词元字段。
-- `collect --apply`：确认后写入可信来源数据，写入前会备份数据库。
-- `privacy-check`：发布前检查是否误带本机数据库、日志路径、环境变量或私密导出文件。
-
-## 支持的数据来源
-
-| 来源 | 状态 | 可检测 | 可采集 | 默认检查 | 默认写入 |
-|---|---|---:|---:|---:|---:|
-| Claude Code | stable | 是 | 是 | 是 | 是 |
-| Codex CLI | stable | 是 | 是 | 是 | 是 |
-| Cursor | experimental | 是 | 仅明确词元字段 | 是 | 否 |
-| Gemini CLI | stable | 是 | 是 | 否 | 否 |
-| OpenCode | stable | 是 | 是 | 否 | 否 |
-| OpenClaw | stable | 是 | 是 | 否 | 否 |
-| Hermes Agent | stable | 是 | 是 | 否 | 否 |
-| GitHub Copilot CLI | experimental | 是 | 仅明确词元字段 | 否 | 否 |
-| Qwen Code | experimental | 是 | 仅明确词元字段 | 否 | 否 |
-| Kimi | experimental | 是 | 仅明确词元字段 | 否 | 否 |
-| Goose | experimental | 是 | 仅明确词元字段 | 否 | 否 |
-
-这些来源只有在本地记录里存在明确词元字段时才会写入用量。元衡不会按消息长度估算词元，也不会把“检测到目录”当成“已经采集成功”。
-
-## 结构化 JSON 导入
-
-元衡可以导入外部工具生成的结构化 JSON，例如 ccusage。
+先预检文件：
 
 ```bash
 npx token-work import-usage --format=ccusage-json --file ccusage.json --dry-run
 ```
 
-确认预检结果后再写入：
+确认来源、日期和 token 数量无误后再写入：
 
 ```bash
 npx token-work import-usage --format=ccusage-json --file ccusage.json --apply --yes
 ```
 
-也可以让元衡显式调用 ccusage CLI：
+导入时忽略外部文件中的成本字段，统一按元衡的官方价格表重新计算。包含对话正文、prompt 或 response 的数据会被拒绝。
 
-```bash
-npx token-work import-usage --format=ccusage-cli --report=session --dry-run --yes
-```
+## 桌面小窗
 
-导入时会忽略 ccusage 自带的成本字段，费用统一由元衡按官方公开价格重新计算。包含对话正文、prompt、response 等字段的数据会被拒绝。
-
-## 预算提醒
-
-预算窗口可以这样设：
-
-- 最近 60 分钟最多使用多少词元。
-- 每天从固定时间开始计算预算。
-- 只统计某个来源或某类模型。
-- 达到 75% 时提醒，超过硬阈值时标红。
-
-这些预算只是你自己的提醒规则，不是服务商套餐额度，也不代表模型厂商账单。
-
-## 桌面小窗（源码入口）
-
-桌面小窗目前是源码仓库入口，不是签名安装包，也不是 npm 包的一键桌面功能：
+桌面小窗是源码仓库中的可选入口，不是签名安装包：
 
 ```bash
 npm install
@@ -152,57 +121,38 @@ npm run desktop:install
 npm run desktop
 ```
 
-桌面小窗只负责打开本机元衡服务里的实时页面，不实现另一套采集器。默认不会启动即采集，也不会开启定时采集。
+它复用同一套本地服务，适合常驻查看实时页面。导入、标注和报告导出仍建议在浏览器中完成。详见[桌面版说明](desktop/README.md)。
 
-桌面版适合：
+## 价格与汇率
 
-- 常驻一个小窗看今天用量。
-- 从托盘快速打开实时、看板、复盘和可信度。
-- 工作时看 burn rate、预算和当前建议。
+- 模型费用按官方公开的 token 单价换算，不是服务商账单。
+- 人民币金额使用价格缓存中的 USD/CNY 汇率，仅作参考。
+- 官方价格或汇率刷新失败时保留上一次成功缓存。
+- 未确认官方价格的模型显示为“未定价”，不会按 0 元处理。
 
-复盘、导入和报告导出仍建议在浏览器里完成。更多说明见 [desktop/README.md](https://github.com/codelishang/token-work-roi/blob/main/desktop/README.md) 和 [docs/desktop-pulse.md](https://github.com/codelishang/token-work-roi/blob/main/docs/desktop-pulse.md)。
-
-## 截图
-
-以下截图来自演示数据或脱敏合成数据，不包含真实本机日志。
-
-![Token Work ROI dashboard](https://raw.githubusercontent.com/codelishang/token-work-roi/main/docs/assets/token-work-dashboard.png)
-
-![Token Work ROI local trust](https://raw.githubusercontent.com/codelishang/token-work-roi/main/docs/assets/token-work-trust.png)
-
-![Token Work ROI review](https://raw.githubusercontent.com/codelishang/token-work-roi/main/docs/assets/token-work-review.png)
-
-![Token Work ROI live pulse](https://raw.githubusercontent.com/codelishang/token-work-roi/main/docs/assets/token-work-live-pulse.png)
-
-## 价格和汇率
-
-元衡显示的费用是“官方公开单价换算”，不是服务商账单。
-
-- 美元价格按 USD / 1M tokens 计算。
-- 软件会保留官方价格的来源币种，并按每周价格刷新时的 USD/CNY 汇率展示人民币参考值。
-- 界面中的人民币估算优先使用本地价格缓存里的汇率；价格缓存刷新成功后，汇率随缓存一起更新。
-- 没有确认官方价格的模型显示为未定价，不按 0 元计算。
-
-模型价格可手动刷新：
+维护者可以手动刷新缓存：
 
 ```bash
 npm run pricing:update
 ```
 
-仓库维护流程会在每周一 00:01（Asia/Shanghai）尝试更新内置价格表；本地用户也可手动刷新价格缓存。刷新失败时保留旧缓存和内置表。
+仓库工作流每周一 00:01（Asia/Shanghai）尝试更新价格和汇率。
 
-## 隐私边界
+## 隐私
 
-元衡默认不保存：
+元衡默认不上传用量数据，不提供云同步，也不包含遥测。允许保存的内容限于复盘所需的结构化字段，例如时间、来源、模型、token 数量、session、设备、workspace/project path、项目别名、任务标签、预算和用户填写的产出链接。
 
-- prompt
-- response
-- 完整 transcript
-- 完整本机路径
-- 命令正文
-- diff 内容
+发布或分享仓库前运行：
 
-允许保存的是复盘所需的结构化字段，例如时间、来源、模型、词元数量、session、来源设备、项目别名、任务类型、阶段、产出状态、预算配置、用户手动填写的产出链接和链接说明。文件类型或路径哈希等结构化派生字段也可能保存在本地数据库中；路径哈希用于区分来源，不直接保存完整路径文本。
+```bash
+npm run privacy:check
+```
+
+详细边界见 [PRIVACY.md](PRIVACY.md)。
+
+## 技术栈
+
+Node.js 24 · TypeScript · React 18 · Vite · ECharts · SQLite · Electron
 
 ## 开发
 
@@ -214,14 +164,21 @@ npm run build
 npm run privacy:check
 ```
 
-源码运行时使用 `node src/cli.ts`。发布包用户仍使用 `npx token-work`，命令参数保持稳定；旧的源码直跑 `.mjs` 路径已不再作为 v2 入口。
+发布前还应运行 `npm run smoke:npx`、`npm run smoke:browser` 和 `npm run desktop:smoke`。完整流程见[发布检查表](docs/public-launch-checklist.md)。
 
-## 名称和 Logo
+## 文档
 
-项目中文名是“元衡”，英文名是“Token Work ROI”。“元”表示词元、成本和原始记录，“衡”表示衡量、校准和取舍。
+| 文档 | 内容 |
+|---|---|
+| [首次使用](docs/first-run.md) | 从启动到第一次复盘的操作顺序 |
+| [数据来源支持表](docs/collector-support-matrix.md) | 各来源的检测、采集和默认写入状态 |
+| [本地采集说明](docs/local-collectors.md) | 采集命令、可信门槛和环境变量 |
+| [终端状态栏](docs/statusline.md) | shell、tmux 与 Claude Code 配置 |
+| [品牌说明](docs/brand.md) | 名称、Logo 含义和使用规范 |
+| [隐私说明](PRIVACY.md) | 本地数据、接口和远程 ingest 边界 |
 
-Logo 和品牌使用说明见 [docs/brand.md](https://github.com/codelishang/token-work-roi/blob/main/docs/brand.md)。
+## 名称与许可
 
-## 开源协议
+“元”指词元、成本和原始记录；“衡”指衡量、校准和取舍。Logo 为本项目独立绘制，设计说明见[品牌说明](docs/brand.md)。
 
-AGPL-3.0-only 协议，版权所有 © 2026 coderlishang，All rights reserved.
+AGPL-3.0-only 协议，版权所有 © 2026 coderlishang，All rights reserved. 商业双授权说明见 [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)。

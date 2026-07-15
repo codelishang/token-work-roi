@@ -328,6 +328,7 @@ function normalizeSessionRows(json, deviceName, collectedAt) {
       sessionId: entry.sessionId || ['local', entry.client || 'unknown', workspace || 'no-workspace', model].join(':'),
       lastActivity: entry.lastActivity || collectedAt,
       projectPath: workspace || null,
+      model,
       inputTokens: tokens.input,
       outputTokens: tokens.output,
       cacheCreationTokens: tokens.cacheWrite,

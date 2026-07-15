@@ -340,7 +340,7 @@ export function App({ routeMode = 'dashboard' }) {
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
         await loadData();
-        return data.imported;
+        return { ...data.imported, backup: data.backup };
       });
   }, [loadData]);
 

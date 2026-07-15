@@ -622,9 +622,10 @@ function TablePanel({
     if (!file) return;
     try {
       const result = await onImportAnnotations(file);
+      const backupName = result.backup?.fileName || result.backup?.path?.split(/[\\/]/).pop();
       setPanelMessage({
         type: 'ok',
-        text: `已导入：标注 ${result.sessionAnnotations || 0}，产出 ${result.sessionOutputs || 0}，规则 ${result.projectAliasRules || 0}`
+        text: `已导入：标注 ${result.sessionAnnotations || 0}，产出 ${result.sessionOutputs || 0}，规则 ${result.projectAliasRules || 0}${backupName ? `；备份 ${backupName}` : ''}`
       });
     } catch (error) {
       setPanelMessage({ type: 'error', text: error.message || '导入失败' });

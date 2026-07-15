@@ -37,7 +37,7 @@ function queryDaily(db, range) {
         input_tokens AS inputTokens,
         output_tokens AS outputTokens,
         cache_creation_tokens AS cacheCreationTokens,
-        cache_read_tokens AS cacheReadTokens,
+        (cache_read_tokens + cached_input_tokens) AS cacheReadTokens,
         reasoning_output_tokens AS reasoningOutputTokens,
         total_tokens AS totalTokens,
         cost_usd AS costUSD
@@ -49,7 +49,7 @@ function queryDaily(db, range) {
       input_tokens AS inputTokens,
       output_tokens AS outputTokens,
       cache_creation_tokens AS cacheCreationTokens,
-      cache_read_tokens AS cacheReadTokens,
+      (cache_read_tokens + cached_input_tokens) AS cacheReadTokens,
       reasoning_output_tokens AS reasoningOutputTokens,
       total_tokens AS totalTokens,
       cost_usd AS costUSD
@@ -63,10 +63,11 @@ function querySessions(db, range) {
     SELECT device, source, session_id AS sessionId,
       last_activity AS lastActivity,
       project_path AS projectPath,
+      model,
       input_tokens AS inputTokens,
       output_tokens AS outputTokens,
       cache_creation_tokens AS cacheCreationTokens,
-      cache_read_tokens AS cacheReadTokens,
+      (cache_read_tokens + cached_input_tokens) AS cacheReadTokens,
       reasoning_output_tokens AS reasoningOutputTokens,
       total_tokens AS totalTokens,
       cost_usd AS costUSD

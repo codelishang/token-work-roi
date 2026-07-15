@@ -18,6 +18,7 @@
     "jsx": "react-jsx"
   },
   "include": [
+    "desktop/main.ts",
     "scripts/build-runtime.ts",
     "scripts/clean-runtime.ts",
     "vite.config.ts"

@@ -53,8 +53,12 @@ jobs:
 
   update-pricing-test:
     name: Refresh official model pricing (test)
+    needs: update-pricing-main
+    if: >-
+      always() &&
+      ((github.event_name == 'schedule' && needs.update-pricing-main.result == 'success') ||
+      (github.event_name == 'workflow_dispatch' && inputs.target_branch == 'test'))
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || inputs.target_branch == 'test'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,10 +69,19 @@ jobs:
           node-version: '24.x'
           cache: npm
 
+      - name: Fetch pricing committed on main
+        if: github.event_name == 'schedule'
+        run: git fetch origin main --depth=1
+
+      - name: Use the pricing files verified on main
+        if: github.event_name == 'schedule'
+        run: git checkout FETCH_HEAD -- src/pricing.ts data/official-pricing.json
+
       - run: npm ci --registry=https://registry.npmmirror.com
       - run: npm run typecheck:tools
 
       - name: Refresh official pricing
+        if: github.event_name == 'workflow_dispatch'
         run: npm run pricing:update
 
       - run: npm test

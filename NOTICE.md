@@ -1,25 +1,9 @@
 # Notice
 
-Token Work ROI is licensed under the GNU Affero General Public License v3.0 only.
+Token Work ROI, known in Chinese as Yuanheng, is independently developed and maintained by coderlishang.
+
 AGPL-3.0-only license. Copyright © 2026 coderlishang. All rights reserved.
 
-Token Work ROI is a standalone public packaging and productization effort by coderlishang@gmail.com.
+The software reads and stores only structured fields needed for token usage analysis. It does not store prompts, responses, full conversations, diffs, or command bodies. Some collectors may keep a workspace or project path in the local SQLite database for project attribution; this data is not uploaded by default.
 
-Token Work ROI adds and productizes the following first-class features:
-
-- standalone `token-work` CLI
-- demo mode with synthetic data
-- collector registry and source detection
-- privacy scanner for public readiness
-- session attribution and provenance
-- work item model for grouping sessions into outputs
-- ROI Evidence Score
-- local ROI Advisor rules
-- model policy Markdown export
-- official-price conversion boundaries
-- loopback-only local write API hardening
-- Local Trust Workbench and Coverage Bridge
-- Trust-to-Evidence Autopilot
-- final local review and stop-rule documentation
-
-The project does not claim provider-invoice accuracy and does not read, store, display, or export conversation content.
+Costs shown in the UI are reference values calculated from official public token rates. They are not provider invoices. Third-party product and model names are used only to identify compatible data sources; no partnership, endorsement, or affiliation is implied.

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+  attachOfficialPricing,
   calculateCost,
   calculateOfficialCost,
   loadPricing,
@@ -24,6 +25,19 @@ test('calculates OpenAI API standard USD price from official per-token rates', (
   assert.equal(cost.ratesPerMTok.input, 5);
   assert.equal(cost.ratesPerMTok.cachedInput, 0.5);
   assert.equal(cost.ratesPerMTok.output, 30);
+});
+
+test('includes legacy cached-input tokens in official cost conversion', () => {
+  const row = attachOfficialPricing({
+    model: 'gpt-5.5',
+    inputTokens: 1_000_000,
+    outputTokens: 1_000_000,
+    cacheReadTokens: 500_000,
+    cachedInputTokens: 500_000
+  });
+
+  assert.equal(row.costUSD, 35.5);
+  assert.equal(row.pricingStatus, 'priced');
 });
 
 test('calculates OpenAI GPT-5.6 launch prices and aliases', () => {

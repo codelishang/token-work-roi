@@ -349,6 +349,7 @@ function loadSessionRows(db) {
       s.session_id AS sessionId,
       s.last_activity AS lastActivity,
       s.project_path AS projectPath,
+      s.model,
       s.input_tokens AS inputTokens,
       s.output_tokens AS outputTokens,
       s.cache_creation_tokens AS cacheCreationTokens,
@@ -382,7 +383,7 @@ function loadSessionRows(db) {
       ? row.projectPath
       : (row.sessionId ? row.sessionId.split('/').slice(-1)[0] || row.sessionId : null);
     const ruleProjectAlias = matchProjectAliasRule(projectPath, aliasRules);
-    const model = modelFromSessionId(row.sessionId);
+    const model = row.model || modelFromSessionId(row.sessionId);
     return attachOfficialPricing({
       ...row,
       ...DEFAULT_SESSION_ANNOTATION,

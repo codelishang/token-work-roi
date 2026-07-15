@@ -42,8 +42,8 @@ app.on('activate', () => {
   else focusOrOpen('/live?surface=desktop');
 });
 
-app.on('window-all-closed', event => {
-  event.preventDefault();
+app.on('window-all-closed', () => {
+  // Keep the tray process alive until the user explicitly quits.
 });
 
 app.on('before-quit', () => {
@@ -351,8 +351,13 @@ function freePort(start, maxPort = 65535) {
       }
     });
     server.once('listening', () => {
-      const port = server.address().port;
-      server.close(() => resolvePort(port));
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        rejectPort(new Error('Failed to resolve the desktop service port'));
+        return;
+      }
+      server.close(() => resolvePort(address.port));
     });
     server.listen(candidate, '127.0.0.1');
   });

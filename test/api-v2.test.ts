@@ -128,6 +128,15 @@ test('v2 APIs cover alias rules, batch annotations, outputs, backup, export and 
       sessionOutputs: 1,
       projectAliasRules: 1
     });
+    assert.equal(existsSync(imported.backup.path), true);
+
+    const emptyImport = await postJson(port, '/api/import/annotations', {});
+    assert.equal(emptyImport.backup, null);
+    assert.deepEqual(emptyImport.imported, {
+      sessionAnnotations: 0,
+      sessionOutputs: 0,
+      projectAliasRules: 0
+    });
 
     const deletedOutput = await deleteJson(port, '/api/session-outputs', {
       device: 'devbox',
@@ -232,4 +241,3 @@ async function assertRejectsWithStatus(responsePromise, expectedStatus) {
   const response = await responsePromise;
   assert.equal(response.status, expectedStatus, await response.text());
 }
-

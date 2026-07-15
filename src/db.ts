@@ -114,6 +114,7 @@ function initSchema(db) {
       session_id TEXT NOT NULL,
       last_activity TEXT,
       project_path TEXT,
+      model TEXT NOT NULL DEFAULT '',
       input_tokens INTEGER NOT NULL DEFAULT 0,
       output_tokens INTEGER NOT NULL DEFAULT 0,
       cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
@@ -264,6 +265,7 @@ function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_advisor_actions_rule ON advisor_actions(period_start, period_end, source_rule);
   `);
   ensureColumn(db, 'session_annotations', 'work_purpose', "TEXT NOT NULL DEFAULT '未说明'");
+  ensureColumn(db, 'session_usage', 'model', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, 'session_annotations', 'work_stage', "TEXT NOT NULL DEFAULT '未说明'");
   ensureColumn(db, 'session_annotations', 'value_level', "TEXT NOT NULL DEFAULT '未评估'");
   ensureColumn(db, 'session_annotations', 'annotation_source', "TEXT NOT NULL DEFAULT 'manual'");
@@ -283,6 +285,7 @@ function initSchema(db) {
 }
 
 export function upsertDaily(db, row) {
+  const usage = normalizeDailyUsage(row);
   db.prepare(`
     INSERT INTO daily_usage (
       device, source, usage_date, model, input_tokens, output_tokens,
@@ -300,31 +303,33 @@ export function upsertDaily(db, row) {
       cost_usd = excluded.cost_usd,
       updated_at = datetime('now')
   `).run(
-    row.device,
-    row.source,
-    row.usageDate,
-    row.model || '',
-    row.inputTokens || 0,
-    row.outputTokens || 0,
-    row.cacheCreationTokens || 0,
-    row.cacheReadTokens || 0,
-    row.cachedInputTokens || 0,
-    row.reasoningOutputTokens || 0,
-    row.totalTokens || 0,
-    row.costUSD || 0
+    usage.device,
+    usage.source,
+    usage.usageDate,
+    usage.model,
+    usage.inputTokens,
+    usage.outputTokens,
+    usage.cacheCreationTokens,
+    usage.cacheReadTokens,
+    usage.cachedInputTokens,
+    usage.reasoningOutputTokens,
+    usage.totalTokens,
+    usage.costUSD
   );
 }
 
 export function upsertSession(db, row) {
+  const session = normalizeSessionUsage(row);
   db.prepare(`
     INSERT INTO session_usage (
-      device, source, session_id, last_activity, project_path, input_tokens,
+      device, source, session_id, last_activity, project_path, model, input_tokens,
       output_tokens, cache_creation_tokens, cache_read_tokens,
       cached_input_tokens, reasoning_output_tokens, total_tokens, cost_usd, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(device, source, session_id) DO UPDATE SET
-      last_activity = excluded.last_activity,
-      project_path = excluded.project_path,
+      last_activity = COALESCE(excluded.last_activity, session_usage.last_activity),
+      project_path = COALESCE(excluded.project_path, session_usage.project_path),
+      model = CASE WHEN excluded.model != '' THEN excluded.model ELSE session_usage.model END,
       input_tokens = excluded.input_tokens,
       output_tokens = excluded.output_tokens,
       cache_creation_tokens = excluded.cache_creation_tokens,
@@ -335,34 +340,75 @@ export function upsertSession(db, row) {
       cost_usd = excluded.cost_usd,
       updated_at = datetime('now')
   `).run(
-    row.device,
-    row.source,
-    row.sessionId,
-    row.lastActivity || null,
-    row.projectPath || null,
-    row.inputTokens || 0,
-    row.outputTokens || 0,
-    row.cacheCreationTokens || 0,
-    row.cacheReadTokens || 0,
-    row.cachedInputTokens || 0,
-    row.reasoningOutputTokens || 0,
-    row.totalTokens || 0,
-    row.costUSD || 0
+    session.device,
+    session.source,
+    session.sessionId,
+    session.lastActivity,
+    session.projectPath,
+    session.model,
+    session.inputTokens,
+    session.outputTokens,
+    session.cacheCreationTokens,
+    session.cacheReadTokens,
+    session.cachedInputTokens,
+    session.reasoningOutputTokens,
+    session.totalTokens,
+    session.costUSD
   );
 }
 
 export function recordRun(db, row) {
+  const run = normalizeCollectionRun(row);
   db.prepare(`
     INSERT INTO collection_runs(device, source, status, message, collected_at, command)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(
-    row.device,
-    row.source,
-    row.status,
-    row.message || null,
-    row.collectedAt || new Date().toISOString(),
-    row.command || null
+    run.device,
+    run.source,
+    run.status,
+    run.message,
+    run.collectedAt,
+    run.command
   );
+}
+
+export function normalizeDailyUsage(row = {}) {
+  const tokens = normalizeUsageTokens(row);
+  return {
+    device: normalizedRequiredMax(row.device, 'device', 120),
+    source: normalizedRequiredMax(row.source, 'source', 120),
+    usageDate: normalizeUsageDate(row.usageDate ?? row.usage_date),
+    model: normalizeOptionalText(row.model, 'model', 160) || '',
+    ...tokens,
+    totalTokens: normalizeUsageTotal(row.totalTokens ?? row.total_tokens, tokens),
+    costUSD: normalizeNonNegativeNumber(row.costUSD ?? row.cost_usd, 'costUSD')
+  };
+}
+
+export function normalizeSessionUsage(row = {}) {
+  const tokens = normalizeUsageTokens(row);
+  return {
+    device: normalizedRequiredMax(row.device, 'device', 120),
+    source: normalizedRequiredMax(row.source, 'source', 120),
+    sessionId: normalizedRequiredMax(row.sessionId ?? row.session_id, 'sessionId', 300),
+    lastActivity: normalizeOptionalTimestamp(row.lastActivity ?? row.last_activity, 'lastActivity'),
+    projectPath: normalizeOptionalRawText(row.projectPath ?? row.project_path, 'projectPath', 1000),
+    model: normalizeOptionalText(row.model, 'model', 160) || '',
+    ...tokens,
+    totalTokens: normalizeUsageTotal(row.totalTokens ?? row.total_tokens, tokens),
+    costUSD: normalizeNonNegativeNumber(row.costUSD ?? row.cost_usd, 'costUSD')
+  };
+}
+
+export function normalizeCollectionRun(row = {}) {
+  return {
+    device: normalizedRequiredMax(row.device, 'device', 120),
+    source: normalizedRequiredMax(row.source, 'source', 120),
+    status: normalizedRequiredMax(row.status, 'status', 80),
+    message: normalizeOptionalText(row.message, 'message', 2000),
+    collectedAt: normalizeOptionalTimestamp(row.collectedAt ?? row.collected_at, 'collectedAt') || new Date().toISOString(),
+    command: normalizeOptionalText(row.command, 'command', 500)
+  };
 }
 
 export function normalizeSessionAnnotation(row = {}, { defaultSource = 'manual' } = {}) {
@@ -1324,10 +1370,54 @@ function normalizeConfidence(value, fallback) {
 
 function normalizeTokenCount(value, field) {
   const number = Number(value || 0);
-  if (!Number.isInteger(number) || number < 0) {
+  if (!Number.isSafeInteger(number) || number < 0) {
     throw new Error(`${field} must be a non-negative integer`);
   }
   return number;
+}
+
+function normalizeUsageTokens(row) {
+  return {
+    inputTokens: normalizeTokenCount(row.inputTokens ?? row.input_tokens, 'inputTokens'),
+    outputTokens: normalizeTokenCount(row.outputTokens ?? row.output_tokens, 'outputTokens'),
+    cacheCreationTokens: normalizeTokenCount(row.cacheCreationTokens ?? row.cache_creation_tokens, 'cacheCreationTokens'),
+    cacheReadTokens: normalizeTokenCount(row.cacheReadTokens ?? row.cache_read_tokens, 'cacheReadTokens'),
+    cachedInputTokens: normalizeTokenCount(row.cachedInputTokens ?? row.cached_input_tokens, 'cachedInputTokens'),
+    reasoningOutputTokens: normalizeTokenCount(row.reasoningOutputTokens ?? row.reasoning_output_tokens, 'reasoningOutputTokens')
+  };
+}
+
+function normalizeUsageTotal(value, tokens) {
+  if (value != null && value !== '') return normalizeTokenCount(value, 'totalTokens');
+  return Object.values(tokens).reduce((sum, count) => sum + count, 0);
+}
+
+function normalizeUsageDate(value) {
+  const text = normalizedRequiredMax(value, 'usageDate', 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    throw new Error('usageDate must use YYYY-MM-DD');
+  }
+  const date = new Date(`${text}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== text) {
+    throw new Error('usageDate must be a valid date');
+  }
+  return text;
+}
+
+function normalizeOptionalTimestamp(value, field) {
+  const text = normalizeOptionalText(value, field, 80);
+  if (!text) return null;
+  if (Number.isNaN(new Date(text).getTime())) {
+    throw new Error(`${field} must be a valid date/time`);
+  }
+  return text;
+}
+
+function normalizeOptionalRawText(value, field, maxLength) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  if (text.length > maxLength) throw new Error(`${field} must be ${maxLength} characters or less`);
+  return text;
 }
 
 function normalizePositiveInteger(value, field, max = Number.MAX_SAFE_INTEGER) {
