@@ -105,6 +105,7 @@ export function planCcusageImport(payload, options = {}) {
         sessionId,
         lastActivity: timestamp,
         projectPath,
+        model,
         ...tokens,
         totalTokens: tokens.totalTokens,
         costUSD: cost.totalUSD

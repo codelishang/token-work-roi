@@ -4,9 +4,9 @@
 
 Yuanheng collectors handle structured usage metadata only. They do not read conversation text or estimate tokens from text length.
 
-## 默认会读取哪些来源 / Default Sources
+## 稳定采集器 / Stable Collectors
 
-默认启用：
+当前已实现稳定采集的来源：
 
 - Claude Code
 - Codex CLI
@@ -15,9 +15,11 @@ Yuanheng collectors handle structured usage metadata only. They do not read conv
 - OpenClaw
 - Hermes Agent
 
-这些来源在本机存在可靠元数据时，可以生成 `daily_usage`、`session_usage` 和 `token_events`。
+这些来源在本机存在可靠元数据时，可以生成 `daily_usage`、`session_usage` 和 `token_events`。稳定采集不等于快速启动时全部自动写入。
 
-Enabled by default when reliable local metadata exists.
+快速启动默认检查 Claude Code、Codex CLI 和 Cursor，只自动写入通过可信门槛的 Claude Code 与 Codex CLI 事件记录。其他稳定采集器需要通过 `coverage --sources` 或 `collect --sources` 明确选择。
+
+These collectors can produce structured usage when reliable local metadata exists. The quick-start flow checks Claude Code, Codex CLI, and Cursor, and only auto-writes trusted Claude Code and Codex CLI events. Select other stable collectors explicitly with `coverage --sources` or `collect --sources`.
 
 ## 实验来源 / Experimental Sources
 
@@ -99,6 +101,6 @@ Yuanheng can only read local history that still exists and contains reliable tok
 
 ## 隐私 / Privacy
 
-采集器只能保存结构化词元元数据。不能保存 prompt、response、完整 transcript、完整本机路径、命令正文或 diff 内容。
+采集器只保存结构化词元元数据。不保存 prompt、response、完整 transcript、命令正文或 diff 内容。部分来源会把 workspace/project path 保存到本机 SQLite，用于项目归因；分享数据库、截图或导出文件前应检查并脱敏。
 
-Collectors may store structured token metadata only. They must not store prompts, responses, full transcripts, full local paths, command bodies, or diff content.
+Collectors may store structured token metadata only. They must not store prompts, responses, full transcripts, command bodies, or diff content. Some sources keep a workspace or project path in local SQLite for attribution; review and sanitize it before sharing a database, screenshot, or export.

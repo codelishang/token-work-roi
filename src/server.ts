@@ -1,5 +1,6 @@
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { URL } from 'node:url';
@@ -84,6 +85,8 @@ const staticDir = existsSync(resolve(process.cwd(), 'dist'))
 const dbPath = process.env.DB_PATH || defaultDbPath;
 const pricingCachePath = resolve(process.cwd(), 'data', 'official-pricing.json');
 const packageVersion = readPackageVersion();
+const SPA_ROUTES = new Set(['/', '/review', '/live', '/trust']);
+const MAX_INGEST_ROWS = 50_000;
 const db = openDb(dbPath);
 let activeCollection = null;
 let lastCoverageGate = null;
@@ -168,7 +171,7 @@ async function handleApi(req, url, res) {
       `),
       topSessions: all(`
         SELECT device, source, session_id AS sessionId, last_activity AS lastActivity,
-          project_path AS projectPath, total_tokens AS totalTokens, cost_usd AS costUSD
+          project_path AS projectPath, model, total_tokens AS totalTokens, cost_usd AS costUSD
         FROM session_usage
         ORDER BY total_tokens DESC
         LIMIT 30
@@ -192,6 +195,7 @@ async function handleApi(req, url, res) {
         s.session_id AS sessionId,
         s.last_activity AS lastActivity,
         s.project_path AS projectPath,
+        s.model,
         s.input_tokens AS inputTokens,
         s.output_tokens AS outputTokens,
         s.cache_creation_tokens AS cacheCreationTokens,
@@ -243,7 +247,7 @@ async function handleApi(req, url, res) {
         : (s.sessionId ? s.sessionId.split('/').slice(-1)[0] || s.sessionId : null);
       const ruleProjectAlias = matchProjectAliasRule(projectPath, enabledAliasRules);
       const manualProjectAlias = s.manualProjectAlias || null;
-      const model = modelFromSessionId(s.sessionId);
+      const model = s.model || modelFromSessionId(s.sessionId);
       return {
         ...s,
         ...DEFAULT_SESSION_ANNOTATION,
@@ -925,8 +929,12 @@ async function handleImportAnnotations(req, res) {
   if (!validateLocalJsonWrite(req, res, '导入接口')) return;
 
   try {
-    const result = importAnnotationData(db, await readJson(req, 5 * 1024 * 1024));
-    sendJson(res, { ok: true, imported: result });
+    const payload = await readJson(req, 5 * 1024 * 1024);
+    const hasRows = ['sessionAnnotations', 'annotations', 'sessionOutputs', 'projectAliasRules']
+      .some(key => Array.isArray(payload[key]) && payload[key].length > 0);
+    const backup = hasRows ? createDbBackup({ reason: 'annotation-import' }) : null;
+    const result = importAnnotationData(db, payload);
+    sendJson(res, { ok: true, imported: result, backup });
   } catch (error) {
     sendJson(res, { error: error.message }, 400);
   }
@@ -972,7 +980,7 @@ function handleCollect(req, res) {
   }
 
   try {
-    const started = startCollection({ reason: 'manual', requireBackup: true });
+    const started = startCollection({ reason: 'manual' });
     if (!started) {
       sendJson(res, { ...collectionState, error: '采集正在运行' }, 409);
       return;
@@ -983,12 +991,11 @@ function handleCollect(req, res) {
   }
 }
 
-function startCollection({ reason = 'manual', requireBackup = false } = {}) {
+function startCollection({ reason = 'manual' } = {}) {
   if (activeCollection) {
     return false;
   }
 
-  const backup = requireBackup ? createDbBackup({ reason: reason === 'scheduled' ? 'scheduled-collect' : 'collect' }) : null;
   const sources = 'claude,codex';
   const args = ['src/collect.ts', '--apply', '--yes', '--sources', sources, '--json'];
   const device = collectionDevice();
@@ -1017,7 +1024,7 @@ function startCollection({ reason = 'manual', requireBackup = false } = {}) {
     exitCode: null,
     stdout: '',
     stderr: '',
-    backup
+    backup: null
   };
 
   child.stdout.setEncoding('utf8');
@@ -1033,7 +1040,7 @@ function startCollection({ reason = 'manual', requireBackup = false } = {}) {
       message: error.message,
       finishedAt: new Date().toISOString(),
       stderr: error.message,
-      backup
+      backup: null
     };
   });
 
@@ -1051,7 +1058,7 @@ function startCollection({ reason = 'manual', requireBackup = false } = {}) {
       finishedAt: new Date().toISOString(),
       stdout: trimOutput(stdout),
       stderr: trimOutput(stderr),
-      backup: parsedSummary?.backup || backup,
+      backup: parsedSummary?.backup || null,
       summary: parsedSummary ? summarizeCollectState(parsedSummary) : null
     };
   });
@@ -1068,7 +1075,7 @@ function startScheduledCollect() {
 
   const run = () => {
     try {
-      const started = startCollection({ reason: 'scheduled', requireBackup: false });
+      const started = startCollection({ reason: 'scheduled' });
       if (!started) console.log('[collect:schedule] skipped because a collection is already running');
     } catch (error) {
       console.log(`[collect:schedule] skipped: ${error.message}`);
@@ -1122,9 +1129,26 @@ async function handleIngest(req, res) {
 
   try {
     const payload = await readJson(req, 8 * 1024 * 1024);
-    const dailyRows = Array.isArray(payload.daily) ? payload.daily : [];
-    const sessionRows = Array.isArray(payload.sessions) ? payload.sessions : [];
-    const runRows = Array.isArray(payload.runs) ? payload.runs : [];
+    const pricingData = await loadPricing(pricingCachePath);
+    const rawDailyRows = ingestRows(payload, 'daily');
+    const rawSessionRows = ingestRows(payload, 'sessions');
+    const runRows = ingestRows(payload, 'runs');
+    const rowCount = rawDailyRows.length + rawSessionRows.length + runRows.length;
+    if (rowCount > MAX_INGEST_ROWS) {
+      throw new Error(`ingest accepts at most ${MAX_INGEST_ROWS} rows per request`);
+    }
+    const dailyRows = rawDailyRows.map(row => attachOfficialPricing(
+      row,
+      row.model,
+      providerFromSource(row.source),
+      pricingData
+    ));
+    const sessionRows = rawSessionRows.map(row => attachOfficialPricing(
+      row,
+      row.model,
+      providerFromSource(row.source),
+      pricingData
+    ));
 
     db.exec('BEGIN');
     try {
@@ -1144,9 +1168,8 @@ async function handleIngest(req, res) {
 }
 
 function serveStatic(pathname, res) {
-  const filePath = pathname === '/' ? join(staticDir, 'index.html')
-    : pathname === '/review' ? join(staticDir, 'index.html')
-      : pathname === '/live' ? join(staticDir, 'index.html')
+  const filePath = SPA_ROUTES.has(pathname)
+    ? join(staticDir, 'index.html')
     : join(staticDir, pathname);
   if (!filePath.startsWith(staticDir) || !existsSync(filePath)) {
     res.writeHead(404);
@@ -1168,7 +1191,7 @@ function all(sql) {
 function liveSessions() {
   return all(`
     SELECT device, source, session_id AS sessionId, last_activity AS lastActivity,
-      project_path AS projectPath,
+      project_path AS projectPath, model,
       input_tokens AS inputTokens,
       output_tokens AS outputTokens,
       cache_creation_tokens AS cacheCreationTokens,
@@ -1182,7 +1205,7 @@ function liveSessions() {
     LIMIT 100
   `).map(session => ({
     ...session,
-    model: modelFromSessionId(session.sessionId),
+    model: session.model || modelFromSessionId(session.sessionId),
     cacheReadTokens: Number(session.cacheReadTokens || 0) + Number(session.cachedInputTokens || 0)
   }));
 }
@@ -1607,6 +1630,7 @@ function buildAutoAttributionContext() {
       s.session_id AS sessionId,
       s.last_activity AS lastActivity,
       s.project_path AS projectPath,
+      s.model,
       s.input_tokens AS inputTokens,
       s.output_tokens AS outputTokens,
       s.cache_creation_tokens AS cacheCreationTokens,
@@ -1647,7 +1671,7 @@ function buildAutoAttributionContext() {
   const sessions = rawSessions.map(s => {
     const projectPath = normalizeProjectPath(s.projectPath, s.sessionId);
     const ruleProjectAlias = matchProjectAliasRule(projectPath, enabledAliasRules);
-    const model = modelFromSessionId(s.sessionId);
+    const model = s.model || modelFromSessionId(s.sessionId);
     return attachOfficialPricing({
       ...s,
       ...DEFAULT_SESSION_ANNOTATION,
@@ -1812,11 +1836,24 @@ function validateIngestJsonWrite(req, res) {
     return false;
   }
   const actualToken = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  if (actualToken !== expectedToken) {
+  if (!tokensEqual(actualToken, expectedToken)) {
     sendJson(res, { error: 'Unauthorized' }, 401);
     return false;
   }
   return true;
+}
+
+function tokensEqual(actual, expected) {
+  const actualBytes = Buffer.from(String(actual || ''), 'utf8');
+  const expectedBytes = Buffer.from(String(expected || ''), 'utf8');
+  return actualBytes.length === expectedBytes.length
+    && timingSafeEqual(actualBytes, expectedBytes);
+}
+
+function ingestRows(payload, key) {
+  if (payload[key] == null) return [];
+  if (!Array.isArray(payload[key])) throw new Error(`${key} must be an array`);
+  return payload[key];
 }
 
 function validateLocalRead(req, res, label) {
@@ -1885,6 +1922,7 @@ function contentType(filePath) {
     '.ts': 'application/javascript; charset=utf-8',
     '.tsx': 'application/javascript; charset=utf-8',
     '.svg': 'image/svg+xml; charset=utf-8',
+    '.png': 'image/png',
     '.webmanifest': 'application/manifest+json; charset=utf-8'
   };
   return types[extname(filePath)] || 'application/octet-stream';

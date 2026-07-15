@@ -44,6 +44,18 @@ test('loopback GET APIs allow missing or local Origin', async () => {
   }
 });
 
+test('static PNG assets use an image content type', async () => {
+  const server = await startServer();
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/token-work-icon.png`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'image/png');
+    assert.ok((await response.arrayBuffer()).byteLength > 0);
+  } finally {
+    await server.stop();
+  }
+});
+
 test('malformed Host header returns 400 instead of crashing server', async () => {
   const server = await startServer();
   try {
@@ -154,6 +166,36 @@ test('ingest accepts tokened JSON machine requests and writes structured rows', 
     });
     assert.equal(accepted.status, 200);
     assert.deepEqual(await accepted.json(), { ok: true, daily: 1, sessions: 1, runs: 1 });
+
+    const summary = await fetch(`http://127.0.0.1:${server.port}/api/summary`).then(response => response.json());
+    assert.ok(Math.abs(summary.totals.costUSD - 0.0002) < 1e-12);
+    const data = await fetch(`http://127.0.0.1:${server.port}/api/data`).then(response => response.json());
+    assert.equal(data.sessions[0].model, 'gpt-5.5');
+    assert.ok(Math.abs(data.sessions[0].costUSD - 0.0002) < 1e-12);
+  } finally {
+    await server.stop();
+  }
+});
+
+test('ingest rejects malformed usage rows without partial writes', async () => {
+  const server = await startServer({ INGEST_TOKEN: 'test-ingest-token' });
+  try {
+    const malformed = await postIngest(server.port, {
+      Authorization: 'Bearer test-ingest-token'
+    }, {
+      body: {
+        ...ingestPayload(),
+        daily: [{
+          ...ingestPayload().daily[0],
+          inputTokens: -1
+        }]
+      }
+    });
+    assert.equal(malformed.status, 400);
+    assert.match((await malformed.json()).error, /non-negative integer/);
+
+    const summary = await fetch(`http://127.0.0.1:${server.port}/api/summary`).then(response => response.json());
+    assert.equal(summary.totals.totalTokens, 0);
   } finally {
     await server.stop();
   }
@@ -220,21 +262,22 @@ function ingestPayload() {
       device: 'test-device',
       source: 'test-source',
       usageDate: '2026-06-20',
-      model: 'test-model',
+      model: 'gpt-5.5',
       inputTokens: 10,
       outputTokens: 5,
       totalTokens: 15,
-      costUSD: 0.01
+      costUSD: 999
     }],
     sessions: [{
       device: 'test-device',
       source: 'test-source',
       sessionId: 'test-session',
       lastActivity: '2026-06-20T00:00:00.000Z',
+      model: 'gpt-5.5',
       inputTokens: 10,
       outputTokens: 5,
       totalTokens: 15,
-      costUSD: 0.01
+      costUSD: 999
     }],
     runs: [{
       device: 'test-device',

@@ -700,10 +700,12 @@ export function officialPricingMetadata(rows = [], pricingData = null) {
 }
 
 export function attachOfficialPricing(row, model = row?.model, provider = null, pricingData = null) {
+  const cacheRead = Number(row?.cacheReadTokens ?? row?.cacheRead ?? 0)
+    + Number(row?.cachedInputTokens ?? row?.cachedInput ?? 0);
   const tokens = {
     input: row?.inputTokens ?? row?.input,
     output: row?.outputTokens ?? row?.output,
-    cacheRead: row?.cacheReadTokens ?? row?.cacheRead,
+    cacheRead,
     cacheWrite: row?.cacheCreationTokens ?? row?.cacheWrite,
     reasoning: row?.reasoningOutputTokens ?? row?.reasoning
   };

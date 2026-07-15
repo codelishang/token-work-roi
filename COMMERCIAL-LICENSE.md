@@ -13,5 +13,5 @@ commercial arrangements that are not compatible with AGPL-3.0-only.
 Unless a separate written commercial license has been granted, all use,
 modification, distribution, and network deployment is governed by AGPL-3.0-only.
 
-To request commercial licensing, contact the project owner through the repository
-issue tracker or the contact channel published with the project.
+To request commercial licensing, contact `coderlishang@gmail.com`. Technical
+issues should be reported through the repository issue tracker.

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import {
   batchUpsertSessionAnnotations,
@@ -66,15 +67,48 @@ test('v2 schema migration is repeatable', () => withDb((db, dbPath) => {
     `).all().map(row => row.name);
     assert.deepEqual(tables, ['project_alias_rules', 'session_outputs']);
     const annotationColumns = reopened.prepare('PRAGMA table_info(session_annotations)').all().map(row => row.name);
+    const sessionColumns = reopened.prepare('PRAGMA table_info(session_usage)').all().map(row => row.name);
     const outputColumns = reopened.prepare('PRAGMA table_info(session_outputs)').all().map(row => row.name);
     assert.equal(annotationColumns.includes('work_purpose'), true);
     assert.equal(annotationColumns.includes('work_stage'), true);
     assert.equal(annotationColumns.includes('value_level'), true);
+    assert.equal(sessionColumns.includes('model'), true);
     assert.equal(outputColumns.includes('output_type'), true);
   } finally {
     reopened.close();
   }
 }));
+
+test('existing session_usage tables gain the model column without losing rows', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'token-work-db-migration-'));
+  const dbPath = join(dir, 'usage.sqlite');
+  const legacy = new DatabaseSync(dbPath);
+  legacy.exec(`
+    CREATE TABLE session_usage (
+      device TEXT NOT NULL,
+      source TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (device, source, session_id)
+    );
+    INSERT INTO session_usage(device, source, session_id, total_tokens)
+    VALUES ('legacy', 'Codex CLI', 'legacy-session', 42);
+  `);
+  legacy.close();
+
+  const migrated = openDb(dbPath);
+  try {
+    const columns = migrated.prepare('PRAGMA table_info(session_usage)').all().map(row => row.name);
+    assert.equal(columns.includes('model'), true);
+    const row = migrated.prepare('SELECT session_id AS sessionId, model, total_tokens AS totalTokens FROM session_usage').get();
+    assert.equal(row.sessionId, 'legacy-session');
+    assert.equal(row.model, '');
+    assert.equal(row.totalTokens, 42);
+  } finally {
+    migrated.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('project alias rules match by prefix and can be disabled', () => withDb((db) => {
   const rule = upsertProjectAliasRule(db, {

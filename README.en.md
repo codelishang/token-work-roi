@@ -1,52 +1,68 @@
-# Token Work ROI
+<p align="center">
+  <img src="public/yuanheng-logo.svg" alt="Yuanheng Token Work ROI" width="420" />
+</p>
 
-**English** | [中文](README.md)
+<h1 align="center">Token Work ROI</h1>
 
-Yuanheng is the Chinese short name. **Token Work ROI** is the English product identifier, and `token-work` is the npm command. It is a local review tool for AI coding usage, focused on three questions:
+<p align="center">
+  <strong>Put AI coding usage, cost, and output on the same scale</strong><br>
+  A local token usage and ROI review tool
+</p>
 
-1. How many tokens did I use recently, and what did they roughly cost?
-2. Which tools, models, and projects generated that usage?
-3. Did the usage lead to tasks, outputs, and better model choices next time?
+<p align="center">
+  <a href="https://www.npmjs.com/package/token-work"><img src="https://img.shields.io/npm/v/token-work?label=npm" alt="npm version" /></a>
+  <img src="https://img.shields.io/badge/Node.js-%3E%3D24-339933" alt="Node.js 24 or newer" />
+  <img src="https://img.shields.io/badge/license-AGPL--3.0--only-1f6feb" alt="AGPL-3.0-only" />
+</p>
 
-It is not a chat tool and not a provider billing system. Yuanheng reads structured usage records only. It does not store prompts, responses, full conversations, diffs, command bodies, or full local paths.
+<p align="center">
+  <a href="README.md">简体中文</a> · <strong>English</strong> ·
+  <a href="docs/first-run.md">First Run</a>
+</p>
 
-The current version is **v2.0.0**. v2 moves the source entrypoints to TypeScript. The published-package command stays the same: use `npx token-work`.
+---
 
-## Who It Is For
+## What It Does
 
-- Often code with Claude Code, Codex CLI, Cursor, Gemini CLI, or similar tools.
-- Want to know which projects and models drive most of your AI coding cost.
-- Want a weekly review report for AI-assisted work.
-- Want local budget warnings before the provider bill surprises you.
+Yuanheng is the Chinese name of Token Work ROI. It reviews structured usage records produced by local AI coding tools and answers three practical questions:
 
-It is not for:
+1. How many tokens did I use, and what is the estimated cost at official public rates?
+2. Which tools, models, and projects account for that usage?
+3. What work did the usage produce, and should I change model choices next time?
 
-- Reading full chat history.
-- Team accounts, cloud sync, or multi-user permissions.
-- Hosting the Dashboard as a public web application.
-- Replacing the official bill from a model provider.
+Data stays in a local SQLite database. Token Work ROI does not store prompts, responses, full conversations, diffs, or command bodies. Some collectors keep a workspace or project path locally for attribution; paths are not uploaded and should be reviewed before sharing screenshots or exports. The software is not a replacement for provider billing.
+
+## Features
+
+| Feature | Description |
+|---|---|
+| Dashboard | Review tokens and official-price cost by time, source, model, and project |
+| Trust | Separate event-level records, aggregates, detected-only sources, and sources without token fields |
+| Review | Add project, task, stage, value, and output labels to sessions; export Markdown reports |
+| Live | Track 24-hour burn rate, active sessions, source distribution, and budget warnings |
+| Import | Dry-run and import ccusage JSON or other compatible structured JSON |
+| Budgets | Create local warnings by source, model group, or fixed time window |
+| Statusline | Print a compact usage summary for shells, tmux, or Claude Code |
 
 ## Quick Start
 
-Requires Node.js 24 or newer.
+Requires Node.js 24.0.0 or newer.
 
 ```bash
 npx token-work
 ```
 
-On startup it:
+The default entrypoint first checks local structured sources in read-only mode. When Claude Code or Codex CLI event records pass the trust gate, Token Work ROI backs up and updates the local SQLite database, then opens the browser UI.
 
-1. Checks default local sources for structured usage records in read-only mode.
-2. Writes Claude/Codex event-level usage into a local SQLite database only when the trust gate passes.
-3. Opens the browser UI.
-
-Demo data only:
+For a first look without writing real usage:
 
 ```bash
-npx token-work demo
+npx token-work demo           # Synthetic demo data
+npx token-work --dry-run-only # Check sources without writing SQLite
+npx token-work --no-collect   # Open the existing database only
 ```
 
-From a source checkout, do not use `npx token-work` as the local entry. `npx` resolves the npm package; run the local file instead:
+From a source checkout, run the local entrypoint instead of resolving the npm package with `npx`:
 
 ```bash
 git clone https://github.com/codelishang/token-work-roi.git
@@ -55,96 +71,49 @@ npm install
 node src/cli.ts
 ```
 
-## First Pages
+For a first review, open **Trust -> Dashboard -> Review**.
 
-| Page | What it is for |
+## Screenshots
+
+Screenshots use synthetic or sanitized data and contain no real local logs.
+
+![Token Work ROI dashboard](docs/assets/token-work-dashboard.png)
+
+![Token Work ROI trust page](docs/assets/token-work-trust.png)
+
+![Token Work ROI review page](docs/assets/token-work-review.png)
+
+![Token Work ROI live page](docs/assets/token-work-live-pulse.png)
+
+## Data Sources
+
+| Type | Sources |
 |---|---|
-| Dashboard | Total usage, cost, sources, models, projects, and details |
-| Trust | Whether the current data is reliable, detected-only, or event-level |
-| Review | Add project/task/stage/output labels and export a Markdown review |
-| Live | Recent 24-hour token pressure, burn rate, budget state, and suggestions |
-| Import / Budget modal | Opened from Dashboard; imports structured JSON and creates budget windows |
+| Stable collectors | Claude Code, Codex CLI, Gemini CLI, OpenCode, OpenClaw, Hermes Agent |
+| Experimental collectors | Cursor, GitHub Copilot CLI, Qwen Code, Kimi, Goose |
+| External import | ccusage JSON, ccusage CLI, and compatible structured JSON |
 
-On the first run, open Trust, then Dashboard, then Review.
+Records are written only when explicit token fields exist. Token Work ROI does not guess usage from text length and does not treat a detected directory as successful collection. See the [collector support matrix](docs/collector-support-matrix.md) for exact status.
 
-## Common Commands
+## Import From Another Computer
 
-```bash
-npx token-work
-npx token-work demo
-npx token-work --no-collect
-npx token-work --dry-run-only
-npx token-work coverage --sources=claude,codex,cursor --json
-npx token-work collect --dry-run --sources=claude,codex,cursor --json
-npx token-work collect --apply --yes --sources=claude,codex
-npx token-work import-usage --format=ccusage-cli --report=session --dry-run --yes
-npx token-work statusline --format=text
-npx token-work privacy-check
-```
-
-Command notes:
-
-- `demo`: opens synthetic demo data only.
-- `--no-collect`: opens the existing database without scanning local logs.
-- `--dry-run-only`: checks what would happen without writing usage.
-- `coverage`: shows which sources have reliable token fields.
-- `collect --apply`: writes trusted source data after confirmation and creates a database backup first.
-- `privacy-check`: checks for accidental local databases, log paths, env files, or private exports before publishing.
-
-## Supported Sources
-
-| Source | Status | Detectable | Collectable | Default check | Default write |
-|---|---|---:|---:|---:|---:|
-| Claude Code | stable | Yes | Yes | Yes | Yes |
-| Codex CLI | stable | Yes | Yes | Yes | Yes |
-| Cursor | experimental | Yes | Token fields only | Yes | No |
-| Gemini CLI | stable | Yes | Yes | No | No |
-| OpenCode | stable | Yes | Yes | No | No |
-| OpenClaw | stable | Yes | Yes | No | No |
-| Hermes Agent | stable | Yes | Yes | No | No |
-| GitHub Copilot CLI | experimental | Yes | Token fields only | No | No |
-| Qwen Code | experimental | Yes | Token fields only | No | No |
-| Kimi | experimental | Yes | Token fields only | No | No |
-| Goose | experimental | Yes | Token fields only | No | No |
-
-Yuanheng writes usage only when the local records contain explicit token fields. It does not estimate tokens from message length and does not treat “directory detected” as “usage collected”.
-
-## Structured JSON Import
-
-Yuanheng can import structured JSON from external tools, including ccusage.
+Dry-run the file first:
 
 ```bash
 npx token-work import-usage --format=ccusage-json --file ccusage.json --dry-run
 ```
 
-After the dry-run looks correct:
+After checking the source, date, and token totals, apply it:
 
 ```bash
 npx token-work import-usage --format=ccusage-json --file ccusage.json --apply --yes
 ```
 
-Yuanheng can also invoke the ccusage CLI explicitly:
+Imported cost fields are ignored. Token Work ROI recalculates cost from its official pricing table. Data containing conversation text, prompts, or responses is rejected.
 
-```bash
-npx token-work import-usage --format=ccusage-cli --report=session --dry-run --yes
-```
+## Desktop Window
 
-Imported ccusage cost fields are ignored. Yuanheng recalculates cost from official public prices. Data containing conversation text, prompts, responses, or similar content is rejected.
-
-## Budget Warnings
-
-Budget windows can cover:
-
-- Token budget for the last 60 minutes.
-- Daily budget starting from a fixed time.
-- Budget for a single source or model group.
-- Warning at 75%, hard threshold after that.
-
-These budgets are your own guardrails. They are not provider subscription quotas and not provider bills.
-
-## Desktop Window (source checkout)
-
-The desktop window is a source-checkout entry. It is not a signed installer and not a one-command npm desktop feature:
+The desktop window is an optional source-checkout entrypoint, not a signed installer:
 
 ```bash
 npm install
@@ -152,57 +121,38 @@ npm run desktop:install
 npm run desktop
 ```
 
-The desktop window only opens the Live page from the local Yuanheng service. It does not implement a separate collector and does not enable startup or scheduled collection by default.
-
-Use the desktop app for:
-
-- Keeping a small live window open.
-- Opening Live, Dashboard, Review, and Trust from the tray.
-- Checking burn rate, budget state, and current suggestions while working.
-
-Use the browser for review, imports, and report export. See [desktop/README.md](https://github.com/codelishang/token-work-roi/blob/main/desktop/README.md) and [docs/desktop-pulse.md](https://github.com/codelishang/token-work-roi/blob/main/docs/desktop-pulse.md).
-
-## Screenshots
-
-These screenshots use demo or sanitized synthetic data. They do not contain real local logs.
-
-![Token Work ROI dashboard](https://raw.githubusercontent.com/codelishang/token-work-roi/main/docs/assets/token-work-dashboard.png)
-
-![Token Work ROI local trust](https://raw.githubusercontent.com/codelishang/token-work-roi/main/docs/assets/token-work-trust.png)
-
-![Token Work ROI review](https://raw.githubusercontent.com/codelishang/token-work-roi/main/docs/assets/token-work-review.png)
-
-![Token Work ROI live pulse](https://raw.githubusercontent.com/codelishang/token-work-roi/main/docs/assets/token-work-live-pulse.png)
+It reuses the same local service and is intended for keeping the Live page open. Use the browser for imports, labels, and report export. See [Desktop](desktop/README.md).
 
 ## Pricing And Exchange Rates
 
-Yuanheng shows “official public price conversion”, not a provider invoice.
+- Model cost uses official public token rates and is not a provider invoice.
+- CNY values use the USD/CNY rate stored in the pricing cache and are for reference only.
+- A failed pricing or exchange-rate refresh keeps the last successful cache.
+- Models without a verified official rate remain unpriced instead of being shown as free.
 
-- USD prices are calculated as USD per 1M tokens.
-- The software preserves the official source currency and displays a CNY reference value using the USD/CNY rate captured during the weekly pricing refresh.
-- CNY estimates in the UI prefer the exchange rate stored in the local pricing cache. When the pricing cache refresh succeeds, the exchange rate is updated with it.
-- Models without verified official prices stay unpriced and are not treated as zero-cost.
-
-Refresh model pricing manually:
+Maintainers can refresh the cache manually:
 
 ```bash
 npm run pricing:update
 ```
 
-Repository maintenance workflows try to update the built-in pricing table every Monday at 00:01 Asia/Shanghai. Local users can also refresh the pricing cache manually. If refresh fails, the existing cache and built-in table stay unchanged.
+The repository workflow attempts a pricing and exchange-rate refresh every Monday at 00:01 Asia/Shanghai.
 
-## Privacy Boundary
+## Privacy
 
-Yuanheng does not store:
+Token Work ROI has no cloud sync or telemetry and does not upload usage by default. Stored data is limited to structured fields needed for review, including time, source, model, token counts, session, device, workspace or project path, project alias, task labels, budgets, and user-entered output links.
 
-- prompts
-- responses
-- full transcripts
-- full local paths
-- command bodies
-- diff content
+Before publishing or sharing a checkout, run:
 
-It may store structured fields needed for review, such as time, source, model, token counts, session, source device, project alias, task type, stage, output state, budget settings, and user-entered output links or link notes. Derived fields such as file type or path hash may also be stored locally; path hashes distinguish sources without storing full path text.
+```bash
+npm run privacy:check
+```
+
+See [PRIVACY.md](PRIVACY.md) for the local API and remote ingest boundaries.
+
+## Tech Stack
+
+Node.js 24 · TypeScript · React 18 · Vite · ECharts · SQLite · Electron
 
 ## Development
 
@@ -214,14 +164,21 @@ npm run build
 npm run privacy:check
 ```
 
-From a source checkout, use `node src/cli.ts`. Published-package users should continue to use `npx token-work`; command arguments remain stable. The old direct `.mjs` source paths are no longer v2 entrypoints.
+Before release, also run `npm run smoke:npx`, `npm run smoke:browser`, and `npm run desktop:smoke`. The complete process is in the [release checklist](docs/public-launch-checklist.md).
 
-## Name And Logo
+## Documentation
 
-The Chinese name is “元衡” and the English name is “Token Work ROI”. `元` points to tokens, cost, and original records. `衡` means measuring, calibrating, and weighing tradeoffs.
+| Document | Contents |
+|---|---|
+| [First Run](docs/first-run.md) | From startup to the first review |
+| [Collector Support Matrix](docs/collector-support-matrix.md) | Detection, collection, and default-write status |
+| [Local Collectors](docs/local-collectors.md) | Collection commands, trust gates, and environment variables |
+| [Statusline](docs/statusline.md) | Shell, tmux, and Claude Code setup |
+| [Brand](docs/brand.md) | Name, logo meaning, and usage rules |
+| [Privacy](PRIVACY.md) | Local data, API, and remote ingest boundaries |
 
-Logo rationale and usage notes are in [docs/brand.md](https://github.com/codelishang/token-work-roi/blob/main/docs/brand.md).
+## Name And License
 
-## License
+The Chinese name is Yuanheng: `元` refers to tokens, cost, and original records; `衡` means measurement, calibration, and tradeoffs. The logo was drawn for this project. See [Brand](docs/brand.md) for the design notes.
 
-AGPL-3.0-only license. Copyright © 2026 coderlishang. All rights reserved.
+AGPL-3.0-only license. Copyright © 2026 coderlishang. All rights reserved. See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) for commercial dual licensing.
