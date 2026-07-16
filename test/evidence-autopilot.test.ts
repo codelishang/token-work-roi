@@ -47,7 +47,7 @@ test('evidence autopilot turns alias rules and git commit URLs into applicable e
         remoteHost: 'github.com',
         commitHash: 'abcdef1234567890',
         commitAt: '2026-06-18T10:00:00.000Z',
-        commitUrl: 'https://github.com/codelishang/token-work-roi/commit/abcdef1234567890',
+        commitUrl: 'https://github.com/coderlishang/token-work-roi/commit/abcdef1234567890',
         reason: 'matched commit'
       }
     ]])
@@ -128,7 +128,7 @@ test('apply evidence suggestions writes selected auto annotations and output lin
           remoteHost: 'github.com',
           commitHash: 'abcdef1234567890',
           commitAt: '2026-06-18T10:00:00.000Z',
-          commitUrl: 'https://github.com/codelishang/token-work-roi/commit/abcdef1234567890',
+          commitUrl: 'https://github.com/coderlishang/token-work-roi/commit/abcdef1234567890',
           reason: 'matched commit'
         }
       ]])

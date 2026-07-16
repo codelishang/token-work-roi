@@ -111,7 +111,7 @@ function seedDb(dbPath) {
       device: 'devbox',
       source: 'Codex CLI',
       sessionId: 'local:codex:D:\\HighROIProjects\\token-work:gpt-5.5',
-      outputUrl: 'https://github.com/codelishang/token-work-roi/commit/abcdef1234567890',
+      outputUrl: 'https://github.com/coderlishang/token-work-roi/commit/abcdef1234567890',
       outputLabel: 'token-work abcdef12',
       outputType: 'commit'
     });
@@ -140,4 +140,3 @@ async function assertRejectsWithStatus(responsePromise, expectedStatus) {
   const response = await responsePromise;
   assert.equal(response.status, expectedStatus, await response.text());
 }
-

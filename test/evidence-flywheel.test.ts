@@ -20,7 +20,7 @@ test('evidence flywheel turns structured session evidence into review progress',
         valueLevel: '高',
         annotationSource: 'auto',
         annotationConfidence: 90,
-        outputUrl: 'https://github.com/codelishang/token-work-roi/commit/abc123',
+        outputUrl: 'https://github.com/coderlishang/token-work-roi/commit/abc123',
         outputType: 'commit'
       }
     ],

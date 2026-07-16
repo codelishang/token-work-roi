@@ -65,7 +65,7 @@ npx token-work --no-collect   # Open the existing database only
 From a source checkout, run the local entrypoint instead of resolving the npm package with `npx`:
 
 ```bash
-git clone https://github.com/codelishang/token-work-roi.git
+git clone https://github.com/coderlishang/token-work-roi.git
 cd token-work-roi
 npm install
 node src/cli.ts
