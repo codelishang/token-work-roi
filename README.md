@@ -65,7 +65,7 @@ npx token-work --no-collect   # 只打开已有数据库
 源码目录使用本地入口，不要用 `npx token-work` 代替当前源码：
 
 ```bash
-git clone https://github.com/codelishang/token-work-roi.git
+git clone https://github.com/coderlishang/token-work-roi.git
 cd token-work-roi
 npm install
 node src/cli.ts

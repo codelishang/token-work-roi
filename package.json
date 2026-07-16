@@ -6,12 +6,12 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/codelishang/token-work-roi.git"
+    "url": "git+https://github.com/coderlishang/token-work-roi.git"
   },
   "bugs": {
-    "url": "https://github.com/codelishang/token-work-roi/issues"
+    "url": "https://github.com/coderlishang/token-work-roi/issues"
   },
-  "homepage": "https://github.com/codelishang/token-work-roi#readme",
+  "homepage": "https://github.com/coderlishang/token-work-roi#readme",
   "bin": {
     "token-work": "bin/token-work.mjs"
   },
