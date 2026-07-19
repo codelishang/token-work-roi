@@ -11,6 +11,7 @@ npx token-work
 ```
 
 默认入口先只读检查本机结构化来源。Claude Code 或 Codex CLI 的事件级记录通过可信门槛后，元衡会备份并更新本地 SQLite，然后打开浏览器。
+持续运行时，定时采集只在用量发生变化时备份，最多每小时一个，并保留最近 24 个定时备份；人工采集、导入和手工备份不受此限制。
 
 只想熟悉界面：
 
@@ -60,16 +61,16 @@ npx token-work --no-collect
 另一台电脑或外部工具已经导出 ccusage JSON 时，先预检：
 
 ```bash
-npx token-work import-usage --format=ccusage-json --file ccusage.json --dry-run
+npx token-work import-usage --format=ccusage-json --file ccusage.json --device other-computer --dry-run
 ```
 
 确认日期、来源和 token 数量后写入：
 
 ```bash
-npx token-work import-usage --format=ccusage-json --file ccusage.json --apply --yes
+npx token-work import-usage --format=ccusage-json --file ccusage.json --device other-computer --apply --yes
 ```
 
-导入使用 `device + source + session_id` 去重。外部成本字段会被忽略，费用由元衡重新计算。
+`--device` 用于区分来源电脑，同一台电脑重复导入时应使用相同名称。导入使用 `device + source + session_id` 去重。外部成本字段会被忽略，费用由元衡重新计算。
 
 ## 5. 设置预算
 

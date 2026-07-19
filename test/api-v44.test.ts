@@ -30,8 +30,25 @@ test('ccusage import API dry-runs before explicit apply', async () => {
       }]
     };
 
+    const missingDevice = await fetch(`http://127.0.0.1:${port}/api/import/ccusage-json`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload, apply: false })
+    });
+    assert.equal(missingDevice.status, 400);
+    assert.match(await missingDevice.text(), /来源设备不能为空/);
+
+    const invalidApply = await fetch(`http://127.0.0.1:${port}/api/import/ccusage-json`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload, device: 'workstation-a', apply: 'false' })
+    });
+    assert.equal(invalidApply.status, 400);
+    assert.match(await invalidApply.text(), /apply 必须是布尔值/);
+
     const dryRun = await postJson(port, '/api/import/ccusage-json', {
       payload,
+      device: 'workstation-a',
       apply: false
     });
     assert.equal(dryRun.mode, 'dry-run');
@@ -48,6 +65,7 @@ test('ccusage import API dry-runs before explicit apply', async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        device: 'workstation-a',
         payload: {
           daily: [{ date: '2026-06-17', model: 'gpt-5.3-codex', inputTokens: 1 }],
           prompt: 'do not import'
@@ -59,6 +77,7 @@ test('ccusage import API dry-runs before explicit apply', async () => {
 
     const applied = await postJson(port, '/api/import/ccusage-json', {
       payload,
+      device: 'workstation-a',
       apply: true
     });
     assert.equal(applied.mode, 'apply');
@@ -71,6 +90,25 @@ test('ccusage import API dry-runs before explicit apply', async () => {
     const after = await getJson(port, '/api/data');
     assert.equal(after.daily.length, 1);
     assert.equal(after.sessions.length, 1);
+
+    await postJson(port, '/api/import/ccusage-json', {
+      payload,
+      device: 'workstation-a',
+      apply: true
+    });
+    const secondDevice = await postJson(port, '/api/import/ccusage-json', {
+      payload,
+      device: 'workstation-b',
+      apply: true
+    });
+    assert.equal(secondDevice.applied.daily, 1);
+    assert.equal(secondDevice.applied.sessions, 1);
+    assert.equal(secondDevice.applied.tokenEvents, 1);
+
+    const combined = await getJson(port, '/api/data');
+    assert.equal(combined.daily.length, 2);
+    assert.equal(combined.sessions.length, 2);
+    assert.equal(combined.tokenEvents.length, 2);
   } finally {
     await stopTestServer(server.child);
     await removeTempDir(dir);

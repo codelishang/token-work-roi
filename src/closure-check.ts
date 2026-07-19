@@ -18,6 +18,25 @@ import { attachOfficialPricing } from './pricing.ts';
 import { providerFromSource } from './provider.ts';
 import { buildReviewClosureProgress } from './client/review/closure-progress.ts';
 import { buildRoiAdvisor } from './client/review/roi-advisor.ts';
+import type { UsageRow } from './client/shared/types.ts';
+
+interface ClosureAuditOptions {
+  targetAttributedSessions?: number;
+  targetOutputLinks?: number;
+  targetNonLabelAdvice?: number;
+  topGapLimit?: number;
+  dbPath?: string;
+}
+
+interface ClosureCheckArgs extends ClosureAuditOptions {
+  json: boolean;
+  failOnIncomplete: boolean;
+  worklist: boolean;
+  templateJson: boolean;
+  outPath: string | null;
+  worklistLimit: number;
+  help?: boolean;
+}
 
 export function openReadOnlyDb(dbPath = defaultDbPath) {
   const resolved = resolve(dbPath);
@@ -30,7 +49,7 @@ export function openReadOnlyDb(dbPath = defaultDbPath) {
   });
 }
 
-export function buildClosureAuditFromDb(db, options = {}) {
+export function buildClosureAuditFromDb(db, options: ClosureAuditOptions = {}) {
   assertRequiredTables(db);
   const daily = loadDailyRows(db);
   const sessions = loadSessionRows(db);
@@ -223,7 +242,7 @@ export function formatClosureImportTemplate(audit, { limit = 10 } = {}) {
 }
 
 export function parseArgs(argv = process.argv.slice(2)) {
-  const options = {
+  const options: ClosureCheckArgs = {
     dbPath: process.env.DB_PATH || defaultDbPath,
     json: false,
     failOnIncomplete: false,
@@ -441,7 +460,7 @@ function sanitizeProgress(progress) {
   };
 }
 
-function summarizeSession(session = {}) {
+function summarizeSession(session: UsageRow = {}) {
   return {
     device: session.device || '',
     source: session.source || '',

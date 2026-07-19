@@ -14,6 +14,20 @@ import {
 
 export const EVIDENCE_AUTOPILOT_VERSION = 'v2.0.0';
 
+type InputRecord = Record<string, unknown>;
+
+interface ApplyEvidenceResult {
+  requested: number;
+  selected: number;
+  appliedAnnotations: number;
+  appliedOutputs: number;
+  skippedNotFound: number;
+  skippedNotApplicable: number;
+  skippedProtected?: number;
+  skippedLowConfidence?: number;
+  runId?: string;
+}
+
 export function buildEvidenceAutopilotPlan({
   sessions = [],
   projectAliasRules = [],
@@ -77,7 +91,7 @@ export function buildEvidenceAutopilotPlan({
   };
 }
 
-export function applyEvidenceSuggestions(db, plan, payload = {}) {
+export function applyEvidenceSuggestions(db, plan, payload: InputRecord = {}) {
   const requested = suggestionIdSet(payload.suggestionIds || payload.suggestions);
   const selected = plan.suggestions.filter(item => requested.has(item.suggestionId));
   const annotationRows = selected
@@ -86,7 +100,7 @@ export function applyEvidenceSuggestions(db, plan, payload = {}) {
   const outputRows = selected
     .filter(item => item.kind === 'output' && item.canApply && item._output)
     .map(item => item._output);
-  const result = {
+  const result: ApplyEvidenceResult = {
     requested: requested.size,
     selected: selected.length,
     appliedAnnotations: 0,
@@ -98,7 +112,7 @@ export function applyEvidenceSuggestions(db, plan, payload = {}) {
   if (annotationRows.length) {
     const applied = applyAutoSessionAnnotations(db, annotationRows, {
       threshold: plan.threshold,
-      runId: payload.runId || undefined
+      runId: typeof payload.runId === 'string' ? payload.runId : undefined
     });
     result.appliedAnnotations = applied.applied;
     result.skippedProtected = applied.skippedProtected;
@@ -358,7 +372,7 @@ function suggestionIdSet(rows) {
   return new Set(list.map(row => typeof row === 'string' ? row : row?.suggestionId).filter(Boolean));
 }
 
-function stableId(kind, row = {}, extra = '') {
+function stableId(kind, row: InputRecord = {}, extra = '') {
   return `${kind}:${createHash('sha256')
     .update([kind, row.device, row.source, row.sessionId, extra].join('::'))
     .digest('hex')
@@ -409,7 +423,7 @@ function pathTail(value) {
   return tail.slice(0, 120);
 }
 
-function sessionKey(row = {}) {
+function sessionKey(row: InputRecord = {}) {
   return `${row.device || ''}::${row.source || ''}::${row.sessionId || ''}`;
 }
 

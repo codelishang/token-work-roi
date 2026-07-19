@@ -2,6 +2,18 @@ const STORAGE_KEY = 'token-work.annotation-presets.v1';
 const MAX_RECENT_PROJECTS = 8;
 const TEMPLATE_FIELDS = ['projectAlias', 'taskType', 'outputStatus', 'workPurpose', 'workStage', 'valueLevel'];
 
+type AnnotationTemplate = Partial<Record<(typeof TEMPLATE_FIELDS)[number], string>>;
+
+interface AnnotationPresetState {
+  recentProjects: string[];
+  lastTemplate: AnnotationTemplate | null;
+}
+
+interface StorageLike {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
 export const EMPTY_ANNOTATION_PRESETS = {
   recentProjects: [],
   lastTemplate: null
@@ -58,7 +70,7 @@ export const QUICK_ANNOTATION_TEMPLATES = [
   }
 ];
 
-export function readAnnotationPresets(storage = globalThis.localStorage) {
+export function readAnnotationPresets(storage: StorageLike = globalThis.localStorage) {
   try {
     const raw = storage?.getItem(STORAGE_KEY);
     if (!raw) return { ...EMPTY_ANNOTATION_PRESETS };
@@ -68,7 +80,7 @@ export function readAnnotationPresets(storage = globalThis.localStorage) {
   }
 }
 
-export function writeAnnotationPresets(state, storage = globalThis.localStorage) {
+export function writeAnnotationPresets(state, storage: StorageLike = globalThis.localStorage) {
   try {
     storage?.setItem(STORAGE_KEY, JSON.stringify(normalizePresetState(state)));
   } catch {
@@ -76,7 +88,7 @@ export function writeAnnotationPresets(state, storage = globalThis.localStorage)
   }
 }
 
-export function rememberAnnotationPreset(state, values = {}) {
+export function rememberAnnotationPreset(state, values: AnnotationTemplate = {}) {
   const current = normalizePresetState(state);
   const template = normalizeTemplate(values);
   const projectAlias = template.projectAlias;
@@ -100,7 +112,7 @@ export function applyAnnotationTemplate(form, template, { includeProjectAlias = 
   return next;
 }
 
-function normalizePresetState(value = {}) {
+function normalizePresetState(value: Partial<AnnotationPresetState> = {}) {
   const recentProjects = Array.isArray(value.recentProjects)
     ? uniqueStrings(value.recentProjects).slice(0, MAX_RECENT_PROJECTS)
     : [];
@@ -111,8 +123,8 @@ function normalizePresetState(value = {}) {
   };
 }
 
-function normalizeTemplate(values = {}) {
-  const template = {};
+function normalizeTemplate(values: AnnotationTemplate = {}) {
+  const template: AnnotationTemplate = {};
   for (const field of TEMPLATE_FIELDS) {
     const value = normalizeText(values[field]);
     if (value) template[field] = value;
@@ -120,7 +132,7 @@ function normalizeTemplate(values = {}) {
   return template;
 }
 
-function hasTemplateValues(template = {}) {
+function hasTemplateValues(template: AnnotationTemplate = {}) {
   return TEMPLATE_FIELDS.some(field => Boolean(template[field]));
 }
 

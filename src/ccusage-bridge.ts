@@ -4,12 +4,24 @@ import { parseCcusageJsonText, planCcusageImport } from './ccusage-import.ts';
 
 export const CCUSAGE_CLI_REPORTS = ['daily', 'weekly', 'monthly', 'session', 'blocks'];
 
+interface CcusageOptions {
+  report?: string;
+  ccusageBin?: string | null;
+  device?: string;
+  now?: Date;
+}
+
+interface CommandResult {
+  stdout: string;
+  stderr: string;
+}
+
 export async function runCcusageCliImportPlan({
   report = 'session',
   ccusageBin = null,
   device,
   now = new Date()
-} = {}) {
+}: CcusageOptions = {}) {
   const invocation = ccusageInvocation({ report, ccusageBin });
   const { stdout } = await runCommand(invocation);
   const payload = parseCcusageJsonText(stdout);
@@ -44,7 +56,7 @@ export function ccusageInvocation({ report = 'session', ccusageBin = null } = {}
 }
 
 function runCommand(invocation) {
-  return new Promise((resolve, reject) => {
+  return new Promise<CommandResult>((resolve, reject) => {
     const shell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(invocation.command);
     const child = spawn(invocation.command, invocation.args, {
       cwd: process.cwd(),

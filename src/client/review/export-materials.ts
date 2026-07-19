@@ -1,6 +1,33 @@
 import { U } from '../shared/utils.ts';
+import type { PeriodRange, UsageRow } from '../shared/types.ts';
 
 const PRODUCTIVE_STATUSES = new Set(['已完成', '已发布']);
+
+interface EvidenceFlywheelSummary {
+  completedSteps?: number;
+  totalSteps?: number;
+  nextAction?: string;
+}
+
+interface SavingsSimulationSummary {
+  suggestions?: unknown[];
+  recommendations?: unknown[];
+  items?: unknown[];
+}
+
+interface ModelStrategySummary {
+  coverage?: {
+    annotatedTokenShare?: number;
+    sampleShare?: number;
+    strategySampleShare?: number;
+  };
+}
+
+interface EvidenceAutopilotSummary {
+  plan?: {
+    queue?: Array<Record<string, unknown>>;
+  };
+}
 
 export function buildProfessionalEvidencePack({
   period = {},
@@ -11,6 +38,15 @@ export function buildProfessionalEvidencePack({
   evidenceFlywheel = null,
   roiEvidence = null,
   evidenceAutopilotState = null
+}: {
+  period?: PeriodRange;
+  sessions?: UsageRow[];
+  totals?: UsageRow;
+  localTrust?: unknown;
+  coverageBridge?: unknown;
+  evidenceFlywheel?: EvidenceFlywheelSummary | null;
+  roiEvidence?: unknown;
+  evidenceAutopilotState?: unknown;
 } = {}) {
   const trust = trustSummary(localTrust);
   const coverage = coverageSummary(coverageBridge);
@@ -111,12 +147,24 @@ export function buildTechnicalBlogDraft({
   evidenceFlywheel = null,
   savingsSimulation = null,
   modelStrategy = null
+}: {
+  period?: PeriodRange;
+  sessions?: UsageRow[];
+  totals?: UsageRow;
+  localTrust?: unknown;
+  coverageBridge?: unknown;
+  evidenceFlywheel?: EvidenceFlywheelSummary | null;
+  savingsSimulation?: SavingsSimulationSummary | null;
+  modelStrategy?: ModelStrategySummary | null;
 } = {}) {
   const trust = trustSummary(localTrust);
   const coverage = coverageSummary(coverageBridge);
   const topProjects = aggregateProjects(sessions).slice(0, 5);
-  const savings = savingsSimulation?.recommendations || savingsSimulation?.items || [];
-  const strategyCoverage = modelStrategy?.coverage?.sampleShare ?? modelStrategy?.coverage?.strategySampleShare ?? null;
+  const savings = savingsSimulation?.suggestions || savingsSimulation?.recommendations || savingsSimulation?.items || [];
+  const annotatedTokenShare = modelStrategy?.coverage?.annotatedTokenShare;
+  const strategyCoverage = annotatedTokenShare == null
+    ? modelStrategy?.coverage?.sampleShare ?? modelStrategy?.coverage?.strategySampleShare ?? null
+    : annotatedTokenShare * 100;
 
   return withLegalNotice([
     '# 我为什么做 Token Work ROI：把 AI 编程 token 变成可复盘的工作证据',
@@ -211,6 +259,12 @@ export function buildResumeAndInterviewPack({
   localTrust = null,
   coverageBridge = null,
   evidenceFlywheel = null
+}: {
+  sessions?: UsageRow[];
+  totals?: UsageRow;
+  localTrust?: unknown;
+  coverageBridge?: unknown;
+  evidenceFlywheel?: EvidenceFlywheelSummary | null;
 } = {}) {
   const trust = trustSummary(localTrust);
   const coverage = coverageSummary(coverageBridge);
@@ -325,7 +379,11 @@ function evidenceSummary({ evidenceFlywheel = null, roiEvidence = null, evidence
   };
 }
 
-function nextActions({ sessions = [], evidenceAutopilotState = null, evidenceFlywheel = null } = {}) {
+function nextActions({ sessions = [], evidenceAutopilotState = null, evidenceFlywheel = null }: {
+  sessions?: UsageRow[];
+  evidenceAutopilotState?: EvidenceAutopilotSummary | null;
+  evidenceFlywheel?: EvidenceFlywheelSummary | null;
+} = {}) {
   const queue = (evidenceAutopilotState?.plan?.queue || [])
     .slice()
     .sort((a, b) => Number(b.costUSD || 0) - Number(a.costUSD || 0) || Number(b.totalTokens || 0) - Number(a.totalTokens || 0))
@@ -344,7 +402,7 @@ function nextActions({ sessions = [], evidenceAutopilotState = null, evidenceFly
   return evidenceFlywheel?.nextAction ? [evidenceFlywheel.nextAction] : [];
 }
 
-function isEvidenceGap(session = {}) {
+function isEvidenceGap(session: UsageRow = {}) {
   return (session.taskType || '未分类') === '未分类'
     || (session.outputStatus || '未标注') === '未标注'
     || (session.workPurpose || '未说明') === '未说明'
@@ -352,7 +410,7 @@ function isEvidenceGap(session = {}) {
     || (session.valueLevel || '未评估') === '未评估';
 }
 
-function aggregateProjects(sessions = []) {
+function aggregateProjects(sessions: UsageRow[] = []) {
   const map = new Map();
   for (const session of sessions) {
     const project = projectLabel(session);
@@ -366,7 +424,7 @@ function aggregateProjects(sessions = []) {
   return Array.from(map.values()).sort((a, b) => b.costUSD - a.costUSD || b.totalTokens - a.totalTokens);
 }
 
-function projectLabel(session = {}) {
+function projectLabel(session: UsageRow = {}) {
   return session.projectAlias
     || session.ruleProjectAlias
     || session.projectName

@@ -1,6 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const outRoot = resolve(root, 'dist-runtime');
@@ -13,11 +14,27 @@ const sourceFiles = listSourceFiles(resolve(root, 'src'));
 for (const source of sourceFiles) {
   const target = resolve(outRoot, source.replace(/^src\//, '').replace(/\.ts$/u, '.mjs'));
   mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, toRuntimeModule(readFileSync(resolve(root, source), 'utf8')));
+  writeFileSync(target, toRuntimeModule(readFileSync(resolve(root, source), 'utf8'), source));
 }
 
-function toRuntimeModule(text: string) {
-  return text
+function toRuntimeModule(text: string, fileName: string) {
+  const result = ts.transpileModule(text, {
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022
+    },
+    fileName,
+    reportDiagnostics: true
+  });
+  const errors = result.diagnostics?.filter(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error) || [];
+  if (errors.length) {
+    throw new Error(ts.formatDiagnostics(errors, {
+      getCanonicalFileName: name => name,
+      getCurrentDirectory: () => root,
+      getNewLine: () => '\n'
+    }));
+  }
+  return result.outputText
     .replace(/((?:from\s+|import\s*\(\s*)['"][^'"]+?)\.ts(['"]\s*\)?)/gu, '$1.mjs$2')
     .replace(/(['"])src\/cli\.ts\1/gu, '$1dist-runtime/cli.mjs$1')
     .replace(/(['"])src\/server\.ts\1/gu, '$1dist-runtime/server.mjs$1')

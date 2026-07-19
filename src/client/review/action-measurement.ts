@@ -1,10 +1,12 @@
+import type { PeriodRange, UsageRow } from '../shared/types.ts';
+
 const DEFAULT_PERIOD = { start: '', end: '' };
 
 export function buildAdvisorActionMeasurements({
   actions = [],
   sessions = [],
   period = DEFAULT_PERIOD
-} = {}) {
+}: { actions?: UsageRow[]; sessions?: UsageRow[]; period?: PeriodRange } = {}) {
   const periodSessions = sessions.filter(session => inPeriod(session, period));
   return actions
     .filter(action => ['open', 'done', 'dismissed'].includes(action.status || 'open'))
@@ -39,15 +41,15 @@ function measureAction(action, sessions, period) {
   };
 }
 
-function actionDate(action = {}, period = DEFAULT_PERIOD) {
+function actionDate(action: UsageRow = {}, period: PeriodRange = DEFAULT_PERIOD) {
   return asDate(action.completedAt || action.createdAt || period.start) || new Date(0);
 }
 
-function sessionDate(session = {}) {
+function sessionDate(session: UsageRow = {}) {
   return asDate(session.lastActivity || session.updatedAt || session.lastSeenAt) || new Date(0);
 }
 
-function inPeriod(session = {}, period = DEFAULT_PERIOD) {
+function inPeriod(session: UsageRow = {}, period: PeriodRange = DEFAULT_PERIOD) {
   const date = sessionDate(session);
   const start = asDate(period.start);
   const end = asDate(period.end);
@@ -59,7 +61,7 @@ function inPeriod(session = {}, period = DEFAULT_PERIOD) {
   return true;
 }
 
-function scopeMatcher(action = {}) {
+function scopeMatcher(action: UsageRow = {}) {
   const text = [
     action.category,
     action.title,
@@ -105,7 +107,7 @@ function scopeMatcher(action = {}) {
   return matcher;
 }
 
-function modelTierLabel(session = {}) {
+function modelTierLabel(session: UsageRow = {}) {
   const model = String(session.model || session.pricingModel || '').toLowerCase();
   if (/fable|opus|gpt-5\.6-sol|gpt-5\.5|gemini-2\.5-pro-long-context/.test(model)) return 'heavy';
   if (/gpt-5\.6-terra|grok-4[.-]5|sonnet|codex|pro|kimi-k2[.-][67]/.test(model)) return 'mid';
@@ -113,8 +115,8 @@ function modelTierLabel(session = {}) {
   return 'unknown';
 }
 
-function aggregate(rows = []) {
-  return rows.reduce((acc, row) => {
+function aggregate(rows: UsageRow[] = []) {
+  return rows.reduce<{ sessionCount: number; totalTokens: number; costUSD: number }>((acc, row) => {
     acc.sessionCount += 1;
     acc.totalTokens += Number(row.totalTokens || 0);
     acc.costUSD += Number(row.costUSD || 0);

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
+import type { CdpConnection, CdpResponse, WaitOptions } from './script-types.ts';
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const assetDir = resolve(packageRoot, 'docs/assets');
@@ -128,8 +129,10 @@ async function capturePages({ browser, uiPort, outputName, outputDir, extraShots
   try {
     await waitForJson(`http://127.0.0.1:${debugPort}/json/version`, { timeoutMs: 30000 });
     const targetResponse = await fetch(`http://127.0.0.1:${debugPort}/json/new?${encodeURIComponent('about:blank')}`, { method: 'PUT' });
-    const target = await targetResponse.json();
-    const cdp = await connectCdp(target.webSocketDebuggerUrl);
+    const target = await targetResponse.json() as Record<string, unknown>;
+    const wsUrl = typeof target.webSocketDebuggerUrl === 'string' ? target.webSocketDebuggerUrl : '';
+    if (!wsUrl) throw new Error('Chrome did not return a page WebSocket debugger URL');
+    const cdp = await connectCdp(wsUrl);
     try {
       await cdp.send('Page.enable');
       await cdp.send('Runtime.enable');
@@ -154,8 +157,10 @@ async function capturePages({ browser, uiPort, outputName, outputDir, extraShots
           fromSurface: true,
           captureBeyondViewport: false
         });
+        const imageData = screenshot.result?.data;
+        if (!imageData) throw new Error(`Chrome returned no screenshot data for ${name}`);
         const out = resolve(outputDir, outputName({ name, path, scrollY, publicName }));
-        writeFileSync(out, Buffer.from(screenshot.result.data, 'base64'));
+        writeFileSync(out, Buffer.from(imageData, 'base64'));
         console.log(out);
       }
       if (extraShots) {
@@ -271,17 +276,17 @@ async function waitForVisibleContent(cdp, label) {
   throw new Error(`Page ${label} did not render visible content: ${JSON.stringify(lastState)}`);
 }
 
-function connectCdp(wsUrl) {
-  return new Promise((resolveConnection, rejectConnection) => {
+function connectCdp(wsUrl): Promise<CdpConnection> {
+  return new Promise<CdpConnection>((resolveConnection, rejectConnection) => {
     const ws = new WebSocket(wsUrl);
     let nextId = 1;
-    const pending = new Map();
+    const pending = new Map<number, { resolve: (message: CdpResponse) => void; reject: (error: Error) => void }>();
     ws.addEventListener('open', () => {
       resolveConnection({
         send(method, params = {}) {
           const id = nextId++;
           ws.send(JSON.stringify({ id, method, params }));
-          return new Promise((resolveSend, rejectSend) => {
+          return new Promise<CdpResponse>((resolveSend, rejectSend) => {
             pending.set(id, { resolve: resolveSend, reject: rejectSend });
           });
         },
@@ -291,7 +296,7 @@ function connectCdp(wsUrl) {
       });
     });
     ws.addEventListener('message', event => {
-      const message = JSON.parse(event.data);
+      const message = JSON.parse(String(event.data)) as CdpResponse;
       if (!message.id || !pending.has(message.id)) return;
       const { resolve: resolvePending, reject: rejectPending } = pending.get(message.id);
       pending.delete(message.id);
@@ -333,7 +338,7 @@ function which(command) {
   return result.status === 0 ? result.stdout.trim() : '';
 }
 
-async function waitForJson(url, { timeoutMs = 30000, childState } = {}) {
+async function waitForJson(url, { timeoutMs = 30000, childState }: WaitOptions = {}) {
   const started = Date.now();
   let lastError;
   while (Date.now() - started < timeoutMs) {
@@ -363,7 +368,7 @@ async function freePort(start) {
 }
 
 function canListen(port) {
-  return new Promise(resolvePort => {
+  return new Promise<boolean>(resolvePort => {
     const server = createServer();
     server.once('error', () => resolvePort(false));
     server.once('listening', () => server.close(() => resolvePort(true)));
@@ -372,11 +377,15 @@ function canListen(port) {
 }
 
 function systemAssignedPort() {
-  return new Promise((resolvePort, rejectPort) => {
+  return new Promise<number>((resolvePort, rejectPort) => {
     const server = createServer();
     server.once('error', rejectPort);
     server.once('listening', () => {
       const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close(() => rejectPort(new Error('Server did not return a TCP port')));
+        return;
+      }
       server.close(() => resolvePort(address.port));
     });
     server.listen(0, '127.0.0.1');

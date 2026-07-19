@@ -214,7 +214,7 @@ function parseJsonLine(line, fallback) {
   }
 }
 
-export function normalizeUsageRecord(row, fallback = {}) {
+export function normalizeUsageRecord(row, fallback: Record<string, unknown> = {}) {
   if (!row || typeof row !== 'object') return [];
   if (looksLikeConversation(row)) return [];
 

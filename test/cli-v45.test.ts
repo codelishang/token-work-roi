@@ -1,4 +1,5 @@
 import test from 'node:test';
+import type { ProcessResult } from '../test-support/process.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 
@@ -11,11 +12,12 @@ test('CLI help exposes open and import-usage help', async () => {
   assert.equal(importHelp.code, 0, importHelp.stderr);
   assert.match(importHelp.stdout, /ccusage Import/);
   assert.match(importHelp.stdout, /--dry-run/);
+  assert.match(importHelp.stdout, /--device other-computer/);
   assert.match(importHelp.stdout, /prompt, response, messages/);
 });
 
 function runCli(argv) {
-  return new Promise(resolve => {
+  return new Promise<ProcessResult>(resolve => {
     const child = spawn(process.execPath, ['src/cli.ts', ...argv], {
       cwd: process.cwd(),
       env: process.env,

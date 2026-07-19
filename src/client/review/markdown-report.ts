@@ -6,12 +6,14 @@ import {
   sessionProjectLabel
 } from '../dashboard/attribution.ts';
 import { U } from '../shared/utils.ts';
+import type { PeriodRange, UsageRow } from '../shared/types.ts';
 import { buildRoiEvidence } from './roi-evidence.ts';
 
 const PRODUCTIVE_STATUSES = new Set(['已完成', '已发布']);
+const EMPTY_PERIOD: PeriodRange = {};
 
 export function buildMarkdownReviewReport({
-  period,
+  period = EMPTY_PERIOD,
   daily = [],
   sessions = [],
   workItems = [],
@@ -314,13 +316,13 @@ export function buildModelRows(daily = []) {
     .sort((a, b) => b.totalTokens - a.totalTokens);
 }
 
-function buildOutputRows(sessions = []) {
+function buildOutputRows(sessions: UsageRow[] = []) {
   return sessions
     .filter(session => PRODUCTIVE_STATUSES.has(session.outputStatus) && session.outputUrl)
     .sort((a, b) => (b.totalTokens || 0) - (a.totalTokens || 0));
 }
 
-function buildAttributionGapRows(sessions = []) {
+function buildAttributionGapRows(sessions: UsageRow[] = []) {
   return buildReviewUnattributedSessions(sessions).map(session => ({
     project: sessionProjectLabel(session),
     sessionId: session.sessionId || '',
@@ -332,8 +334,8 @@ function buildAttributionGapRows(sessions = []) {
   }));
 }
 
-function buildAttributionBreakdown(sessions = []) {
-  return sessions.reduce((acc, session) => {
+function buildAttributionBreakdown(sessions: UsageRow[] = []) {
+  return sessions.reduce<{ manual: number; autoHigh: number; autoLow: number; missing: number }>((acc, session) => {
     if (session.annotationSource === 'auto') {
       if (Number(session.annotationConfidence || 0) >= 80) acc.autoHigh += 1;
       else acc.autoLow += 1;
@@ -346,14 +348,14 @@ function buildAttributionBreakdown(sessions = []) {
   }, { manual: 0, autoHigh: 0, autoLow: 0, missing: 0 });
 }
 
-function attributionLabel(session = {}) {
+function attributionLabel(session: UsageRow = {}) {
   if (session.annotationSource === 'auto') return `auto ${Number(session.annotationConfidence || 0)}%`;
   if (session.annotationSource === 'manual') return 'manual';
   if (session.annotationSource === 'imported') return 'imported';
   return 'missing';
 }
 
-function missingAttributionFields(session = {}) {
+function missingAttributionFields(session: UsageRow = {}) {
   const fields = [];
   if ((session.taskType || '未分类') === '未分类') fields.push('任务类型');
   if ((session.outputStatus || '未标注') === '未标注') fields.push('产出状态');
@@ -375,7 +377,7 @@ function buildActionItems({ roiAdvice = [], sessions = [], outputRows = [] }) {
   return Array.from(new Set(items)).slice(0, 8);
 }
 
-function buildAdvisorActionRows(actions = [], period = {}) {
+function buildAdvisorActionRows(actions: UsageRow[] = [], period: PeriodRange = {}) {
   return actions
     .filter(action => !period?.start || (
       action.periodStart === period.start && action.periodEnd === period.end
@@ -496,7 +498,7 @@ function statusLabel(status) {
   return '行动中';
 }
 
-function aggregateDaily(daily = []) {
+function aggregateDaily(daily: UsageRow[] = []) {
   return daily.reduce((acc, row) => {
     acc.totalTokens += row.totalTokens || 0;
     acc.inputTokens += row.inputTokens || 0;

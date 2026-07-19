@@ -19,6 +19,75 @@ import { buildEmptyStatuslineSnapshot, buildStatuslineSnapshot, formatStatusline
 import { buildModelPolicy, formatModelPolicy } from './model-policy.ts';
 import { resolveLaunchCwd, resolveViteBin } from './runtime-paths.ts';
 
+type InputRecord = Record<string, unknown>;
+type CliArgValue = string | boolean | string[] | undefined;
+
+interface CliArgs {
+  [key: string]: CliArgValue;
+  _: string[];
+  apply?: boolean;
+  applySources?: string;
+  apiPort?: string;
+  audit?: boolean;
+  ccusageBin?: string;
+  collectors?: string;
+  costBudgetUSD?: string;
+  costBudgetUsd?: string;
+  db?: string;
+  device?: string;
+  dryRun?: boolean;
+  dryRunOnly?: boolean;
+  enabled?: boolean;
+  file?: string;
+  format?: string;
+  hardThreshold?: string;
+  help?: boolean;
+  id?: string;
+  includeUntracked?: boolean;
+  json?: boolean;
+  label?: string;
+  maxWidth?: string;
+  modelGroup?: string;
+  noCollect?: boolean;
+  noOpen?: boolean;
+  period?: string;
+  port?: string;
+  report?: string;
+  resetAnchor?: string;
+  seedOnly?: boolean;
+  source?: string;
+  sources?: string;
+  threshold?: string;
+  tokenBudget?: string;
+  uiPort?: string;
+  warningThreshold?: string;
+  windowMinutes?: string;
+  windowType?: string;
+  writeSources?: string;
+  yes?: boolean;
+}
+
+interface CollectProcessResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+  parsed: InputRecord | null;
+}
+
+interface ImportUsageSummary {
+  ok: boolean;
+  format: string;
+  mode: string;
+  detectedShape: string;
+  daily: number;
+  sessions: number;
+  tokenEvents: number;
+  warnings: InputRecord[];
+  bridge: { report: string; command: string } | null;
+  backup?: { path: string } | null;
+  applied?: unknown;
+}
+
 const parsedCommand = parseCommand(process.argv.slice(2));
 const command = parsedCommand.command;
 const args = parseArgs(parsedCommand.args);
@@ -195,7 +264,7 @@ async function stopCliChildren(children) {
 
 function stopCliChild(child) {
   if (!child || child.exitCode != null) return Promise.resolve();
-  return new Promise(resolve => {
+  return new Promise<void>(resolve => {
     const done = () => {
       clearTimeout(killTimer);
       clearTimeout(resolveTimer);
@@ -320,7 +389,7 @@ async function coverageCommand() {
     return;
   }
   printCoverageSummary(summary);
-  if (summary.totals?.fatalCoverageErrors > 0) process.exitCode = 2;
+  if (Number(inputRecord(summary.totals).fatalCoverageErrors || 0) > 0) process.exitCode = 2;
 }
 
 async function compareCcusageCommand() {
@@ -405,7 +474,8 @@ async function importUsageCommand() {
     throw new Error('Choose either --apply or --dry-run, not both.');
   }
   const { plan, bridge } = await buildImportUsagePlan(format);
-  const summary = {
+  await confirmImportApplyIfNeeded(plan);
+  const summary: ImportUsageSummary = {
     ok: true,
     format,
     mode: args.apply ? 'apply' : 'dry-run',
@@ -483,6 +553,24 @@ async function ensureCcusageBridgeConfirmed({ report, commandLabel }) {
   const confirmed = await confirmCcusageBridge({ report, commandLabel });
   if (!confirmed) {
     throw new Error('ccusage CLI bridge cancelled. No external scanner was run.');
+  }
+}
+
+async function confirmImportApplyIfNeeded(plan) {
+  if (!args.apply || args.yes || process.env.TOKEN_WORK_IMPORT_CONFIRMED === '1') return;
+  if (!process.stdin.isTTY) {
+    throw new Error('import-usage --apply requires --yes in non-interactive shells. SQLite was not modified.');
+  }
+  const rl = createInterface({ input, output });
+  try {
+    console.log('This will write validated structured usage to local SQLite after creating a backup.');
+    console.log(`Device: ${plan.device}; daily=${plan.daily.length}, sessions=${plan.sessions.length}, token_events=${plan.tokenEvents.length}`);
+    const answer = await rl.question('Type APPLY to continue: ');
+    if (answer.trim() !== 'APPLY') {
+      throw new Error('Import cancelled. SQLite was not modified.');
+    }
+  } finally {
+    rl.close();
   }
 }
 
@@ -589,7 +677,7 @@ async function statuslineCommand() {
     return;
   }
   console.log(formatStatuslineText(snapshot, {
-    maxWidth: args.maxWidth || 100
+    maxWidth: Number(args.maxWidth || 100)
   }));
 }
 
@@ -666,7 +754,7 @@ function cliDbPath() {
 }
 
 function canListen(port) {
-  return new Promise(resolvePort => {
+  return new Promise<boolean>(resolvePort => {
     const server = createServer();
     server.once('error', () => resolvePort(false));
     server.once('listening', () => server.close(() => resolvePort(true)));
@@ -675,7 +763,7 @@ function canListen(port) {
 }
 
 function waitForChildren(children) {
-  return new Promise(resolveRun => {
+  return new Promise<number>(resolveRun => {
     let done = false;
     const stop = (code = 0) => {
       if (done) return;
@@ -722,13 +810,13 @@ function sleep(ms) {
 }
 
 function childExitCode(child) {
-  return new Promise(resolveRun => {
+  return new Promise<number>(resolveRun => {
     child.on('exit', code => resolveRun(code ?? 0));
     child.on('error', () => resolveRun(1));
   });
 }
 
-function runCollectDryRun({ sources, dbPath } = {}) {
+function runCollectDryRun({ sources, dbPath }: { sources?: string; dbPath?: string } = {}): Promise<InputRecord> {
   const collectArgs = [
     resolve(SOURCE_DIR, 'collect.ts'),
     '--dry-run',
@@ -760,7 +848,7 @@ function runCollectDryRun({ sources, dbPath } = {}) {
         return;
       }
       try {
-        resolveRun(JSON.parse(stdout));
+        resolveRun(inputRecord(JSON.parse(stdout)));
       } catch (error) {
         rejectRun(new Error(`coverage dry-run returned invalid JSON: ${error.message}`));
       }
@@ -768,7 +856,7 @@ function runCollectDryRun({ sources, dbPath } = {}) {
   });
 }
 
-function runCollectApply({ sources, dbPath } = {}) {
+function runCollectApply({ sources, dbPath }: { sources?: string; dbPath?: string } = {}): Promise<CollectProcessResult> {
   const collectArgs = [
     resolve(SOURCE_DIR, 'collect.ts'),
     '--apply',
@@ -960,19 +1048,45 @@ function parseCommand(argv) {
 }
 
 function parseArgs(argv) {
-  const parsed = { _: [] };
+  const booleanKeys = new Set([
+    'apply',
+    'audit',
+    'dryRun',
+    'dryRunOnly',
+    'enabled',
+    'help',
+    'includeUntracked',
+    'json',
+    'noCollect',
+    'noOpen',
+    'seedOnly',
+    'yes'
+  ]);
+  const valueKeys = new Set([
+    'apiPort', 'applySources', 'ccusageBin', 'collectors', 'costBudgetUSD',
+    'costBudgetUsd', 'db', 'device', 'file', 'format', 'hardThreshold', 'id',
+    'label', 'maxWidth', 'modelGroup', 'period', 'port', 'report', 'resetAnchor',
+    'source', 'sources', 'threshold', 'tokenBudget', 'uiPort', 'warningThreshold',
+    'windowMinutes', 'windowType', 'writeSources'
+  ]);
+  const knownKeys = new Set([...booleanKeys, ...valueKeys]);
+  const parsed: CliArgs = { _: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg.startsWith('--') && arg.includes('=')) {
       const [key, value] = arg.slice(2).split(/=(.*)/s);
-      parsed[toCamel(key)] = value;
+      const camelKey = toCamel(key);
+      if (!knownKeys.has(camelKey)) throw new Error(`Unknown option: --${key}`);
+      parsed[camelKey] = parseArgValue(camelKey, value, booleanKeys);
     } else if (arg.startsWith('--')) {
       const key = toCamel(arg.slice(2));
+      if (!knownKeys.has(key)) throw new Error(`Unknown option: ${arg}`);
       const next = argv[i + 1];
       if (!next || next.startsWith('--')) {
+        if (valueKeys.has(key)) throw new Error(`${arg} requires a value`);
         parsed[key] = true;
       } else {
-        parsed[key] = next;
+        parsed[key] = parseArgValue(key, next, booleanKeys);
         i += 1;
       }
     } else {
@@ -982,8 +1096,21 @@ function parseArgs(argv) {
   return parsed;
 }
 
+function parseArgValue(key, value, booleanKeys) {
+  if (!booleanKeys.has(key)) return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new Error(`--${key.replace(/[A-Z]/g, char => `-${char.toLowerCase()}`)} must be true or false`);
+}
+
 function toCamel(value) {
   return value.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
+}
+
+function inputRecord(value: unknown): InputRecord {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as InputRecord
+    : {};
 }
 
 function printHelp() {
@@ -1003,7 +1130,7 @@ function printHelp() {
     '  token-work collectors --audit [--json]',
     '  token-work coverage --sources claude,codex,cursor [--json]',
     '  token-work compare-ccusage --report=session --json --yes',
-    '  token-work import-usage --format=ccusage-json --file <path|-> [--dry-run|--apply]',
+    '  token-work import-usage --format=ccusage-json --file <path|-> [--device <name>] [--dry-run|--apply] [--yes]',
     '  token-work import-usage --format=ccusage-cli --report=<daily|weekly|monthly|session|blocks> [--dry-run|--apply] [--yes]',
     '  token-work budget list|set|delete',
     '  token-work report --period=week --format=table|markdown|json',
@@ -1069,7 +1196,7 @@ function printImportUsageHelp() {
     '',
     'Examples:',
     '  token-work import-usage --format=ccusage-json --file ccusage.json --dry-run',
-    '  token-work import-usage --format=ccusage-json --file ccusage.json --apply',
+    '  token-work import-usage --format=ccusage-json --file ccusage.json --device other-computer --apply --yes',
     '  ccusage daily --json | token-work import-usage --format=ccusage-json --file - --dry-run',
     '  token-work import-usage --format=ccusage-cli --report=session --dry-run --yes',
     '  token-work import-usage --format=ccusage-cli --report=blocks --apply --yes',
@@ -1084,7 +1211,8 @@ function printImportUsageHelp() {
     'Privacy:',
     '  prompt, response, messages, transcript, diff, content, and text fields are rejected.',
     '  ccusage-cli runs an external local scanner only after interactive confirmation or --yes.',
-    '  Imported cost fields are ignored; Token Work recomputes official-price conversion.'
+    '  Imported cost fields are ignored; Token Work recomputes official-price conversion.',
+    '  Use a stable, unique --device name when importing usage from another computer.'
   ].join('\n'));
 }
 

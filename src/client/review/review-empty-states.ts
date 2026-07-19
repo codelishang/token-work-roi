@@ -1,3 +1,5 @@
+import type { UsageRow } from '../shared/types.ts';
+
 const DEFAULT_TASK_TYPE = '未分类';
 const DEFAULT_WORK_PURPOSE = '未说明';
 const DEFAULT_WORK_STAGE = '未说明';
@@ -7,7 +9,10 @@ const LOW_VALUE_LEVELS = new Set(['低']);
 const EXPLORATION_PURPOSES = new Set(['需求澄清', '技术调研', '测试验证', '上下文整理']);
 const EXPLORATION_STAGES = new Set(['探索', '验证']);
 
-export function buildEvidenceZeroState(evidence = {}, projectCoverage = {}) {
+export function buildEvidenceZeroState(
+  evidence: Record<string, unknown> = {},
+  projectCoverage: Record<string, unknown> = {}
+) {
   const missing = [];
   if (!evidence.manualConfirmed) missing.push('没有人工确认的 session，自动归因只能算草稿。');
   if (!evidence.withOutput) missing.push('没有产出链接，无法说明 token 换来了 PR、commit、文章、部署或文档。');
@@ -22,13 +27,19 @@ export function buildEvidenceZeroState(evidence = {}, projectCoverage = {}) {
   };
 }
 
-export function buildSavingsEmptyReason({ simulation = {}, sessions = [] } = {}) {
-  const suggestions = simulation.suggestions || [];
+export function buildSavingsEmptyReason({
+  simulation = {},
+  sessions = []
+}: { simulation?: Record<string, unknown>; sessions?: UsageRow[] } = {}) {
+  const suggestions = Array.isArray(simulation.suggestions) ? simulation.suggestions : [];
   if (suggestions.length) return null;
 
   const total = sessions.length;
   const annotated = sessions.filter(hasStrategyFields).length;
-  const unpriced = simulation.unpriced?.sessionCount || 0;
+  const unpricedData = simulation.unpriced && typeof simulation.unpriced === 'object'
+    ? simulation.unpriced as Record<string, unknown>
+    : {};
+  const unpriced = Number(unpricedData.sessionCount || 0);
   const highValueProtected = sessions.filter(isHighValueProductive).length;
   const downgradeCandidates = sessions.filter(session =>
     hasStrategyFields(session)
@@ -62,21 +73,21 @@ export function buildSavingsEmptyReason({ simulation = {}, sessions = [] } = {})
   };
 }
 
-function hasStrategyFields(session = {}) {
+function hasStrategyFields(session: UsageRow = {}) {
   return (session.taskType || DEFAULT_TASK_TYPE) !== DEFAULT_TASK_TYPE
     || (session.workPurpose || DEFAULT_WORK_PURPOSE) !== DEFAULT_WORK_PURPOSE
     || (session.workStage || DEFAULT_WORK_STAGE) !== DEFAULT_WORK_STAGE
     || (session.valueLevel || DEFAULT_VALUE_LEVEL) !== DEFAULT_VALUE_LEVEL;
 }
 
-function isHighValueProductive(session = {}) {
+function isHighValueProductive(session: UsageRow = {}) {
   return PRODUCTIVE_STATUSES.has(session.outputStatus) && ['高', '关键'].includes(session.valueLevel);
 }
 
-function isLowValueOrWaste(session = {}) {
+function isLowValueOrWaste(session: UsageRow = {}) {
   return session.outputStatus === '已废弃' || LOW_VALUE_LEVELS.has(session.valueLevel);
 }
 
-function isExploration(session = {}) {
+function isExploration(session: UsageRow = {}) {
   return EXPLORATION_PURPOSES.has(session.workPurpose) || EXPLORATION_STAGES.has(session.workStage);
 }

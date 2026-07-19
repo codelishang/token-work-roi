@@ -4,6 +4,8 @@ const EXPERIMENTAL_STATUSES = new Set(['experimental']);
 const DETECTED_ONLY_STATUSES = new Set(['detected-only']);
 const CCUSAGE_REPORTS = ['daily', 'weekly', 'monthly', 'session', 'blocks'];
 
+type InputRecord = Record<string, unknown>;
+
 export function buildCoverageBridge({ sourceHealth = [] } = {}) {
   const rows = sourceHealth.map(row => {
     const status = bridgeStatus(row);
@@ -66,17 +68,19 @@ export function buildCoverageBridge({ sourceHealth = [] } = {}) {
   };
 }
 
-function bridgeStatus(row = {}) {
-  if (TRUSTED_NATIVE_STATUSES.has(row.supportStatus) && row.tokenReliability === 'native-token-fields') {
+function bridgeStatus(row: InputRecord = {}) {
+  const supportStatus = String(row.supportStatus || '');
+  const id = String(row.id || '');
+  if (TRUSTED_NATIVE_STATUSES.has(supportStatus) && row.tokenReliability === 'native-token-fields') {
     return 'native-trusted';
   }
-  if (IMPORT_BRIDGE_STATUSES.has(row.supportStatus) || row.id === 'ccusage') {
+  if (IMPORT_BRIDGE_STATUSES.has(supportStatus) || id === 'ccusage') {
     return 'ccusage-importable';
   }
-  if (EXPERIMENTAL_STATUSES.has(row.supportStatus)) {
+  if (EXPERIMENTAL_STATUSES.has(supportStatus)) {
     return 'experimental-audit';
   }
-  if (row.detected || DETECTED_ONLY_STATUSES.has(row.supportStatus)) {
+  if (row.detected || DETECTED_ONLY_STATUSES.has(supportStatus)) {
     return 'detected-only';
   }
   return 'unsupported';

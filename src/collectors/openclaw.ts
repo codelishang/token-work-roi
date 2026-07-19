@@ -125,7 +125,8 @@ async function parseIndexFile(indexPath) {
   const indexDir = indexPath.slice(0, indexPath.lastIndexOf('/'));
   const results  = [];
 
-  for (const entry of Object.values(obj)) {
+  for (const value of Object.values(obj)) {
+    const entry = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     if (!entry || typeof entry.sessionId !== 'string') continue;
     const sessionId = entry.sessionId;
 

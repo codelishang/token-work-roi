@@ -1,8 +1,14 @@
 import { spawnSync } from 'node:child_process';
 
+export interface ProcessResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
 export async function stopProcessTree(child, { detached = false } = {}) {
   if (!child || child.exitCode != null) return;
-  await new Promise(resolve => {
+  await new Promise<void>(resolve => {
     let resolved = false;
     const done = () => {
       if (resolved) return;

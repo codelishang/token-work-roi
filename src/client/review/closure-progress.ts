@@ -3,6 +3,7 @@ import {
   missingReviewAttributionFields,
   sessionProjectLabel
 } from '../dashboard/attribution.ts';
+import type { UsageRow } from '../shared/types.ts';
 
 const PRODUCTIVE_STATUSES = new Set(['已完成', '已发布']);
 const LABELING_CATEGORY = '补标注';
@@ -14,6 +15,13 @@ export function buildReviewClosureProgress({
   targetOutputLinks = 3,
   targetNonLabelAdvice = 1,
   topGapLimit = 5
+}: {
+  sessions?: UsageRow[];
+  roiAdvice?: UsageRow[];
+  targetAttributedSessions?: number;
+  targetOutputLinks?: number;
+  targetNonLabelAdvice?: number;
+  topGapLimit?: number;
 } = {}) {
   const attributedSessions = sessions.filter(isClosureAttributedSession)
     .sort(compareCostThenTokens);
@@ -100,30 +108,30 @@ export function buildReviewClosureProgress({
   };
 }
 
-export function isClosureAttributedSession(session = {}) {
+export function isClosureAttributedSession(session: UsageRow = {}) {
   return Boolean(String(session.projectAlias || '').trim())
     && missingReviewAttributionFields(session).length === 0;
 }
 
-export function isManualConfirmedSession(session = {}) {
+export function isManualConfirmedSession(session: UsageRow = {}) {
   const source = String(session.annotationSource || 'manual');
   return isClosureAttributedSession(session)
     && (source === 'manual' || source === 'imported');
 }
 
-export function isAutoHighConfidenceSession(session = {}) {
+export function isAutoHighConfidenceSession(session: UsageRow = {}) {
   return isClosureAttributedSession(session)
     && session.annotationSource === 'auto'
     && Number(session.annotationConfidence || 0) >= 80;
 }
 
-export function hasClosureOutputLink(session = {}) {
+export function hasClosureOutputLink(session: UsageRow = {}) {
   const url = String(session.outputUrl || '').trim();
   return PRODUCTIVE_STATUSES.has(session.outputStatus)
     && /^https?:\/\//i.test(url);
 }
 
-function buildClosureGapRows(sessions = []) {
+function buildClosureGapRows(sessions: UsageRow[] = []) {
   return sessions
     .filter(session => !isClosureAttributedSession(session))
     .map(session => ({
@@ -142,7 +150,7 @@ function buildClosureGapRows(sessions = []) {
     .sort(compareCostThenTokens);
 }
 
-function missingClosureFields(session = {}) {
+function missingClosureFields(session: UsageRow = {}) {
   const fields = [];
   if (!String(session.projectAlias || '').trim()) fields.push('项目别名');
   fields.push(...missingReviewAttributionFields(session));

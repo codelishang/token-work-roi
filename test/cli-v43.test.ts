@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ProcessResult } from '../test-support/process.ts';
 
 test('CLI imports ccusage dry-run/apply and prints report JSON', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-cli-'));
@@ -25,7 +26,15 @@ test('CLI imports ccusage dry-run/apply and prints report JSON', async () => {
     assert.equal(dryRun.code, 0, dryRun.stderr);
     assert.equal(JSON.parse(dryRun.stdout).mode, 'dry-run');
 
-    const applied = await runCli(['import-usage', '--format=ccusage-json', '--file', jsonPath, '--db', dbPath, '--apply', '--json']);
+    const unconfirmed = await runCli(['import-usage', '--format=ccusage-json', '--file', jsonPath, '--db', dbPath, '--apply', '--json']);
+    assert.notEqual(unconfirmed.code, 0);
+    assert.match(unconfirmed.stderr, /requires --yes/);
+
+    const falseConfirmation = await runCli(['import-usage', '--format=ccusage-json', '--file', jsonPath, '--db', dbPath, '--apply', '--yes=false', '--json']);
+    assert.notEqual(falseConfirmation.code, 0);
+    assert.match(falseConfirmation.stderr, /requires --yes/);
+
+    const applied = await runCli(['import-usage', '--format=ccusage-json', '--file', jsonPath, '--device', 'other-computer', '--db', dbPath, '--apply', '--yes', '--json']);
     assert.equal(applied.code, 0, applied.stderr);
     assert.equal(JSON.parse(applied.stdout).applied.sessions, 1);
 
@@ -45,7 +54,7 @@ test('CLI imports ccusage dry-run/apply and prints report JSON', async () => {
 });
 
 function runCli(argv, env = {}) {
-  return new Promise(resolve => {
+  return new Promise<ProcessResult>(resolve => {
     const child = spawn(process.execPath, ['src/cli.ts', ...argv], {
       cwd: process.cwd(),
       env: { ...process.env, ...env },

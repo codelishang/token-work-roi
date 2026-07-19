@@ -83,7 +83,7 @@ TOKEN_WORK_CAPTURE_REAL=1 node scripts/capture-real-screenshots.ts
 
 ## Pricing Refresh
 
-- `.github/workflows/update-pricing.yml` must run weekly at Monday 00:01 Asia/Shanghai (`1 16 * * 0` in UTC).
+- `.github/workflows/update-pricing.yml` must run weekly at Monday 03:15 Asia/Shanghai (`15 19 * * 0` in UTC).
 - `npm run pricing:update` must fetch provider-owned pricing pages, write `data/official-pricing.json`, and update `src/pricing.ts` only after at least one official source succeeds.
 - If all official sources fail, the workflow should fail and leave the existing cache and built-in table unchanged.
 - RMB prices may be converted to internal USD cost math using the captured USD/CNY refresh rate, but README/release notes must keep the “not a provider invoice” boundary.

@@ -8,13 +8,13 @@ import {
   writeAnnotationPresets
 } from '../src/client/dashboard/annotation-presets.ts';
 
-function memoryStorage(initial = {}) {
-  const data = new Map(Object.entries(initial));
+function memoryStorage(initial: Record<string, string> = {}) {
+  const data = new Map<string, string>(Object.entries(initial));
   return {
-    getItem(key) {
+    getItem(key: string): string | null {
       return data.has(key) ? data.get(key) : null;
     },
-    setItem(key, value) {
+    setItem(key: string, value: string) {
       data.set(key, value);
     }
   };
@@ -40,7 +40,7 @@ test('rememberAnnotationPreset stores only structured fields and recent projects
 });
 
 test('rememberAnnotationPreset deduplicates and limits recent projects', () => {
-  let state = {};
+  let state = rememberAnnotationPreset({});
   for (const project of ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'A']) {
     state = rememberAnnotationPreset(state, { projectAlias: project });
   }
@@ -82,9 +82,10 @@ test('quick annotation templates cover common review decisions without free text
     'stop-loss'
   ]);
   for (const template of QUICK_ANNOTATION_TEMPLATES) {
-    assert.equal(template.values.note, undefined);
-    assert.equal(template.values.outputUrl, undefined);
-    assert.equal(template.values.outputLabel, undefined);
+    const values: Record<string, unknown> = template.values;
+    assert.equal(values.note, undefined);
+    assert.equal(values.outputUrl, undefined);
+    assert.equal(values.outputLabel, undefined);
   }
 });
 

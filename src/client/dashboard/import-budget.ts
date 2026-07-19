@@ -34,7 +34,7 @@ export function defaultResetAnchor(now = new Date()) {
   return date.toISOString().slice(0, 16);
 }
 
-export function applyBudgetTemplate(current = {}, template = {}, now = new Date()) {
+export function applyBudgetTemplate(current: BudgetForm = {}, template: BudgetTemplate = {}, now = new Date()) {
   return {
     ...current,
     source: template.source || current.source || '',
@@ -48,4 +48,23 @@ export function applyBudgetTemplate(current = {}, template = {}, now = new Date(
       ? current.resetAnchor || defaultResetAnchor(now)
       : current.resetAnchor || ''
   };
+}
+interface BudgetTemplate {
+  source?: string;
+  modelGroup?: string;
+  label?: string;
+  windowType?: string;
+  windowMinutes?: number;
+  warningThreshold?: number;
+  hardThreshold?: number;
+}
+
+export interface BudgetForm extends Omit<BudgetTemplate, 'windowMinutes' | 'warningThreshold' | 'hardThreshold'> {
+  windowMinutes?: string | number;
+  warningThreshold?: string | number;
+  hardThreshold?: string | number;
+  resetAnchor?: string;
+  tokenBudget?: string;
+  costBudgetUSD?: string;
+  enabled?: boolean;
 }

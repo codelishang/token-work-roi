@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   deleteAdvisorAction,
   deleteBudgetProfile,
+  createSqliteBackup,
   listAdvisorActions,
   listBudgetProfiles,
   linkWorkItemSessions,
@@ -25,6 +26,52 @@ function tempDb() {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-roi-'));
   return openDb(join(dir, 'usage.sqlite'));
 }
+
+test('scheduled backups are rate limited and retained independently', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'token-work-backup-'));
+  const dbPath = join(dir, 'usage.sqlite');
+  const backupDir = join(dir, 'backups');
+  const db = openDb(dbPath);
+
+  const first = createSqliteBackup(db, dbPath, {
+    reason: 'scheduled-collect',
+    backupDir,
+    minimumIntervalMs: 60_000,
+    maxBackups: 2,
+    now: new Date('2026-07-19T00:00:00.000Z')
+  });
+  assert.ok(first && existsSync(first.path));
+  utimesSync(first.path, new Date('2026-07-19T00:00:00.000Z'), new Date('2026-07-19T00:00:00.000Z'));
+
+  const skipped = createSqliteBackup(db, dbPath, {
+    reason: 'scheduled-collect',
+    backupDir,
+    minimumIntervalMs: 60_000,
+    maxBackups: 2,
+    now: new Date('2026-07-19T00:00:30.000Z')
+  });
+  assert.equal(skipped, null);
+
+  for (const now of ['2026-07-19T01:00:00.000Z', '2026-07-19T02:00:00.000Z']) {
+    const backup = createSqliteBackup(db, dbPath, {
+      reason: 'scheduled-collect',
+      backupDir,
+      maxBackups: 2,
+      now: new Date(now)
+    });
+    assert.ok(backup && existsSync(backup.path));
+  }
+  assert.equal(readdirSync(backupDir).filter(name => name.endsWith('-scheduled-collect.sqlite')).length, 2);
+
+  const manual = createSqliteBackup(db, dbPath, {
+    reason: 'collect',
+    backupDir,
+    now: new Date('2026-07-19T02:00:00.000Z')
+  });
+  assert.ok(manual && existsSync(manual.path));
+  assert.equal(readdirSync(backupDir).filter(name => name.endsWith('-collect.sqlite')).length, 3);
+  db.close();
+});
 
 test('token_events upsert is idempotent and privacy bounded', () => {
   const db = tempDb();
@@ -57,6 +104,31 @@ test('token_events upsert is idempotent and privacy bounded', () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].inputTokens, 20);
   assert.equal(rows[0].privacyLevel, 'safe');
+  db.close();
+});
+
+test('token event ids do not overwrite another device or source', () => {
+  const db = tempDb();
+  const event = {
+    eventId: 'shared-event-id',
+    source: 'Codex CLI',
+    sessionId: 'shared-session',
+    timestamp: '2026-07-19T00:00:00Z',
+    model: 'gpt-5.5',
+    inputTokens: 10,
+    outputTokens: 2
+  };
+
+  upsertTokenEvent(db, { ...event, device: 'workstation-a' });
+  upsertTokenEvent(db, { ...event, device: 'workstation-b', inputTokens: 20 });
+  upsertTokenEvent(db, { ...event, device: 'workstation-b', inputTokens: 30 });
+  upsertTokenEvent(db, { ...event, device: 'workstation-a', source: 'Claude Code', inputTokens: 40 });
+
+  const rows = listTokenEvents(db, { limit: 10 });
+  assert.equal(rows.length, 3);
+  assert.equal(rows.find(row => row.device === 'workstation-a' && row.source === 'Codex CLI').inputTokens, 10);
+  assert.equal(rows.find(row => row.device === 'workstation-b').inputTokens, 30);
+  assert.equal(rows.find(row => row.source === 'Claude Code').inputTokens, 40);
   db.close();
 });
 
@@ -97,6 +169,19 @@ test('usage rows persist session models and reject malformed numeric data', () =
   const report = buildTerminalReport(db, { period: 'all' });
   assert.equal(report.totals.totalTokens, 22);
   assert.equal(report.totals.cacheReadTokens, 7);
+  upsertDaily(db, {
+    device: 'demo',
+    source: 'Codex CLI',
+    usageDate: '2026-07-16',
+    model: 'gpt-5.5',
+    inputTokens: 10,
+    outputTokens: 5,
+    totalTokens: 1
+  });
+  assert.equal(
+    db.prepare("SELECT total_tokens AS totalTokens FROM daily_usage WHERE usage_date = '2026-07-16'").get().totalTokens,
+    15
+  );
   assert.throws(() => upsertDaily(db, {
     device: 'demo',
     source: 'Codex CLI',

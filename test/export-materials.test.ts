@@ -156,8 +156,8 @@ test('technical blog draft includes problem, design, implementation, privacy, va
     localTrust: eventVerifiedTrust,
     coverageBridge,
     evidenceFlywheel,
-    savingsSimulation: { recommendations: [{ title: 'Use light model for exploration' }] },
-    modelStrategy: { coverage: { sampleShare: 25 } }
+    savingsSimulation: { suggestions: [{ title: 'Use light model for exploration' }] },
+    modelStrategy: { coverage: { annotatedTokenShare: 0.25 } }
   });
 
   assert.match(markdown, /## 背景问题/);
@@ -168,6 +168,8 @@ test('technical blog draft includes problem, design, implementation, privacy, va
   assert.match(markdown, /## 局限/);
   assert.match(markdown, /不上传数据，不保存对话正文/);
   assert.match(markdown, /官方价换算/);
+  assert.match(markdown, /节省模拟候选 \| 1/);
+  assert.match(markdown, /模型策略样本覆盖 \| 25\.0%/);
 });
 
 test('resume and interview pack outputs Chinese, English and STAR without fake savings claims', () => {

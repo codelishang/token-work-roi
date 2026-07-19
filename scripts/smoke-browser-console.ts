@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
+import type { CdpConnection, CdpResponse, WaitOptions } from './script-types.ts';
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const tempRoot = mkdtempSync(join(tmpdir(), 'token-work-browser-smoke-'));
@@ -99,13 +100,13 @@ async function runBrowserConsoleCheck(url) {
   try {
     await waitForJson(`http://127.0.0.1:${debugPort}/json/version`, { timeoutMs: 30000 });
     const targetResponse = await fetch(`http://127.0.0.1:${debugPort}/json/new?${encodeURIComponent('about:blank')}`, { method: 'PUT' });
-    const target = await targetResponse.json();
-    const wsUrl = target.webSocketDebuggerUrl;
+    const target = await targetResponse.json() as Record<string, unknown>;
+    const wsUrl = typeof target.webSocketDebuggerUrl === 'string' ? target.webSocketDebuggerUrl : '';
     if (!wsUrl) throw new Error('Chrome did not return a page WebSocket debugger URL');
     const cdp = await connectCdp(wsUrl);
     const messages = [];
     try {
-      cdp.onMessage(message => {
+      cdp.onMessage?.(message => {
         if (message.method === 'Runtime.consoleAPICalled') {
           const text = (message.params?.args || []).map(arg => arg.value ?? arg.description ?? '').join(' ');
           messages.push(`${message.params?.type || 'console'} ${text}`.trim());
@@ -140,7 +141,7 @@ async function runBrowserConsoleCheck(url) {
   }
 }
 
-async function waitForDashboardReady(cdp, messages) {
+async function waitForDashboardReady(cdp: CdpConnection, messages) {
   const started = Date.now();
   let lastState = null;
   while (Date.now() - started < 30000) {
@@ -163,18 +164,18 @@ async function waitForDashboardReady(cdp, messages) {
   ].join('\n'));
 }
 
-function connectCdp(wsUrl) {
-  return new Promise((resolveConnection, rejectConnection) => {
+function connectCdp(wsUrl): Promise<CdpConnection> {
+  return new Promise<CdpConnection>((resolveConnection, rejectConnection) => {
     const ws = new WebSocket(wsUrl);
     let nextId = 1;
-    const pending = new Map();
-    const listeners = new Set();
+    const pending = new Map<number, { resolve: (message: CdpResponse) => void; reject: (error: Error) => void }>();
+    const listeners = new Set<(message: CdpResponse) => void>();
     ws.addEventListener('open', () => {
       resolveConnection({
         send(method, params = {}) {
           const id = nextId++;
           ws.send(JSON.stringify({ id, method, params }));
-          return new Promise((resolveSend, rejectSend) => {
+          return new Promise<CdpResponse>((resolveSend, rejectSend) => {
             pending.set(id, { resolve: resolveSend, reject: rejectSend });
           });
         },
@@ -187,7 +188,7 @@ function connectCdp(wsUrl) {
       });
     });
     ws.addEventListener('message', event => {
-      const message = JSON.parse(event.data);
+      const message = JSON.parse(String(event.data)) as CdpResponse;
       if (message.id && pending.has(message.id)) {
         const { resolve: resolvePending, reject: rejectPending } = pending.get(message.id);
         pending.delete(message.id);
@@ -266,17 +267,17 @@ function createCollectorFixture(root) {
   }), 'utf8');
 }
 
-async function waitForJson(url, options = {}) {
+async function waitForJson(url, options: WaitOptions = {}) {
   const response = await waitForResponse(url, options);
   return response.json();
 }
 
-async function waitForText(url, options = {}) {
+async function waitForText(url, options: WaitOptions = {}) {
   const response = await waitForResponse(url, options);
   return response.text();
 }
 
-async function waitForResponse(url, { childState, timeoutMs = 90000, intervalMs = 500 } = {}) {
+async function waitForResponse(url, { childState, timeoutMs = 90000, intervalMs = 500 }: WaitOptions = {}) {
   const started = Date.now();
   let last = '';
   while (Date.now() - started < timeoutMs) {
@@ -305,7 +306,7 @@ async function freePort(start) {
 }
 
 function canListen(port) {
-  return new Promise(resolvePort => {
+  return new Promise<boolean>(resolvePort => {
     const server = createServer();
     server.once('error', () => resolvePort(false));
     server.once('listening', () => server.close(() => resolvePort(true)));
@@ -322,7 +323,7 @@ function safeEnv(extra = {}) {
 
 function stopChild(child) {
   if (child.exitCode != null) return Promise.resolve();
-  return new Promise(resolveStop => {
+  return new Promise<void>(resolveStop => {
     const timer = setTimeout(resolveStop, 5000);
     timer.unref?.();
     child.once('close', () => {

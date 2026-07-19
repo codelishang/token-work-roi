@@ -6,6 +6,8 @@ const DEFAULTS = {
   valueLevel: '未评估'
 };
 
+type InputRecord = Record<string, unknown>;
+
 export function buildEvidenceFlywheel({
   sessions = [],
   workItems = [],
@@ -158,34 +160,34 @@ function aggregateSessions(sessions) {
   }, { sessionCount: 0, totalTokens: 0, costUSD: 0 });
 }
 
-function hasRecognizedProject(session = {}) {
+function hasRecognizedProject(session: InputRecord = {}) {
   return Boolean(clean(session.projectAlias || session.manualProjectAlias || session.ruleProjectAlias || projectTail(session.projectPath)));
 }
 
-function isAutoEvidence(session = {}) {
+function isAutoEvidence(session: InputRecord = {}) {
   return session.annotationSource === 'auto' && Number(session.annotationConfidence || 0) >= 80 && isReviewComplete(session);
 }
 
-function isManualEvidence(session = {}) {
+function isManualEvidence(session: InputRecord = {}) {
   const source = String(session.annotationSource || '');
   return (source === 'manual' || source === 'imported') && isReviewComplete(session);
 }
 
-function hasOutputEvidence(session = {}) {
+function hasOutputEvidence(session: InputRecord = {}) {
   return isProductive(session) && /^https?:\/\//i.test(String(session.outputUrl || '').trim());
 }
 
-function hasStrategyEvidence(session = {}) {
+function hasStrategyEvidence(session: InputRecord = {}) {
   return (session.taskType || DEFAULTS.taskType) !== DEFAULTS.taskType
     || (session.workStage || DEFAULTS.workStage) !== DEFAULTS.workStage
     || (session.valueLevel || DEFAULTS.valueLevel) !== DEFAULTS.valueLevel;
 }
 
-function isProductive(session = {}) {
+function isProductive(session: InputRecord = {}) {
   return session.outputStatus === '已完成' || session.outputStatus === '已发布';
 }
 
-function isReviewComplete(session = {}) {
+function isReviewComplete(session: InputRecord = {}) {
   return Object.entries(DEFAULTS).every(([field, fallback]) => (session[field] || fallback) !== fallback);
 }
 
@@ -199,7 +201,7 @@ function highCostGaps(sessions) {
     }));
 }
 
-function toQueueRow(session = {}) {
+function toQueueRow(session: InputRecord = {}) {
   return {
     project: safeProject(session),
     source: session.source || '',
@@ -213,7 +215,7 @@ function toQueueRow(session = {}) {
   };
 }
 
-function toSuggestionQueueRow(item = {}) {
+function toSuggestionQueueRow(item: InputRecord = {}) {
   return {
     suggestionId: clean(item.suggestionId),
     kind: clean(item.kind),
@@ -233,7 +235,7 @@ function toSuggestionQueueRow(item = {}) {
   };
 }
 
-function missingFields(session = {}) {
+function missingFields(session: InputRecord = {}) {
   const fields = [];
   if (!clean(session.projectAlias)) fields.push('项目');
   if ((session.taskType || DEFAULTS.taskType) === DEFAULTS.taskType) fields.push('任务');
@@ -264,7 +266,7 @@ function compareSuggestionEvidence(a, b) {
     || Number(b.confidence || 0) - Number(a.confidence || 0);
 }
 
-function safeProject(session = {}) {
+function safeProject(session: InputRecord = {}) {
   return clean(session.projectAlias || session.manualProjectAlias || session.ruleProjectAlias)
     || projectTail(session.projectPath)
     || projectTail(projectPathFromSessionId(session.sessionId))

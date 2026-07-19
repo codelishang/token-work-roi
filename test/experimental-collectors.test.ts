@@ -1,4 +1,5 @@
 import test from 'node:test';
+import type { ProcessResult } from '../test-support/process.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -84,7 +85,7 @@ test('collectors audit CLI emits safe summary without full paths', async () => {
 });
 
 function runCli(argv, env = {}) {
-  return new Promise(resolve => {
+  return new Promise<ProcessResult>(resolve => {
     const child = spawn(process.execPath, ['src/cli.ts', ...argv], {
       cwd: process.cwd(),
       env: { ...process.env, ...env },

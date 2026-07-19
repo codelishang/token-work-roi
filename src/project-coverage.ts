@@ -6,6 +6,8 @@ const DEFAULTS = {
   valueLevel: '未评估'
 };
 
+type InputRecord = Record<string, unknown>;
+
 export function buildProjectCoverage({ sessions = [] } = {}) {
   const projects = new Map();
   const totals = {
@@ -110,16 +112,16 @@ export function buildReviewWorkflow({ sessions = [], advisorActions = [] } = {})
   };
 }
 
-export function isReviewComplete(session = {}) {
+export function isReviewComplete(session: InputRecord = {}) {
   return Object.entries(DEFAULTS).every(([field, fallback]) => (session[field] || fallback) !== fallback);
 }
 
-function isManualLike(session = {}) {
+function isManualLike(session: InputRecord = {}) {
   const source = String(session.annotationSource || '');
   return source === 'manual' || source === 'imported';
 }
 
-function projectLabel(session = {}) {
+function projectLabel(session: InputRecord = {}) {
   const alias = clean(session.projectAlias || session.manualProjectAlias || session.ruleProjectAlias);
   if (alias) return alias;
   const path = clean(session.projectPath);

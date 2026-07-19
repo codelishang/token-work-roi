@@ -7,6 +7,26 @@ const DEFAULT_MIN_CACHE_HIT_RATE = 10;
 const DEFAULT_MIN_OUTPUT_INPUT_RATIO = 0.15;
 const DEFAULT_HIGH_INPUT_TOKENS = 10_000;
 
+type InputRecord = Record<string, unknown>;
+
+interface LiveSnapshotInput {
+  totals?: InputRecord;
+  byModel?: InputRecord[];
+  budgetWindows?: InputRecord[];
+  activeSessions?: InputRecord[];
+  adviceContext?: {
+    topSession?: InputRecord | null;
+    sessionCount?: number;
+  };
+}
+
+interface GuardrailOverrides {
+  tokenBudgetPerHour?: unknown;
+  minCacheHitRate?: unknown;
+  minOutputInputRatio?: unknown;
+  highInputTokens?: unknown;
+}
+
 export function buildLiveSnapshot({
   sessions = [],
   tokenEvents = [],
@@ -170,7 +190,7 @@ export function buildLiveDataFreshness({
   };
 }
 
-export function buildLiveGuardrails(snapshot = {}, config = {}) {
+export function buildLiveGuardrails(snapshot: LiveSnapshotInput = {}, config: GuardrailOverrides = {}) {
   const guardrails = liveGuardrailConfig(config);
   const totals = snapshot.totals || {};
   const warnings = [];
@@ -261,11 +281,11 @@ export function buildLiveGuardrails(snapshot = {}, config = {}) {
   const heavyModels = (snapshot.byModel || [])
     .filter(row => isHeavyModel(row.key) && number(row.totalTokens) > 0);
   const budgetPressure = burnRate > guardrails.tokenBudgetPerHour
-    || (snapshot.budgetWindows || []).some(window => ['near-limit', 'over-pace', 'exceeded'].includes(window.status));
+    || (snapshot.budgetWindows || []).some(window => ['near-limit', 'over-pace', 'exceeded'].includes(String(window.status || '')));
   if (budgetPressure && heavyModels.length) {
     warnings.push({
       type: 'heavy-model-stop-today',
-      level: (snapshot.budgetWindows || []).some(window => ['over-pace', 'exceeded'].includes(window.status)) ? 'high' : 'medium',
+      level: (snapshot.budgetWindows || []).some(window => ['over-pace', 'exceeded'].includes(String(window.status || ''))) ? 'high' : 'medium',
       message: '当前窗口先暂停重模型',
       evidence: `${heavyModels.slice(0, 3).map(row => row.key).join('、')} 最近窗口合计 ${formatInt(heavyModels.reduce((sum, row) => sum + number(row.totalTokens), 0))} tokens`,
       action: '测试、探索和上下文整理先切轻量/中模型；关键发布审查再恢复重模型。'
@@ -275,7 +295,7 @@ export function buildLiveGuardrails(snapshot = {}, config = {}) {
   return warnings;
 }
 
-function liveAdviceContext(snapshot = {}) {
+function liveAdviceContext(snapshot: LiveSnapshotInput = {}) {
   const stored = snapshot.adviceContext?.topSession || null;
   const fallback = (snapshot.activeSessions || [])
     .slice()
@@ -432,7 +452,7 @@ function budgetWindowFrame(profile, nowMs, windowMinutes) {
   };
 }
 
-export function liveGuardrailConfig(overrides = {}) {
+export function liveGuardrailConfig(overrides: GuardrailOverrides = {}) {
   return {
     tokenBudgetPerHour: positiveNumber(
       overrides.tokenBudgetPerHour,

@@ -1,10 +1,25 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import type { ProcessResult } from '../test-support/process.ts';
+
+interface CollectSourceSummary {
+  id: string;
+  candidateFiles: number;
+  usableTokenRecords: number;
+  sessionRows: number;
+  tokenEvents: number;
+  coverageRisk: string;
+  reconciliation: {
+    dailyVsEventDiffPct: number;
+    sessionVsEventDiffPct: number;
+  };
+}
 
 test('collect refuses to run without explicit dry-run or apply mode', async () => {
   const dir = tempDir();
@@ -17,6 +32,12 @@ test('collect refuses to run without explicit dry-run or apply mode', async () =
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('collect does not treat false boolean arguments as write confirmation', async () => {
+  const result = await runNode(['src/collect.ts', '--apply', '--yes=false', '--json']);
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /requires --yes/);
 });
 
 test('collect dry-run scans fixtures and does not write SQLite', async () => {
@@ -37,14 +58,14 @@ test('collect dry-run scans fixtures and does not write SQLite', async () => {
     assert.equal(summary.after, null);
     assert.equal(existsSync(fixture.dbPath), false);
 
-    const byId = new Map(summary.sources.map(row => [row.id, row]));
+    const byId = new Map<string, CollectSourceSummary>(summary.sources.map((row: CollectSourceSummary) => [row.id, row]));
     assert.equal(byId.get('claude').candidateFiles, 2);
-    assert.equal(byId.get('claude').usableTokenRecords, 2);
-    assert.equal(byId.get('claude').sessionRows, 2);
-    assert.equal(byId.get('claude').tokenEvents, 2);
+    assert.equal(byId.get('claude').usableTokenRecords, 3);
+    assert.equal(byId.get('claude').sessionRows, 3);
+    assert.equal(byId.get('claude').tokenEvents, 3);
     assert.equal(byId.get('claude').coverageRisk, 'trusted-event-level');
     assert.equal(byId.get('codex').candidateFiles, 1);
-    assert.equal(byId.get('codex').usableTokenRecords, 1);
+    assert.equal(byId.get('codex').usableTokenRecords, 2);
     assert.equal(byId.get('codex').coverageRisk, 'trusted-event-level');
     assert.equal(byId.get('cursor').candidateFiles, 1);
     assert.equal(byId.get('cursor').usableTokenRecords, 1);
@@ -68,7 +89,7 @@ test('coverage command returns historical coverage risk and reconciliation', asy
     ], fixture.env);
     assert.equal(result.code, 0, result.stderr);
     const summary = JSON.parse(result.stdout);
-    const byId = new Map(summary.sources.map(row => [row.id, row]));
+    const byId = new Map<string, CollectSourceSummary>(summary.sources.map((row: CollectSourceSummary) => [row.id, row]));
     assert.equal(byId.get('claude').coverageRisk, 'trusted-event-level');
     assert.equal(byId.get('codex').coverageRisk, 'trusted-event-level');
     assert.ok(byId.get('claude').reconciliation.dailyVsEventDiffPct <= 0.01);
@@ -102,13 +123,106 @@ test('collect apply writes temp SQLite with backup and before/after counts', asy
     assert.equal(existsSync(summary.backup.path), true);
 
     const db = new DatabaseSync(fixture.dbPath);
+    let legacyEventId;
+    let eventCount;
+    let runCount;
     try {
-      assert.ok(db.prepare('SELECT COUNT(*) AS count FROM session_usage').get().count >= 3);
-      assert.ok(db.prepare('SELECT COUNT(*) AS count FROM token_events').get().count >= 1);
-      assert.ok(db.prepare('SELECT COUNT(*) AS count FROM collection_runs').get().count >= 3);
+      assert.ok(Number(db.prepare('SELECT COUNT(*) AS count FROM session_usage').get().count) >= 3);
+      assert.ok(Number(db.prepare('SELECT COUNT(*) AS count FROM token_events').get().count) >= 1);
+      assert.ok(Number(db.prepare('SELECT COUNT(*) AS count FROM collection_runs').get().count) >= 3);
+      const codexSessions = db.prepare(`
+        SELECT session_id AS sessionId, model, total_tokens AS totalTokens
+        FROM session_usage
+        WHERE source = 'Codex CLI'
+        ORDER BY model
+      `).all();
+      assert.deepEqual(codexSessions.map(row => [row.model, row.totalTokens]), [
+        ['gpt-5.3-codex', 103],
+        ['gpt-5.4-mini', 52]
+      ]);
+      const claudeSessions = db.prepare(`
+        SELECT model, total_tokens AS totalTokens
+        FROM session_usage
+        WHERE source = 'Claude Code'
+        ORDER BY model, total_tokens DESC
+      `).all();
+      assert.deepEqual(claudeSessions.map(row => [row.model, row.totalTokens]), [
+        ['claude-opus-4-6', 72],
+        ['claude-sonnet-4-5', 140],
+        ['claude-sonnet-4-5', 81]
+      ]);
+
+      eventCount = db.prepare('SELECT COUNT(*) AS count FROM token_events').get().count;
+      runCount = db.prepare('SELECT COUNT(*) AS count FROM collection_runs').get().count;
+      const migratedEvent = db.prepare(`
+        SELECT event_id AS eventId
+        FROM token_events
+        WHERE source = 'Codex CLI' AND model = 'gpt-5.4-mini'
+      `).get();
+      legacyEventId = codexEventId({
+        sessionId: 'local:codex:codex-session:gpt-5.3-codex',
+        timestamp: '2026-06-17T02:05:00.000Z',
+        model: 'gpt-5.4-mini',
+        tokens: { input: 40, output: 10, cacheRead: 0, cacheWrite: 0, reasoning: 2 },
+        index: 1
+      });
+      assert.notEqual(migratedEvent.eventId, legacyEventId);
+      db.prepare('UPDATE token_events SET event_id = ? WHERE event_id = ?').run(legacyEventId, migratedEvent.eventId);
     } finally {
       db.close();
     }
+
+    const second = await runNode([
+      'src/collect.ts',
+      '--sources=claude,codex,cursor',
+      '--db',
+      fixture.dbPath,
+      '--apply',
+      '--yes',
+      '--json'
+    ], { ...fixture.env, SCHEDULED_COLLECT_ENABLED: '1' });
+    assert.equal(second.code, 0, second.stderr);
+    const afterMigration = new DatabaseSync(fixture.dbPath);
+    try {
+      assert.equal(afterMigration.prepare('SELECT COUNT(*) AS count FROM token_events').get().count, eventCount);
+      assert.equal(afterMigration.prepare('SELECT COUNT(*) AS count FROM collection_runs').get().count, runCount);
+      assert.equal(afterMigration.prepare('SELECT COUNT(*) AS count FROM token_events WHERE event_id = ?').get(legacyEventId).count, 0);
+      assert.equal(afterMigration.prepare(`
+        SELECT COUNT(*) AS count FROM token_events
+        WHERE source = 'Codex CLI' AND model = 'gpt-5.4-mini'
+      `).get().count, 1);
+      afterMigration.prepare(`
+        UPDATE session_usage
+        SET last_activity = '2026-07-19T12:00:00.000Z', cost_usd = 999
+        WHERE source = 'Cursor'
+      `).run();
+      afterMigration.prepare('UPDATE daily_usage SET cost_usd = 999').run();
+    } finally {
+      afterMigration.close();
+    }
+
+    const backupDir = join(fixture.dir, 'backups');
+    const scheduledBackups = readdirSync(backupDir)
+      .filter(name => name.endsWith('-scheduled-collect.sqlite'));
+    assert.equal(scheduledBackups.length, 1);
+    const oldTime = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    utimesSync(join(backupDir, scheduledBackups[0]), oldTime, oldTime);
+
+    const unchanged = await runNode([
+      'src/collect.ts',
+      '--sources=claude,codex,cursor',
+      '--db',
+      fixture.dbPath,
+      '--apply',
+      '--yes',
+      '--json'
+    ], { ...fixture.env, SCHEDULED_COLLECT_ENABLED: '1' });
+    assert.equal(unchanged.code, 0, unchanged.stderr);
+    assert.equal(JSON.parse(unchanged.stdout).backup, null, unchanged.stderr);
+    assert.equal(
+      readdirSync(backupDir).filter(name => name.endsWith('-scheduled-collect.sqlite')).length,
+      1
+    );
   } finally {
     cleanupFixture(fixture);
   }
@@ -160,6 +274,21 @@ function createCollectorFixture() {
           cache_creation_input_tokens: 5
         }
       }
+    }),
+    JSON.stringify({
+      type: 'assistant',
+      timestamp: '2026-06-17T01:05:00.000Z',
+      requestId: 'req-1-opus',
+      message: {
+        id: 'msg-1-opus',
+        model: 'claude-opus-4-6',
+        usage: {
+          input_tokens: 50,
+          output_tokens: 20,
+          cache_read_input_tokens: 2,
+          cache_creation_input_tokens: 0
+        }
+      }
     })
   ].join('\n'), 'utf8');
 
@@ -192,6 +321,18 @@ function createCollectorFixture() {
         info: {
           last_token_usage: { input_tokens: 80, output_tokens: 20, cached_input_tokens: 5, reasoning_output_tokens: 3 },
           total_token_usage: { input_tokens: 80, output_tokens: 20, cached_input_tokens: 5, reasoning_output_tokens: 3 }
+        }
+      }
+    }),
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
+    JSON.stringify({
+      type: 'event_msg',
+      timestamp: '2026-06-17T02:05:00.000Z',
+      payload: {
+        type: 'token_count',
+        info: {
+          last_token_usage: { input_tokens: 40, output_tokens: 10, cached_input_tokens: 0, reasoning_output_tokens: 2 },
+          total_token_usage: { input_tokens: 120, output_tokens: 30, cached_input_tokens: 5, reasoning_output_tokens: 5 }
         }
       }
     })
@@ -243,8 +384,12 @@ function cleanupFixture(fixture) {
   rmSync(fixture.dir, { recursive: true, force: true });
 }
 
+function codexEventId(payload) {
+  return `codex:${createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 32)}`;
+}
+
 function runNode(argv, env = {}) {
-  return new Promise(resolve => {
+  return new Promise<ProcessResult>(resolve => {
     const child = spawn(process.execPath, argv, {
       cwd: process.cwd(),
       env: { ...process.env, ...env },

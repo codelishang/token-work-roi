@@ -1,4 +1,5 @@
 import { U } from '../shared/utils.ts';
+import type { UsageRow } from '../shared/types.ts';
 
 const DEFAULT_TASK_TYPE = '未分类';
 const DEFAULT_OUTPUT_STATUS = '未标注';
@@ -15,7 +16,7 @@ const PRODUCTIVE_STATUSES = new Set(['已完成', '已发布']);
 const LOW_VALUE_LEVELS = new Set(['低']);
 const HIGH_VALUE_LEVELS = new Set(['高', '关键']);
 
-export function buildRoiAdvisor({ sessions = [], daily = [] } = {}) {
+export function buildRoiAdvisor({ sessions = [], daily = [] }: { sessions?: UsageRow[]; daily?: UsageRow[] } = {}) {
   const total = aggregateRows(sessions.length ? sessions : daily);
   const suggestions = [
     buildAttributionSuggestion(sessions, total),
@@ -42,7 +43,7 @@ export function modelTier(model, pricingStatus = '') {
   return 'unknown';
 }
 
-export function isRoiUnattributed(session = {}) {
+export function isRoiUnattributed(session: UsageRow = {}) {
   return (session.taskType || DEFAULT_TASK_TYPE) === DEFAULT_TASK_TYPE
     || (session.outputStatus || DEFAULT_OUTPUT_STATUS) === DEFAULT_OUTPUT_STATUS
     || (session.workPurpose || DEFAULT_WORK_PURPOSE) === DEFAULT_WORK_PURPOSE
@@ -202,14 +203,21 @@ function suggestion(value) {
   return value;
 }
 
-function withAttributionEvidence(text, rows = []) {
+function withAttributionEvidence(text, rows: UsageRow[] = []) {
   const autoCount = rows.filter(row => row.annotationSource === 'auto').length;
   if (!autoCount) return text;
   return `${text} 其中 ${autoCount} 条基于自动归因，建议抽查高成本项。`;
 }
 
-function aggregateRows(rows = []) {
-  return rows.reduce((acc, row) => {
+function aggregateRows(rows: UsageRow[] = []) {
+  return rows.reduce<{
+    sessionCount: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    totalTokens: number;
+    costUSD: number;
+  }>((acc, row) => {
     acc.sessionCount += 1;
     acc.inputTokens += row.inputTokens || 0;
     acc.outputTokens += row.outputTokens || 0;
@@ -232,7 +240,7 @@ function compareCostThenTokens(a, b) {
     || (b.totalTokens || 0) - (a.totalTokens || 0);
 }
 
-function labelSession(session = {}) {
+function labelSession(session: UsageRow = {}) {
   return session.projectAlias || session.projectPath || session.sessionId || '未命名 session';
 }
 

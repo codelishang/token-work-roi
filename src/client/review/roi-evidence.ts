@@ -1,10 +1,12 @@
+import type { UsageRow } from '../shared/types.ts';
+
 const MISSING_TASK = '未分类';
 const MISSING_STATUS = '未标注';
 const MISSING_PURPOSE = '未说明';
 const MISSING_STAGE = '未说明';
 const MISSING_VALUE = '未评估';
 
-export function buildRoiEvidence({ sessions = [], workItems = [] } = {}) {
+export function buildRoiEvidence({ sessions = [], workItems = [] }: { sessions?: UsageRow[]; workItems?: unknown[] } = {}) {
   const sessionCount = sessions.length;
   const totalTokens = sum(sessions, 'totalTokens');
   const officialCostUSD = sum(sessions, 'costUSD');
@@ -47,7 +49,7 @@ export function buildRoiEvidence({ sessions = [], workItems = [] } = {}) {
   };
 }
 
-function isEvidenceComplete(session = {}) {
+function isEvidenceComplete(session: UsageRow = {}) {
   return Boolean(session.projectAlias || session.projectPath)
     && (session.taskType || MISSING_TASK) !== MISSING_TASK
     && (session.outputStatus || MISSING_STATUS) !== MISSING_STATUS
@@ -57,11 +59,11 @@ function isEvidenceComplete(session = {}) {
     && isManual(session);
 }
 
-function isManual(session = {}) {
+function isManual(session: UsageRow = {}) {
   return session.annotationSource === 'manual' || session.annotationSource === 'imported';
 }
 
-function missingFields(session = {}) {
+function missingFields(session: UsageRow = {}) {
   const fields = [];
   if (!session.projectAlias && !session.projectPath) fields.push('项目');
   if ((session.taskType || MISSING_TASK) === MISSING_TASK) fields.push('任务');
@@ -73,6 +75,6 @@ function missingFields(session = {}) {
   return fields;
 }
 
-function sum(rows, field) {
+function sum(rows: UsageRow[], field: keyof UsageRow) {
   return rows.reduce((acc, row) => acc + Number(row[field] || 0), 0);
 }

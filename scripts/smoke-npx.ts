@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
+import type { WaitOptions } from './script-types.ts';
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const tempRoot = mkdtempSync(join(tmpdir(), 'token-work-npx-smoke-'));
@@ -199,17 +200,17 @@ function safeEnv(extra = {}) {
   };
 }
 
-async function waitForJson(url, { childState }) {
+async function waitForJson(url, { childState }: WaitOptions) {
   const response = await waitForResponse(url, { childState });
   return response.json();
 }
 
-async function waitForText(url, { childState }) {
+async function waitForText(url, { childState }: WaitOptions) {
   const response = await waitForResponse(url, { childState });
   return response.text();
 }
 
-async function waitForResponse(url, { childState, timeoutMs = 90000, intervalMs = 500 } = {}) {
+async function waitForResponse(url, { childState, timeoutMs = 90000, intervalMs = 500 }: WaitOptions = {}) {
   const started = Date.now();
   let last = '';
   while (Date.now() - started < timeoutMs) {
@@ -238,7 +239,7 @@ async function freePort(start) {
 }
 
 function canListen(port) {
-  return new Promise(resolvePort => {
+  return new Promise<boolean>(resolvePort => {
     const server = createServer();
     server.once('error', () => resolvePort(false));
     server.once('listening', () => server.close(() => resolvePort(true)));
@@ -252,7 +253,7 @@ function sleep(ms) {
 
 function stopChild(child) {
   if (child.exitCode != null) return Promise.resolve();
-  return new Promise(resolveStop => {
+  return new Promise<void>(resolveStop => {
     const timer = setTimeout(resolveStop, 5000);
     timer.unref?.();
     child.once('close', () => {

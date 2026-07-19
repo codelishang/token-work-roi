@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { request } from 'node:http';
+import { request, type IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -219,7 +219,7 @@ test('ingest rejects non-local browser origins and non-json bodies', async () =>
   }
 });
 
-async function startServer(extraEnv = {}) {
+async function startServer(extraEnv: NodeJS.ProcessEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-security-'));
   const server = startTestServer({
     dbPath: join(dir, 'usage.sqlite'),
@@ -294,7 +294,7 @@ function postIngest(port, headers = {}, { body = {} } = {}) {
 }
 
 function rawGet(port, path, headers = {}) {
-  return new Promise((resolveRequest, rejectRequest) => {
+  return new Promise<{ statusCode?: number; headers: IncomingHttpHeaders }>((resolveRequest, rejectRequest) => {
     const req = request({ host: '127.0.0.1', port, path, method: 'GET', headers }, res => {
       res.resume();
       res.on('end', () => resolveRequest({ statusCode: res.statusCode, headers: res.headers }));
@@ -304,7 +304,7 @@ function rawGet(port, path, headers = {}) {
   });
 }
 
-async function runServerUntilExit(extraEnv = {}) {
+async function runServerUntilExit(extraEnv: NodeJS.ProcessEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-security-denied-'));
   const server = spawnTestServer({
     dbPath: join(dir, 'usage.sqlite'),
