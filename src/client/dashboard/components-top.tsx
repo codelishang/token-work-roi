@@ -412,7 +412,7 @@ function Delta({ value, suffix = '%', invert = false }) {
 // ───────────────────────────────────────────────────────────────
 // KPI card
 // ───────────────────────────────────────────────────────────────
-function KPI({ label, value, sub, delta, dotColor, sparkValues, sparkColor }) {
+function KPI({ label, value, sub, delta, dotColor = null, sparkValues, sparkColor }) {
   return (
     <div className="kpi">
       <div className="kpi-label">

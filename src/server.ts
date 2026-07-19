@@ -73,6 +73,20 @@ import {
   buildEvidenceAutopilotPlan
 } from './evidence-autopilot.ts';
 
+type InputRecord = Record<string, unknown>;
+
+interface CollectionState {
+  status: string;
+  message: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  backup: unknown;
+  summary: unknown;
+}
+
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || process.env.BIND_HOST || '127.0.0.1';
 validateHostConfiguration(host, {
@@ -90,7 +104,7 @@ const MAX_INGEST_ROWS = 50_000;
 const db = openDb(dbPath);
 let activeCollection = null;
 let lastCoverageGate = null;
-let collectionState = {
+let collectionState: CollectionState = {
   status: 'idle',
   message: '尚未启动采集',
   startedAt: null,
@@ -98,7 +112,8 @@ let collectionState = {
   exitCode: null,
   stdout: '',
   stderr: '',
-  backup: null
+  backup: null,
+  summary: null
 };
 
 const server = createServer((req, res) => {
@@ -238,13 +253,14 @@ async function handleApi(req, url, res) {
         collected_at AS collectedAt
       FROM collection_runs
       ORDER BY id DESC
+      LIMIT 1000
     `);
 
     // Normalize sessions
     const sessions = rawSessions.map(s => {
       const projectPath = (s.projectPath && s.projectPath !== 'Unknown Project')
         ? s.projectPath
-        : (s.sessionId ? s.sessionId.split('/').slice(-1)[0] || s.sessionId : null);
+        : (s.sessionId ? String(s.sessionId).split('/').slice(-1)[0] || s.sessionId : null);
       const ruleProjectAlias = matchProjectAliasRule(projectPath, enabledAliasRules);
       const manualProjectAlias = s.manualProjectAlias || null;
       const model = s.model || modelFromSessionId(s.sessionId);
@@ -252,7 +268,8 @@ async function handleApi(req, url, res) {
         ...s,
         ...DEFAULT_SESSION_ANNOTATION,
         model,
-        lastActivity: s.lastActivity ? s.lastActivity.slice(0, 10) : null,
+        lastActivity: s.lastActivity ? String(s.lastActivity).slice(0, 10) : null,
+        source: s.source,
         projectPath,
         projectAlias: manualProjectAlias || ruleProjectAlias || null,
         manualProjectAlias,
@@ -284,7 +301,7 @@ async function handleApi(req, url, res) {
     for (const s of rawSessions) {
       const proj = (s.projectPath && s.projectPath !== 'Unknown Project')
         ? s.projectPath
-        : (s.sessionId ? s.sessionId.split('/').slice(-1)[0] || s.sessionId : null);
+        : (s.sessionId ? String(s.sessionId).split('/').slice(-1)[0] || s.sessionId : null);
       if (!proj) continue;
       const key = `${s.device}::${s.source}`;
       const cur = projMap.get(key);
@@ -385,8 +402,8 @@ async function handleApi(req, url, res) {
       // Normalize runs: strip newlines from messages, shorten device names
       runs: rawRuns.map(r => ({
         ...r,
-        message: r.message ? r.message.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim() : '',
-        device: r.device ? r.device.replace(/\.local$/, '').replace(/^(.{30}).+$/, '$1…') : r.device
+        message: r.message ? String(r.message).replace(/\n/g, ' ').replace(/\s+/g, ' ').trim() : '',
+        device: r.device ? String(r.device).replace(/\.local$/, '').replace(/^(.{30}).+$/, '$1…') : r.device
       }))
     });
     return;
@@ -453,7 +470,7 @@ async function handleApi(req, url, res) {
     const coverage = await collectionCoverageDryRun({
       sources: url.searchParams.get('sources') || 'claude,codex,cursor'
     });
-    lastCoverageGate = summarizeCoverageGate(coverage);
+    lastCoverageGate = summarizeCoverageGate(inputRecord(coverage));
     sendJson(res, coverage);
     return;
   }
@@ -794,7 +811,7 @@ async function handleEvidenceSuggestionsApply(req, res) {
     const plan = buildEvidenceAutopilotPlan({
       sessions,
       projectAliasRules,
-      period: payload.period || 'month',
+      period: typeof payload.period === 'string' ? payload.period : 'month',
       threshold: parseThreshold(payload.threshold)
     });
     const requested = suggestionIdSet(payload.suggestionIds || payload.suggestions);
@@ -826,7 +843,7 @@ async function handleAutoAttributionApply(req, res) {
     const backup = createDbBackup({ reason: 'auto-attribution' });
     const result = applyAutoSessionAnnotations(db, suggestions, {
       threshold,
-      runId: payload.runId || undefined
+      runId: typeof payload.runId === 'string' ? payload.runId : undefined
     });
     sendJson(res, { ok: true, ...result, backup, plan });
   } catch (error) {
@@ -945,15 +962,23 @@ async function handleImportCcusageJson(req, res) {
 
   try {
     const body = await readJson(req, 8 * 1024 * 1024);
+    const requestedDevice = body.device ?? process.env.COLLECT_DEVICE;
+    if (typeof requestedDevice !== 'string' || !requestedDevice.trim()) {
+      throw new Error('来源设备不能为空；同一台电脑请始终使用相同名称');
+    }
+    if (body.apply != null && typeof body.apply !== 'boolean') {
+      throw new Error('apply 必须是布尔值');
+    }
+    const apply = body.apply === true;
     const input = body.payload != null
       ? parseCcusageJsonText(JSON.stringify(body.payload))
       : parseCcusageJsonText(body.text || body.json || '');
     const plan = planCcusageImport(input, {
-      device: body.device || process.env.COLLECT_DEVICE || 'imported'
+      device: requestedDevice.trim()
     });
-    const summary = {
+    const summary: InputRecord = {
       ok: true,
-      mode: body.apply ? 'apply' : 'dry-run',
+      mode: apply ? 'apply' : 'dry-run',
       detectedShape: plan.detectedShape,
       daily: plan.daily.length,
       sessions: plan.sessions.length,
@@ -961,7 +986,7 @@ async function handleImportCcusageJson(req, res) {
       warnings: plan.warnings,
       run: plan.run
     };
-    if (body.apply) {
+    if (apply) {
       const backup = createDbBackup({ reason: 'ccusage-import' });
       summary.applied = applyCcusageImport(db, plan);
       summary.backup = backup;
@@ -1007,7 +1032,8 @@ function startCollection({ reason = 'manual' } = {}) {
     env: {
       ...process.env,
       TOKEN_WORK_COLLECTORS: sources,
-      TOKEN_WORK_COLLECT_CONFIRMED: '1'
+      TOKEN_WORK_COLLECT_CONFIRMED: '1',
+      TOKEN_WORK_COLLECT_REASON: reason
     },
     windowsHide: true
   });
@@ -1024,7 +1050,8 @@ function startCollection({ reason = 'manual' } = {}) {
     exitCode: null,
     stdout: '',
     stderr: '',
-    backup: null
+    backup: null,
+    summary: null
   };
 
   child.stdout.setEncoding('utf8');
@@ -1116,7 +1143,7 @@ function envBool(name, fallback) {
 }
 
 function demoModeEnabled() {
-  return envBool('TOKEN_WORK_DEMO_MODE');
+  return envBool('TOKEN_WORK_DEMO_MODE', false);
 }
 
 function envNumber(name, fallback) {
@@ -1253,6 +1280,7 @@ function buildLocalTrustPayload() {
     SELECT id, device, source, status, message, collected_at AS collectedAt
     FROM collection_runs
     ORDER BY id DESC
+    LIMIT 1000
   `);
   const workItems = listWorkItems(db);
   const advisorActions = listAdvisorActions(db);
@@ -1335,9 +1363,14 @@ function sourceHealth(collectors = detectCollectors()) {
       GROUP BY source
     `),
     runs: all(`
-      SELECT source, status, message, collected_at AS collectedAt
-      FROM collection_runs
-      ORDER BY id DESC
+      SELECT r.source, r.status, r.message, r.collected_at AS collectedAt
+      FROM collection_runs r
+      JOIN (
+        SELECT source, MAX(id) AS id
+        FROM collection_runs
+        GROUP BY source
+      ) latest ON latest.id = r.id
+      ORDER BY r.id DESC
     `)
   });
 }
@@ -1407,7 +1440,7 @@ function latestCollectionRun() {
   return {
     source: row.source || null,
     status: row.status || null,
-    message: row.message ? row.message.replace(/\n/g, ' ').replace(/\s+/g, ' ').slice(0, 300) : null,
+    message: row.message ? String(row.message).replace(/\n/g, ' ').replace(/\s+/g, ' ').slice(0, 300) : null,
     collectedAt: row.collectedAt || null
   };
 }
@@ -1489,9 +1522,10 @@ function dataModeFor({ demoMode, counts, coverageGate, hasVerifiedEventRun = fal
   };
 }
 
-function summarizeCoverageGate(summary = {}) {
+function summarizeCoverageGate(summary: InputRecord = {}) {
   const sources = Array.isArray(summary.sources) ? summary.sources : [];
-  const fatal = Number(summary.totals?.fatalCoverageErrors || 0);
+  const totals = inputRecord(summary.totals);
+  const fatal = Number(totals.fatalCoverageErrors || 0);
   const eventSources = sources.filter(source => Number(source.tokenEvents || 0) > 0);
   const trustedSources = sources.filter(source => source.coverageRisk === 'trusted-event-level');
   const cursorNoToken = sources.some(source => source.id === 'cursor' && source.coverageRisk === 'detected-no-token-fields');
@@ -1504,9 +1538,9 @@ function summarizeCoverageGate(summary = {}) {
     eventSourceCount: eventSources.length,
     fatalCoverageErrors: fatal,
     cursorNoTokenFields: cursorNoToken,
-    totalTokenEvents: Number(summary.totals?.tokenEvents || 0),
-    firstTimestamp: summary.totals?.firstTimestamp || null,
-    lastTimestamp: summary.totals?.lastTimestamp || null,
+    totalTokenEvents: Number(totals.tokenEvents || 0),
+    firstTimestamp: totals.firstTimestamp || null,
+    lastTimestamp: totals.lastTimestamp || null,
     message: ok
       ? 'coverage gate passed for event-level token history.'
       : 'coverage gate did not find trusted event-level token history.'
@@ -1676,7 +1710,7 @@ function buildAutoAttributionContext() {
       ...s,
       ...DEFAULT_SESSION_ANNOTATION,
       model,
-      lastActivity: s.lastActivity ? s.lastActivity.slice(0, 10) : null,
+      lastActivity: s.lastActivity ? String(s.lastActivity).slice(0, 10) : null,
       projectPath,
       projectAlias: s.manualProjectAlias || ruleProjectAlias || null,
       manualProjectAlias: s.manualProjectAlias || null,
@@ -1732,8 +1766,14 @@ function suggestionIdSet(rows) {
   return new Set(list.map(row => typeof row === 'string' ? row : row?.suggestionId).filter(Boolean));
 }
 
-function identityKey(row = {}) {
+function identityKey(row: InputRecord = {}) {
   return `${row.device || ''}::${row.source || ''}::${row.sessionId || row.session_id || ''}`;
+}
+
+function inputRecord(value: unknown): InputRecord {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as InputRecord
+    : {};
 }
 
 function modelFromSessionId(sessionId) {
@@ -1883,7 +1923,7 @@ function isJsonRequest(req) {
   return /^application\/json(?:\s*;|$)/i.test(contentType);
 }
 
-function readJson(req, maxBytes = 50 * 1024 * 1024) {
+function readJson(req, maxBytes = 50 * 1024 * 1024): Promise<InputRecord> {
   return new Promise((resolveRequest, rejectRequest) => {
     let body = '';
     let byteLength = 0;
@@ -1903,7 +1943,11 @@ function readJson(req, maxBytes = 50 * 1024 * 1024) {
     req.on('end', () => {
       if (tooLarge) return;
       try {
-        resolveRequest(JSON.parse(body || '{}'));
+        const parsed: unknown = JSON.parse(body || '{}');
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('JSON 请求体必须是对象');
+        }
+        resolveRequest(parsed as InputRecord);
       } catch (error) {
         rejectRequest(error);
       }

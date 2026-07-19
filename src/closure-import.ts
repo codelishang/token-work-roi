@@ -19,8 +19,35 @@ import {
 
 const PRODUCTIVE_STATUSES = new Set(['已完成', '已发布']);
 
+interface ClosureImportArgs {
+  dbPath: string;
+  file: string | null;
+  apply: boolean;
+  applyValid: boolean;
+  fillGuide: boolean;
+  report: boolean;
+  limit: number;
+  json: boolean;
+  help?: boolean;
+}
+
+interface RawClosureRow extends Record<string, unknown> {
+  projectAlias?: unknown;
+  project_alias?: unknown;
+  taskType?: unknown;
+  task_type?: unknown;
+  outputStatus?: unknown;
+  output_status?: unknown;
+  workPurpose?: unknown;
+  work_purpose?: unknown;
+  workStage?: unknown;
+  work_stage?: unknown;
+  valueLevel?: unknown;
+  value_level?: unknown;
+}
+
 export function parseImportArgs(argv = process.argv.slice(2)) {
-  const options = {
+  const options: ClosureImportArgs = {
     dbPath: process.env.DB_PATH || defaultDbPath,
     file: null,
     apply: false,
@@ -378,7 +405,7 @@ function collectImportRows(db, rows) {
   return { results, planned };
 }
 
-function missingRawClosureFields(row = {}) {
+function missingRawClosureFields(row: RawClosureRow = {}) {
   const fields = [];
   if (!normalizeText(row.projectAlias ?? row.project_alias)) fields.push('projectAlias');
   if (!normalizeText(row.taskType ?? row.task_type)) fields.push('taskType');

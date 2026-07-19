@@ -108,14 +108,14 @@ function latestRunBySource(runs) {
   return map;
 }
 
-function matchingSourceKeys(collector, keys) {
+function matchingSourceKeys(collector, keys: string[]) {
   const unique = [...new Set(keys)].filter(Boolean);
   const patterns = SOURCE_MATCHERS[collector.id] || [collector.id, collector.label];
   const normalizedPatterns = patterns.map(normalizeKey).filter(Boolean);
   return unique.filter(key => normalizedPatterns.some(pattern => key.includes(pattern) || pattern.includes(key)));
 }
 
-function mergeStats(keys, groups) {
+function mergeStats(keys: string[], groups: Record<string, Map<string, ReturnType<typeof emptyStats>>>) {
   const merged = emptyStats();
   for (const key of keys) {
     for (const group of Object.values(groups)) {
@@ -137,7 +137,7 @@ function firstRun(keys, latestRuns) {
   return keys
     .map(key => latestRuns.get(key))
     .filter(Boolean)
-    .sort((a, b) => new Date(b.collectedAt || 0) - new Date(a.collectedAt || 0))[0] || null;
+    .sort((a, b) => new Date(b.collectedAt || 0).getTime() - new Date(a.collectedAt || 0).getTime())[0] || null;
 }
 
 function emptyStats() {

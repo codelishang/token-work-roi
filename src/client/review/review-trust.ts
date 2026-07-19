@@ -1,4 +1,19 @@
-export function buildReviewTrustState(meta = {}) {
+interface ReviewTrustMeta {
+  runtime?: {
+    dataMode?: { id?: string };
+    counts?: Record<string, unknown>;
+    coverageGate?: Record<string, unknown>;
+    latestCollectionRun?: unknown;
+    collectionCoverageAvailable?: boolean;
+    demoMode?: boolean;
+  };
+  dataMode?: { id?: string };
+  collectionCoverageAvailable?: boolean;
+  demoMode?: boolean;
+  sessionCount?: number;
+}
+
+export function buildReviewTrustState(meta: ReviewTrustMeta = {}) {
   const runtime = meta.runtime || {};
   const dataMode = meta.dataMode || runtime.dataMode || {};
   const counts = runtime.counts || {};

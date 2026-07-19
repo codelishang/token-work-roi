@@ -6,6 +6,24 @@ import { createSqliteBackup, openDb, recordRun, upsertDaily, upsertSession, upse
 import { loadPricing } from './pricing.ts';
 import { collectableCollectors, collectorLabel, enabledCollectorIds } from './collector-registry.ts';
 
+type InputRecord = Record<string, unknown>;
+
+interface CollectArgs {
+  [key: string]: string | boolean | undefined;
+  apply?: boolean;
+  collectors?: string;
+  db?: string;
+  device?: string;
+  dryRun?: boolean;
+  experimental?: boolean;
+  help?: boolean;
+  json?: boolean;
+  push?: string;
+  sources?: string;
+  token?: string;
+  yes?: boolean;
+}
+
 try {
   await main();
 } catch (error) {
@@ -29,6 +47,7 @@ async function main() {
   const pricingCachePath = resolve(process.cwd(), 'data', 'official-pricing.json');
   const pricingData = await loadPricing(pricingCachePath);
   const enabled = enabledCollectors(args);
+  const scheduled = isScheduledCollection();
   const includeExperimental = Boolean(args.sources || args.collectors || args.experimental);
   const collectors = collectableCollectors({ includeExperimental }).filter(({ id }) => enabled.has(id));
   const exportPayload = {
@@ -80,7 +99,7 @@ async function main() {
   }
 
   try {
-    await collectLocal({ collectors, mode, db, dbPath: args.db, pricingData, device, collectedAt, exportPayload, summary });
+    await collectLocal({ collectors, mode, db, dbPath: args.db, pricingData, device, collectedAt, exportPayload, summary, scheduled });
     if (args.push) {
       if (mode !== 'apply') throw new Error('--push is only available with --apply.');
       await pushPayload(args.push, exportPayload, args.token);
@@ -103,7 +122,7 @@ async function main() {
   }
 }
 
-async function collectLocal({ collectors, mode, db, dbPath, pricingData, device, collectedAt, exportPayload, summary }) {
+async function collectLocal({ collectors, mode, db, dbPath, pricingData, device, collectedAt, exportPayload, summary, scheduled }) {
   if (!collectors.length) return;
 
   const payloads = [];
@@ -158,8 +177,8 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
       continue;
     }
 
-    const dailyRows = normalizeDailyRows(graphJson, device, collectedAt);
-    const sessionRows = normalizeSessionRows(modelsJson, device, collectedAt);
+    const dailyRows = normalizeDailyRows(graphJson, device);
+    const sessionRows = normalizeSessionRows(modelsJson, device);
     const eventRows = normalizeTokenEventRows(tokenEvents, device, collectedAt);
     sourceSummary.dailyRows = dailyRows.length;
     sourceSummary.sessionRows = sessionRows.length;
@@ -188,7 +207,16 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
   }
 
   if (mode === 'apply' && db) {
-    summary.backup = createSqliteBackup(db, dbPath, { reason: 'collect' });
+    const shouldBackup = !scheduled || tokenUsageWouldChange(db, payloads);
+    summary.backup = shouldBackup
+      ? createSqliteBackup(db, dbPath, scheduled
+          ? {
+              reason: 'scheduled-collect',
+              minimumIntervalMs: 60 * 60 * 1000,
+              maxBackups: 24
+            }
+          : { reason: 'collect' })
+      : null;
   }
 
   for (const payload of payloads) {
@@ -202,14 +230,11 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
           collectedAt,
           module: payload.module
         });
-        recordRun(db, run);
+        recordCollectionRun(db, run, scheduled);
         exportPayload.runs.push(run);
         continue;
       }
       const { sourceSummary, label, module, dailyRows, sessionRows, eventRows } = payload;
-      runInTransaction(db, () => dailyRows.forEach(row => upsertDaily(db, row)));
-      runInTransaction(db, () => sessionRows.forEach(row => upsertSession(db, row)));
-      runInTransaction(db, () => eventRows.forEach(row => upsertTokenEvent(db, row)));
       const run = runRecord({
         device,
         label,
@@ -218,10 +243,111 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
         collectedAt,
         module
       });
-      recordRun(db, run);
+      runInTransaction(db, () => {
+        dailyRows.forEach(row => upsertDaily(db, row));
+        sessionRows.forEach(row => upsertSession(db, row));
+        const deleteLegacyEvent = db.prepare(`
+          DELETE FROM token_events
+          WHERE event_id = ? AND device = ? AND source = ?
+        `);
+        for (const row of eventRows) {
+          for (const legacyEventId of row.legacyEventIds) {
+            deleteLegacyEvent.run(legacyEventId, row.device, row.source);
+          }
+          upsertTokenEvent(db, row);
+        }
+        recordCollectionRun(db, run, scheduled);
+      });
       exportPayload.runs.push(run);
     }
   }
+}
+
+function tokenUsageWouldChange(db, payloads) {
+  const matchingDaily = db.prepare(`
+    SELECT 1
+    FROM daily_usage
+    WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
+      AND input_tokens = ? AND output_tokens = ?
+      AND cache_creation_tokens = ? AND cache_read_tokens = ?
+      AND reasoning_output_tokens = ? AND total_tokens = ?
+  `);
+  const matchingSession = db.prepare(`
+    SELECT 1
+    FROM session_usage
+    WHERE device = ? AND source = ? AND session_id = ?
+      AND model = ?
+      AND input_tokens = ? AND output_tokens = ?
+      AND cache_creation_tokens = ? AND cache_read_tokens = ?
+      AND reasoning_output_tokens = ? AND total_tokens = ?
+  `);
+  const matchingEvent = db.prepare(`
+    SELECT 1
+    FROM token_events
+    WHERE device = ? AND source = ? AND session_id = ? AND timestamp = ? AND model = ?
+      AND input_tokens = ? AND output_tokens = ?
+      AND cache_read_tokens = ? AND cache_creation_tokens = ? AND reasoning_tokens = ?
+    LIMIT 1
+  `);
+  const legacyEvent = db.prepare(`
+    SELECT 1 FROM token_events
+    WHERE event_id = ? AND device = ? AND source = ?
+  `);
+
+  for (const payload of payloads) {
+    if (payload.type === 'error') continue;
+    for (const row of payload.dailyRows) {
+      if (!matchingDaily.get(
+        row.device, row.source, row.usageDate, row.model,
+        row.inputTokens, row.outputTokens, row.cacheCreationTokens,
+        row.cacheReadTokens, row.reasoningOutputTokens, row.totalTokens
+      )) return true;
+    }
+    for (const row of payload.sessionRows) {
+      if (!matchingSession.get(
+        row.device, row.source, row.sessionId,
+        row.model,
+        row.inputTokens, row.outputTokens, row.cacheCreationTokens,
+        row.cacheReadTokens, row.reasoningOutputTokens, row.totalTokens
+      )) return true;
+    }
+    for (const row of payload.eventRows) {
+      if (row.legacyEventIds.some(eventId => legacyEvent.get(eventId, row.device, row.source))) return true;
+      if (!matchingEvent.get(
+        row.device, row.source, row.sessionId, row.timestamp, row.model,
+        row.inputTokens, row.outputTokens, row.cacheReadTokens,
+        row.cacheCreationTokens, row.reasoningTokens
+      )) return true;
+    }
+  }
+  return false;
+}
+
+function isScheduledCollection() {
+  const reason = process.env.TOKEN_WORK_COLLECT_REASON;
+  return reason === 'scheduled'
+    || (!reason && ['1', 'true', 'yes', 'on'].includes(String(process.env.SCHEDULED_COLLECT_ENABLED || '').toLowerCase()));
+}
+
+function recordCollectionRun(db, run, scheduled) {
+  if (!scheduled) {
+    recordRun(db, run);
+    return;
+  }
+  const previous = db.prepare(`
+    SELECT status, message, collected_at AS collectedAt
+    FROM collection_runs
+    WHERE device = ? AND source = ?
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(run.device, run.source);
+  const elapsed = previous
+    ? new Date(run.collectedAt).getTime() - new Date(previous.collectedAt).getTime()
+    : Number.POSITIVE_INFINITY;
+  const sameOutcome = previous?.status === run.status
+    && (run.status === 'ok' || previous?.message === run.message);
+  if (sameOutcome && elapsed >= 0 && elapsed < 60 * 60 * 1000) return;
+  recordRun(db, run);
 }
 
 function validateMode(args) {
@@ -309,7 +435,7 @@ function normalizeDailyRows(json, deviceName) {
   });
 }
 
-function normalizeSessionRows(json, deviceName, collectedAt) {
+function normalizeSessionRows(json, deviceName) {
   const entries = Array.isArray(json.entries) ? json.entries : [];
   return entries.map((entry) => {
     const tokens = {
@@ -326,7 +452,7 @@ function normalizeSessionRows(json, deviceName, collectedAt) {
       device: deviceName,
       source,
       sessionId: entry.sessionId || ['local', entry.client || 'unknown', workspace || 'no-workspace', model].join(':'),
-      lastActivity: entry.lastActivity || collectedAt,
+      lastActivity: entry.lastActivity || null,
       projectPath: workspace || null,
       model,
       inputTokens: tokens.input,
@@ -342,26 +468,31 @@ function normalizeSessionRows(json, deviceName, collectedAt) {
 
 function normalizeTokenEventRows(events, deviceName, collectedAt) {
   if (!Array.isArray(events)) return [];
-  return events.map((event) => ({
-    device: deviceName,
-    source: sourceLabel(event.source || event.client),
-    sessionId: event.sessionId || event.session_id || 'unknown-session',
-    timestamp: event.timestamp || collectedAt,
-    model: event.model || 'unknown',
-    inputTokens: positiveNumber(event.inputTokens ?? event.input_tokens),
-    outputTokens: positiveNumber(event.outputTokens ?? event.output_tokens),
-    cacheReadTokens: positiveNumber(event.cacheReadTokens ?? event.cache_read_tokens),
-    cacheCreationTokens: positiveNumber(event.cacheCreationTokens ?? event.cache_creation_tokens),
-    reasoningTokens: positiveNumber(event.reasoningTokens ?? event.reasoning_tokens),
-    toolCategory: event.toolCategory ?? event.tool_category ?? null,
-    fileExtension: event.fileExtension ?? event.file_extension ?? null,
-    repoPathHash: event.repoPathHash ?? event.repo_path_hash ?? null,
-    privacyLevel: event.privacyLevel ?? event.privacy_level ?? 'safe',
-    eventId: event.eventId ?? event.event_id ?? null
-  }));
+  return events.map((event) => {
+    const eventId = event.eventId ?? event.event_id ?? null;
+    return {
+      device: deviceName,
+      source: sourceLabel(event.source || event.client),
+      sessionId: event.sessionId || event.session_id || 'unknown-session',
+      timestamp: event.timestamp || collectedAt,
+      model: event.model || 'unknown',
+      inputTokens: positiveNumber(event.inputTokens ?? event.input_tokens),
+      outputTokens: positiveNumber(event.outputTokens ?? event.output_tokens),
+      cacheReadTokens: positiveNumber(event.cacheReadTokens ?? event.cache_read_tokens),
+      cacheCreationTokens: positiveNumber(event.cacheCreationTokens ?? event.cache_creation_tokens),
+      reasoningTokens: positiveNumber(event.reasoningTokens ?? event.reasoning_tokens),
+      toolCategory: event.toolCategory ?? event.tool_category ?? null,
+      fileExtension: event.fileExtension ?? event.file_extension ?? null,
+      repoPathHash: event.repoPathHash ?? event.repo_path_hash ?? null,
+      privacyLevel: event.privacyLevel ?? event.privacy_level ?? 'safe',
+      eventId,
+      legacyEventIds: [...new Set(Array.isArray(event.legacyEventIds) ? event.legacyEventIds : [])]
+        .filter(candidate => typeof candidate === 'string' && candidate && candidate !== eventId)
+    };
+  });
 }
 
-function normalizeTokens(tokens = {}) {
+function normalizeTokens(tokens: InputRecord = {}) {
   return {
     input: positiveNumber(tokens.input),
     output: positiveNumber(tokens.output),
@@ -411,7 +542,7 @@ function emptyAuditSummary() {
   };
 }
 
-function normalizeAuditSummary(value = {}) {
+function normalizeAuditSummary(value: InputRecord = {}) {
   const summary = emptyAuditSummary();
   for (const key of [
     'candidateFiles',
@@ -609,24 +740,35 @@ function laterTimestamp(left, right) {
 }
 
 function parseArgs(argv) {
-  const parsed = {};
+  const booleanKeys = new Set(['apply', 'dryRun', 'experimental', 'help', 'json', 'yes']);
+  const valueKeys = new Set(['collectors', 'db', 'device', 'push', 'sources', 'token']);
+  const parsed: CollectArgs = {};
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg.startsWith('--') && arg.includes('=')) {
       const [key, value] = arg.slice(2).split(/=(.*)/s);
-      parsed[toCamel(key)] = value;
+      const camelKey = toCamel(key);
+      parsed[camelKey] = parseArgValue(camelKey, value, booleanKeys);
     } else if (arg.startsWith('--')) {
       const key = toCamel(arg.slice(2));
       const next = argv[i + 1];
       if (!next || next.startsWith('--')) {
+        if (valueKeys.has(key)) throw new Error(`--${arg.slice(2)} requires a value`);
         parsed[key] = true;
       } else {
-        parsed[key] = next;
+        parsed[key] = parseArgValue(key, next, booleanKeys);
         i += 1;
       }
     }
   }
   return parsed;
+}
+
+function parseArgValue(key, value, booleanKeys) {
+  if (!booleanKeys.has(key)) return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new Error(`--${key.replace(/[A-Z]/g, char => `-${char.toLowerCase()}`)} must be true or false`);
 }
 
 function toCamel(value) {

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import type { ProcessResult } from '../test-support/process.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -129,7 +130,7 @@ function seedStatuslineDb(timestamp) {
 }
 
 function runCli(argv) {
-  return new Promise(resolve => {
+  return new Promise<ProcessResult>(resolve => {
     const child = spawn(process.execPath, ['src/cli.ts', ...argv], {
       cwd: process.cwd(),
       env: process.env,

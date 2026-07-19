@@ -53,6 +53,7 @@ npx token-work
 ```
 
 The default entrypoint first checks local structured sources in read-only mode. When Claude Code or Codex CLI event records pass the trust gate, Token Work ROI backs up and updates the local SQLite database, then opens the browser UI.
+While the service stays running, scheduled collection backs up only when usage changes, at most once per hour, and retains the latest 24 scheduled backups. Manual collection, imports, and manual backups are unaffected.
 
 For a first look without writing real usage:
 
@@ -100,16 +101,16 @@ Records are written only when explicit token fields exist. Token Work ROI does n
 Dry-run the file first:
 
 ```bash
-npx token-work import-usage --format=ccusage-json --file ccusage.json --dry-run
+npx token-work import-usage --format=ccusage-json --file ccusage.json --device other-computer --dry-run
 ```
 
 After checking the source, date, and token totals, apply it:
 
 ```bash
-npx token-work import-usage --format=ccusage-json --file ccusage.json --apply --yes
+npx token-work import-usage --format=ccusage-json --file ccusage.json --device other-computer --apply --yes
 ```
 
-Imported cost fields are ignored. Token Work ROI recalculates cost from its official pricing table. Data containing conversation text, prompts, or responses is rejected.
+Use one stable `--device` name per computer so records remain separate. Imported cost fields are ignored. Token Work ROI recalculates cost from its official pricing table. Data containing conversation text, prompts, or responses is rejected.
 
 ## Desktop Window
 
@@ -136,7 +137,7 @@ Maintainers can refresh the cache manually:
 npm run pricing:update
 ```
 
-The repository workflow attempts a pricing and exchange-rate refresh every Monday at 00:01 Asia/Shanghai.
+The repository workflow attempts a pricing and exchange-rate refresh every Monday at 03:15 Asia/Shanghai.
 
 ## Privacy
 

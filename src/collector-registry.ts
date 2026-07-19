@@ -117,7 +117,7 @@ export const COLLECTOR_REGISTRY = [
 ];
 
 export function listCollectors() {
-  return COLLECTOR_REGISTRY.map(({ detect, roots, ...entry }) => ({
+  return COLLECTOR_REGISTRY.map(({ roots, ...entry }) => ({
     ...entry,
     configuredRoots: roots().filter(Boolean)
   }));
@@ -251,7 +251,8 @@ function stableCollector(id, label, module, options) {
     dataFields: STABLE_FIELDS,
     readsConversationContent: false,
     tokenReliability: 'native-token-fields',
-    roots: options.roots
+    roots: options.roots,
+    note: null
   };
 }
 

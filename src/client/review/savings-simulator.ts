@@ -1,6 +1,7 @@
 import { calculateOfficialCost } from '../../pricing.ts';
 import { providerFromSource } from '../../provider.ts';
 import { modelTier } from './roi-advisor.ts';
+import type { UsageRow } from '../shared/types.ts';
 
 const PRODUCTIVE_STATUSES = new Set(['已完成', '已发布']);
 const HIGH_VALUE_LEVELS = new Set(['高', '关键']);
@@ -31,7 +32,11 @@ const TARGET_MODELS = {
   ]
 };
 
-export function buildSavingsSimulation({ sessions = [], daily = [], pricingMeta = null } = {}) {
+export function buildSavingsSimulation({
+  sessions = [],
+  daily = [],
+  pricingMeta = null
+}: { sessions?: UsageRow[]; daily?: UsageRow[]; pricingMeta?: unknown } = {}) {
   const rows = sessions.length ? sessions : daily;
   const totalCostUSD = rows.reduce((sum, row) => sum + pricedCost(row), 0);
   const totalTokens = rows.reduce((sum, row) => sum + tokensFor(row).total, 0);
@@ -134,7 +139,7 @@ export function buildSavingsSimulation({ sessions = [], daily = [], pricingMeta 
   };
 }
 
-function classifyCandidate(row = {}) {
+function classifyCandidate(row: UsageRow = {}) {
   const currentTier = modelTier(row.model || row.pricingModel, row.pricingStatus);
   if (!['heavy', 'mid'].includes(currentTier)) return null;
   if (isHighValueProductive(row)) return null;
@@ -206,7 +211,7 @@ function simulateTargetCost(row, tier) {
   return candidates[0] || null;
 }
 
-function orderedTargetModels(tier, row = {}) {
+function orderedTargetModels(tier, row: UsageRow = {}) {
   const candidates = TARGET_MODELS[tier] || [];
   const provider = String(row.pricingProvider || providerFromSource(row.source) || '').toLowerCase();
   const preferred = candidates.filter(candidate => candidate.provider === provider);
@@ -214,7 +219,7 @@ function orderedTargetModels(tier, row = {}) {
   return [...preferred, ...rest];
 }
 
-function tokensFor(row = {}) {
+function tokensFor(row: UsageRow = {}) {
   const input = positive(row.inputTokens ?? row.input_tokens);
   const output = positive(row.outputTokens ?? row.output_tokens);
   const cacheRead = positive(row.cacheReadTokens ?? row.cache_read_tokens);
@@ -225,35 +230,35 @@ function tokensFor(row = {}) {
   return { input, output, cacheRead, cacheWrite, reasoning, total };
 }
 
-function pricedCost(row = {}) {
+function pricedCost(row: UsageRow = {}) {
   const value = Number(row.costUSD ?? row.cost_usd ?? 0);
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-function isUnpriced(row = {}) {
+function isUnpriced(row: UsageRow = {}) {
   return row.pricingStatus === 'unpriced'
     || modelTier(row.model || row.pricingModel, row.pricingStatus) === 'unpriced';
 }
 
-function isHighValueProductive(row = {}) {
+function isHighValueProductive(row: UsageRow = {}) {
   return HIGH_VALUE_LEVELS.has(row.valueLevel)
     && PRODUCTIVE_STATUSES.has(row.outputStatus);
 }
 
-function isLowValueOrWaste(row = {}) {
+function isLowValueOrWaste(row: UsageRow = {}) {
   return row.outputStatus === '已废弃' || LOW_VALUE_LEVELS.has(row.valueLevel);
 }
 
-function isExplorationOrValidation(row = {}) {
+function isExplorationOrValidation(row: UsageRow = {}) {
   return EXPLORATION_PURPOSES.has(row.workPurpose)
     || EXPLORATION_STAGES.has(row.workStage);
 }
 
-function projectLabel(row = {}) {
+function projectLabel(row: UsageRow = {}) {
   return row.projectAlias || row.projectPath || row.sessionId || row.source || 'unknown';
 }
 
-function evidenceQualityForRow(row = {}) {
+function evidenceQualityForRow(row: UsageRow = {}) {
   if (row.annotationSource === 'manual' || row.annotationSource === 'imported') return '人工确认';
   if (row.annotationSource === 'auto' && Number(row.annotationConfidence || 0) >= 80) return '自动高置信';
   if (row.annotationSource === 'auto') return '待确认草稿';

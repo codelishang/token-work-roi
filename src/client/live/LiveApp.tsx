@@ -208,7 +208,7 @@ function KpiCard({ accent, label, value, detail, trend = [] }) {
   );
 }
 
-function Panel({ title, action, className = '', children }) {
+function Panel({ title, action = null, className = '', children }) {
   return (
     <section className={`pulse-panel ${className}`}>
       <header>

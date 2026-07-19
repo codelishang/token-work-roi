@@ -1,7 +1,12 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-export function resolveViteBin({ packageRoot, requireLike } = {}) {
+type RealpathLike = (path: string) => string;
+
+export function resolveViteBin({ packageRoot, requireLike }: {
+  packageRoot?: string;
+  requireLike?: { resolve?: (specifier: string) => string };
+} = {}) {
   const candidates = [];
 
   try {
@@ -25,9 +30,9 @@ export function resolveViteBin({ packageRoot, requireLike } = {}) {
 }
 
 export function resolveLaunchCwd(packageRoot, {
-  realpathLike = realpathSync,
-  nativeRealpathLike = realpathSync.native
-} = {}) {
+  realpathLike = realpathSync as RealpathLike,
+  nativeRealpathLike = realpathSync.native as RealpathLike
+}: { realpathLike?: RealpathLike; nativeRealpathLike?: RealpathLike } = {}) {
   const fallback = resolve(packageRoot || '.');
   const candidates = [
     tryRealpath(realpathLike, fallback),
@@ -37,7 +42,7 @@ export function resolveLaunchCwd(packageRoot, {
   return candidates.find(candidate => !candidate.includes('~')) || candidates[0] || fallback;
 }
 
-function tryRealpath(realpathLike, path) {
+function tryRealpath(realpathLike: RealpathLike, path: string) {
   try {
     return realpathLike?.(path) || null;
   } catch {

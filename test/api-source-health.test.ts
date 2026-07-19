@@ -114,6 +114,51 @@ test('data API labels verified event-level databases as event verified', async (
   }
 });
 
+test('data API caps run history without hiding the latest run for a quieter source', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'token-work-run-history-'));
+  const dbPath = join(dir, 'usage.sqlite');
+  const db = openDb(dbPath);
+  try {
+    recordRun(db, {
+      device: 'devbox',
+      source: 'Codex CLI',
+      status: 'ok',
+      message: 'daily=1, sessions=1, token_events=1',
+      collectedAt: '2026-07-01T00:00:00Z'
+    });
+    db.exec('BEGIN');
+    try {
+      for (let index = 0; index < 1005; index += 1) {
+        recordRun(db, {
+          device: 'devbox',
+          source: 'Claude Code',
+          status: 'ok',
+          message: 'daily=1, sessions=1, token_events=1',
+          collectedAt: new Date(Date.UTC(2026, 6, 2, 0, index)).toISOString()
+        });
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  } finally {
+    db.close();
+  }
+
+  const server = startTestServer({ dbPath });
+  try {
+    const port = await waitForTestServer(server, { path: '/api/data' });
+    const data = await getJson(port, '/api/data');
+    assert.equal(data.runs.length, 1000);
+    const codex = data.meta.sourceHealth.find(row => row.id === 'codex');
+    assert.equal(codex.lastRunAt, '2026-07-01T00:00:00Z');
+  } finally {
+    await stopTestServer(server.child);
+    await removeTempDir(dir);
+  }
+});
+
 function seedDb(dbPath) {
   seedEventDb(dbPath, { verifiedRun: true });
 }

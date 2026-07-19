@@ -180,14 +180,14 @@ function CalendarSection({ daily, period }) {
   const onEnter = (e, cell) => {
     if (!cell || cell.total === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const topTool = Object.entries(cell.byTool).sort((a, b) => b[1] - a[1])[0];
+    const topTool = Object.entries(cell.byTool).sort((a, b) => Number(b[1]) - Number(a[1]))[0];
     setTip({
       x: rect.left + rect.width / 2,
       y: rect.top,
       date: cell.date,
       total: cell.total,
       tool: topTool ? topTool[0] : null,
-      toolShare: topTool ? (topTool[1] / cell.total) * 100 : 0
+      toolShare: topTool ? (Number(topTool[1]) / cell.total) * 100 : 0
     });
   };
   const onLeave = () => setTip(null);
@@ -252,7 +252,7 @@ function CalendarSection({ daily, period }) {
       {peaks.length > 0 && (
         <div className="peaks">
           {peaks.map((p, i) => {
-            const topTool = Object.entries(p.byTool).sort((a, b) => b[1] - a[1])[0];
+            const topTool = Object.entries(p.byTool).sort((a, b) => Number(b[1]) - Number(a[1]))[0];
             const topProject = RU.aggregateBy(daily.filter(r => r.usageDate === p.date), 'projectPath')
               .sort((a, b) => b.totalTokens - a.totalTokens)[0];
             return (

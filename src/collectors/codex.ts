@@ -322,11 +322,16 @@ export async function collect(pricingData = null) {
     const events = await parseSessionFile(filePath, fileSessionId);
     if (!events.length) continue;
     const rawSessionId = events.find(event => event.sessionId)?.sessionId || fileSessionId;
-    const primaryModel = primaryModelFor(events);
-    const sessionId = `local:${CLIENT_KEY}:${hashableSessionPart(rawSessionId)}:${primaryModel}`;
+    const sessionPrefix = `local:${CLIENT_KEY}:${hashableSessionPart(rawSessionId)}`;
+    const modelSessionIds = new Map(
+      [...new Set(events.map(event => event.model))]
+        .map(model => [model, `${sessionPrefix}:${model}`])
+    );
+    const legacySessionIds = [...modelSessionIds.values()];
 
     for (let index = 0; index < events.length; index += 1) {
       const { timestamp, date, model, workspace, tokens } = events[index];
+      const sessionId = modelSessionIds.get(model);
       const eventKey = codexEventDedupKey({ sessionId, timestamp, model, tokens });
       if (eventKey && seenEventKeys.has(eventKey)) continue;
       if (eventKey) seenEventKeys.add(eventKey);
@@ -356,7 +361,7 @@ export async function collect(pricingData = null) {
       if (timestamp && (!sessionAgg.lastActivity || timestamp > sessionAgg.lastActivity)) {
         sessionAgg.lastActivity = timestamp;
       }
-      tokenEvents.push(tokenEventFor({ sessionId, timestamp, model, tokens, index }));
+      tokenEvents.push(tokenEventFor({ sessionId, legacySessionIds, timestamp, model, tokens, index }));
     }
   }
 
@@ -487,9 +492,13 @@ function emptyAuditSummary() {
   };
 }
 
-function tokenEventFor({ sessionId, timestamp, model, tokens, index }) {
+function tokenEventFor({ sessionId, legacySessionIds = [], timestamp, model, tokens, index }) {
+  const eventId = codexEventId({ sessionId, timestamp, model, tokens, index });
   return {
-    eventId: `codex:${stableHash({ sessionId, timestamp, model, tokens, index })}`,
+    eventId,
+    legacyEventIds: legacySessionIds
+      .map(candidate => codexEventId({ sessionId: candidate, timestamp, model, tokens, index }))
+      .filter(candidate => candidate !== eventId),
     source: CLIENT_KEY,
     sessionId,
     timestamp: timestamp || new Date().toISOString(),
@@ -503,12 +512,8 @@ function tokenEventFor({ sessionId, timestamp, model, tokens, index }) {
   };
 }
 
-function primaryModelFor(events) {
-  const byModel = new Map();
-  for (const event of events) {
-    byModel.set(event.model, (byModel.get(event.model) || 0) + tokenTotal(event.tokens));
-  }
-  return [...byModel.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || 'unknown';
+function codexEventId({ sessionId, timestamp, model, tokens, index }) {
+  return `codex:${stableHash({ sessionId, timestamp, model, tokens, index })}`;
 }
 
 function tokenTotal(tokens) {

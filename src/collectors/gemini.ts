@@ -195,7 +195,8 @@ function parseHeadlessStats(stats, modelHint, date, sessionId) {
   const models = stats.models;
   if (models && typeof models === 'object') {
     for (const [modelName, data] of Object.entries(models)) {
-      const t = data.tokens || {};
+      const row = data && typeof data === 'object' ? data as Record<string, unknown> : {};
+      const t = row.tokens && typeof row.tokens === 'object' ? row.tokens as Record<string, unknown> : {};
       const input     = pos(t.prompt   ?? t.input        ?? t.input_tokens);
       const output    = pos(t.candidates ?? t.output      ?? t.output_tokens);
       const cached    = pos(t.cached   ?? t.cached_tokens);

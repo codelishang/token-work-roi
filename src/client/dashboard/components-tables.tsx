@@ -18,9 +18,10 @@ import {
   writeAnnotationPresets
 } from './annotation-presets.ts';
 import { buildSessionKey, buildTableRowKey, createUniqueRowKeyFactory } from './table-keys.ts';
+import type { UsageRow } from '../shared/types.ts';
 
 // Generic data table
-function DataTable({ rows, columns, initialSort, search, onSearch, onRowClick, selectedKey, getKey, height, emptyText }) {
+function DataTable({ rows, columns, initialSort, search, onSearch = null, onRowClick, selectedKey = null, getKey, height, emptyText }) {
   const [sortBy, setSortBy] = useState(initialSort || { field: null, dir: 'desc' });
 
   const filtered = useMemo(() => {
@@ -546,7 +547,7 @@ function TablePanel({
     setBatchBusy(true);
     setBatchError(null);
     try {
-      const payloadValues = {};
+      const payloadValues: UsageRow = {};
       if (values.projectAlias) payloadValues.projectAlias = values.projectAlias;
       if (values.taskType) payloadValues.taskType = values.taskType;
       if (values.outputStatus) payloadValues.outputStatus = values.outputStatus;
@@ -632,7 +633,7 @@ function TablePanel({
     }
   };
 
-  const saveAnnotation = async (values, options = {}) => {
+  const saveAnnotation = async (values, options: { continueNext?: boolean } = {}) => {
     setAnnotationBusy(true);
     setAnnotationError(null);
     try {
@@ -1385,7 +1386,7 @@ function DrillDrawer({ drill, daily, onClose }) {
   const detail = useMemo(() => {
     if (!drill) return null;
     const { kind, row } = drill;
-    let title = '', sub = '', filterFn = () => true;
+    let title = '', sub = '', filterFn = (_row: UsageRow) => true;
     if (kind === 'source') { title = row.source; sub = row.device; filterFn = r => r.source === row.source && r.device === row.device; }
     if (kind === 'model')  { title = row.model;  sub = row.source; filterFn = r => r.source === row.source && r.model === row.model; }
     if (kind === 'session'){ title = row.projectPath || row.sessionId; sub = `${row.source} · ${row.device}`;

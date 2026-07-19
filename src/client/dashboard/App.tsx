@@ -33,8 +33,11 @@ import {
   buildCcusageJsonExportCommand,
   defaultResetAnchor
 } from './import-budget.ts';
+import type { BudgetForm } from './import-budget.ts';
+import type { PeriodRange, UsageRow } from '../shared/types.ts';
 import { buildFirstRunState } from './onboarding.ts';
 import { buildTrustEvidenceQueue } from './trust-evidence-queue.ts';
+import { readAnnotationPresets } from './annotation-presets.ts';
 import './styles.css';
 
 function formatApiConnectionError(error, action = '请求') {
@@ -45,7 +48,7 @@ function formatApiConnectionError(error, action = '请求') {
   return message || `${action}失败`;
 }
 
-function periodLabelForFilters(filters = {}) {
+function periodLabelForFilters(filters: PeriodRange = {}) {
   const start = (filters.startDateTime || `${filters.startDate || ''}T00:00`).replace('T', ' ');
   const end = (filters.endDateTime || `${filters.endDate || ''}T23:59`).replace('T', ' ');
   if (!start.trim() && !end.trim()) return '当前筛选范围';
@@ -130,7 +133,7 @@ export function App({ routeMode = 'dashboard' }) {
     if (M?.meta?.demoMode) loadCollectionCoverage();
   }, [M?.meta?.demoMode, loadCollectionCoverage]);
 
-  const syncCollectStatus = useCallback((options = {}) => {
+  const syncCollectStatus = useCallback((options: { refreshOnDone?: boolean } = {}) => {
     return fetch('/api/collect/status')
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -694,7 +697,7 @@ function Dashboard({
         && (effectiveFilters.sources.size === 0 || effectiveFilters.sources.has(row.source))
         && (effectiveFilters.models.size === 0 || effectiveFilters.models.has(row.model));
     });
-    const trustedSourceIds = new Set((base.sources || [])
+    const trustedSourceIds = new Set<string>((base.sources || [])
       .filter(source => source.successfulCoverage || source.status === 'native-trusted')
       .flatMap(source => [source.id, source.label].filter(Boolean).map(value => String(value).toLowerCase())));
     const trustedSessions = filteredSessions.filter(session => {
@@ -744,7 +747,7 @@ function Dashboard({
     setQuickAttributionBusy(true);
     setQuickAttributionError(null);
     try {
-      const payloadValues = {};
+      const payloadValues: UsageRow = {};
       if (values.projectAlias) payloadValues.projectAlias = values.projectAlias;
       if (values.taskType) payloadValues.taskType = values.taskType;
       if (values.outputStatus) payloadValues.outputStatus = values.outputStatus;
@@ -1164,6 +1167,7 @@ function Dashboard({
           workPurposes={workPurposes}
           workStages={workStages}
           valueLevels={valueLevels}
+          annotationPresets={readAnnotationPresets()}
           busy={quickAttributionBusy}
           error={quickAttributionError}
           onSave={saveQuickAttribution}
@@ -1279,7 +1283,7 @@ function DataSourceStatusPanel({
   );
 }
 
-function DataSourceMetric({ label, value, detail }) {
+function DataSourceMetric({ label, value, detail = '' }) {
   return (
     <div>
       <span>{label}</span>
@@ -1853,6 +1857,7 @@ function ImportBudgetModal({
   onClose
 }) {
   const [importText, setImportText] = useState('');
+  const [importDevice, setImportDevice] = useState('');
   const [importResult, setImportResult] = useState(null);
   const [importError, setImportError] = useState(null);
   const [importBusy, setImportBusy] = useState(false);
@@ -1861,7 +1866,7 @@ function ImportBudgetModal({
   const [bridgeCopied, setBridgeCopied] = useState(false);
   const [budgetBusy, setBudgetBusy] = useState(false);
   const [budgetError, setBudgetError] = useState(null);
-  const [budgetForm, setBudgetForm] = useState(() => ({
+  const [budgetForm, setBudgetForm] = useState<BudgetForm>(() => ({
     source: sources[0] || 'Codex CLI',
     modelGroup: '',
     label: '',
@@ -1884,7 +1889,11 @@ function ImportBudgetModal({
     setImportBusy(true);
     setImportError(null);
     try {
-      const result = await onImportCcusageJson({ text: importText, apply });
+      const result = await onImportCcusageJson({
+        text: importText,
+        device: importDevice.trim(),
+        apply
+      });
       setImportResult(result);
     } catch (error) {
       setImportError(error.message || 'ccusage JSON 导入失败');
@@ -1949,7 +1958,7 @@ function ImportBudgetModal({
     }
   };
 
-  const canDryRun = importText.trim().length > 0 && !importBusy;
+  const canDryRun = importText.trim().length > 0 && importDevice.trim().length > 0 && !importBusy;
   const canApply = canDryRun && importResult?.mode === 'dry-run' && !importResult.error;
   const copyBridgeCommand = async () => {
     try {
@@ -1987,6 +1996,20 @@ function ImportBudgetModal({
               <span className="tag tag-soft">默认 dry-run</span>
             </div>
             <div className="form-grid">
+              <label className="form-field form-field-wide">
+                <span>来源设备（必填）</span>
+                <input
+                  value={importDevice}
+                  onChange={(event) => {
+                    setImportDevice(event.target.value);
+                    setImportResult(null);
+                    setImportError(null);
+                  }}
+                  placeholder="例如：work-laptop"
+                  maxLength={120}
+                  required
+                />
+              </label>
               <label className="form-field form-field-wide">
                 <span>粘贴 ccusage JSON</span>
                 <textarea

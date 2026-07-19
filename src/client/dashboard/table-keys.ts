@@ -1,3 +1,5 @@
+import type { UsageRow } from '../shared/types.ts';
+
 export function createUniqueRowKeyFactory(getKey) {
   const usedRowKeys = new Map();
   return (row, index) => {
@@ -9,7 +11,7 @@ export function createUniqueRowKeyFactory(getKey) {
   };
 }
 
-export function buildTableRowKey(row = {}, index = 0, tab = 'row') {
+export function buildTableRowKey(row: UsageRow = {}, index = 0, tab = 'row') {
   if (row?.id) return `rule-${row.id}`;
   if (row?.sessionId || row?.session_id) return buildSessionKey(row);
   const parts = [
@@ -33,7 +35,7 @@ export function buildTableRowKey(row = {}, index = 0, tab = 'row') {
   return parts.length ? parts.join('::') : `${tab || 'row'}-${index}`;
 }
 
-export function buildSessionKey(session = {}) {
+export function buildSessionKey(session: UsageRow = {}) {
   const sessionId = session.sessionId || session.session_id || session.id || session.projectPath || session.projectAlias || '';
   return [
     session.device || 'unknown-device',

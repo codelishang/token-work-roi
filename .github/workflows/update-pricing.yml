@@ -12,8 +12,8 @@ on:
           - main
           - test
   schedule:
-    # GitHub cron uses UTC; this is Monday 00:01 in Asia/Shanghai.
-    - cron: '1 16 * * 0'
+    # GitHub cron uses UTC; this is Monday 03:15 in Asia/Shanghai.
+    - cron: '15 19 * * 0'
 
 permissions:
   contents: write

@@ -1,8 +1,20 @@
-export function sessionModel(session = {}) {
+import type { UsageRow } from '../shared/types.ts';
+
+interface DashboardFilters {
+  sources?: Set<unknown>;
+  devices?: Set<unknown>;
+  models?: Set<unknown>;
+  startDate?: string;
+  endDate?: string;
+  startDateTime?: string;
+  endDateTime?: string;
+}
+
+export function sessionModel(session: UsageRow = {}) {
   return session.model || session.pricingModel || '';
 }
 
-export function filterSessionsByDashboardFilters(sessions = [], filters = {}) {
+export function filterSessionsByDashboardFilters(sessions: UsageRow[] = [], filters: DashboardFilters = {}) {
   const sources = filters.sources || new Set();
   const devices = filters.devices || new Set();
   const models = filters.models || new Set();
@@ -39,7 +51,7 @@ function inDateTimeRange(value, startDateTime, endDateTime) {
   return (!startDateTime || value >= startDateTime) && (!endDateTime || value <= endDateTime);
 }
 
-export function buildModelUsageRows(dailyRows = [], sessions = []) {
+export function buildModelUsageRows(dailyRows: UsageRow[] = [], sessions: UsageRow[] = []) {
   const rows = new Map();
 
   const ensure = (model) => {

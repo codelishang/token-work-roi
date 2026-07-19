@@ -1,4 +1,12 @@
-export function buildFirstRunState(data = {}) {
+interface FirstRunData {
+  daily?: unknown[];
+  sessions?: unknown[];
+  budgetProfiles?: unknown[];
+  advisorActions?: unknown[];
+  tokenEvents?: unknown[];
+}
+
+export function buildFirstRunState(data: FirstRunData = {}) {
   const dailyCount = data.daily?.length || 0;
   const sessionCount = data.sessions?.length || 0;
   const budgetCount = data.budgetProfiles?.length || 0;

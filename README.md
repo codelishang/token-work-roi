@@ -53,6 +53,7 @@ npx token-work
 ```
 
 默认入口会先只读检查本机结构化来源。Claude Code 或 Codex CLI 的事件级记录通过可信门槛后，元衡会备份并更新本地 SQLite，然后打开浏览器页面。
+持续运行时，定时采集只在用量发生变化时备份，最多每小时一个，并保留最近 24 个定时备份；人工采集、导入和手工备份不受此限制。
 
 首次使用只想看界面，可以选择以下方式：
 
@@ -100,16 +101,16 @@ node src/cli.ts
 先预检文件：
 
 ```bash
-npx token-work import-usage --format=ccusage-json --file ccusage.json --dry-run
+npx token-work import-usage --format=ccusage-json --file ccusage.json --device other-computer --dry-run
 ```
 
 确认来源、日期和 token 数量无误后再写入：
 
 ```bash
-npx token-work import-usage --format=ccusage-json --file ccusage.json --apply --yes
+npx token-work import-usage --format=ccusage-json --file ccusage.json --device other-computer --apply --yes
 ```
 
-导入时忽略外部文件中的成本字段，统一按元衡的官方价格表重新计算。包含对话正文、prompt 或 response 的数据会被拒绝。
+`--device` 用于区分不同电脑，同一台电脑应始终使用相同名称。导入时忽略外部文件中的成本字段，统一按元衡的官方价格表重新计算。包含对话正文、prompt 或 response 的数据会被拒绝。
 
 ## 桌面小窗
 
@@ -136,7 +137,7 @@ npm run desktop
 npm run pricing:update
 ```
 
-仓库工作流每周一 00:01（Asia/Shanghai）尝试更新价格和汇率。
+仓库工作流每周一 03:15（Asia/Shanghai）尝试更新价格和汇率。
 
 ## 隐私
 

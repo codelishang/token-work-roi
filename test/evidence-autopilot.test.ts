@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { UsageRow } from '../src/client/shared/types.ts';
 import {
   applyEvidenceSuggestions,
   buildEvidenceAutopilotPlan
@@ -141,7 +142,7 @@ test('apply evidence suggestions writes selected auto annotations and output lin
     assert.equal(result.appliedOutputs, 1);
     const output = db.prepare('SELECT output_url AS outputUrl, output_type AS outputType FROM session_outputs').get();
     assert.equal(output.outputType, 'commit');
-    assert.match(output.outputUrl, /^https:\/\/github\.com\//);
+    assert.match(String(output.outputUrl), /^https:\/\/github\.com\//);
 
     upsertSessionAnnotation(db, {
       device: baseSession.device,
@@ -164,6 +165,6 @@ test('apply evidence suggestions writes selected auto annotations and output lin
   }
 });
 
-function sessionKey(row = {}) {
+function sessionKey(row: UsageRow = {}) {
   return `${row.device || ''}::${row.source || ''}::${row.sessionId || ''}`;
 }

@@ -14,6 +14,14 @@ const pricingSourcePath = resolve(process.cwd(), 'src', 'pricing.ts');
 const MAX_PRICING_PAGE_BYTES = 8 * 1024 * 1024;
 const MAX_PRICING_ASSET_BYTES = 4 * 1024 * 1024;
 const MAX_PRICING_ASSETS = 4;
+
+interface ParsedRates {
+  input: number;
+  output: number;
+  cachedInput?: number;
+  cacheWrite5m?: number;
+  cacheWrite1h?: number;
+}
 const STABLE_ALIASES = new Map([
   ['openai::gpt-5-6-sol', ['gpt-5.6-sol', 'gpt-5-6-sol']],
   ['openai::gpt-5-6-terra', ['gpt-5.6-terra', 'gpt-5-6-terra']],
@@ -346,7 +354,7 @@ function parseSourceModels(source, body, exchangeRate) {
 
 function parseOpenAiGpt56Models(body) {
   const text = tableText(body).toLowerCase();
-  const expected = [
+  const expected: Array<[string, number, number, string]> = [
     ['gpt-5.6-sol', 5, 30, 'OpenAI GPT-5.6 Sol flagship launch rate. Cache write is input × 1.25; cache read is input × 0.1.'],
     ['gpt-5.6-terra', 2.5, 15, 'OpenAI GPT-5.6 Terra balanced launch rate. Cache write is input × 1.25; cache read is input × 0.1.'],
     ['gpt-5.6-luna', 1, 6, 'OpenAI GPT-5.6 Luna lightweight launch rate. Cache write is input × 1.25; cache read is input × 0.1.']
@@ -582,7 +590,7 @@ function parseQwenModels(body, exchangeRate) {
     .filter(Boolean);
 }
 
-function qwenRates(body, label) {
+function qwenRates(body, label): ParsedRates | null {
   const start = body.indexOf(label);
   if (start < 0) return null;
   const segment = body.slice(start, start + 5000);
@@ -597,7 +605,7 @@ function qwenRates(body, label) {
   };
 }
 
-function volcengineInferenceRates(body, label) {
+function volcengineInferenceRates(body, label): ParsedRates | null {
   const input = volcenginePriceFor(body, label, 'infer-prompt');
   const output = volcenginePriceFor(body, label, 'infer-completion');
   if (input == null || output == null) return null;
@@ -639,16 +647,16 @@ function parseColumnPricingTable(body, { provider, sourceProvider, models, start
   }).filter(Boolean);
 }
 
-function rateModel(provider, model, rates, sourceProvider, pricingFetchStatus = 'official-page', officialRatesPerMTok = null, note = null) {
+function rateModel(provider, model, rates: ParsedRates, sourceProvider, pricingFetchStatus = 'official-page', officialRatesPerMTok = null, note = null) {
   if (!rates || !isFiniteRate(rates.input) || !isFiniteRate(rates.output)) return null;
-  const ratesPerMTok = {
+  const ratesPerMTok: ParsedRates = {
     input: rates.input,
     cachedInput: isFiniteRate(rates.cachedInput) ? rates.cachedInput : rates.input,
     output: rates.output
   };
   if (isFiniteRate(rates.cacheWrite5m)) ratesPerMTok.cacheWrite5m = rates.cacheWrite5m;
   if (isFiniteRate(rates.cacheWrite1h)) ratesPerMTok.cacheWrite1h = rates.cacheWrite1h;
-  const row = {
+  const row: Record<string, unknown> = {
     provider,
     model,
     aliases: [model],
@@ -677,12 +685,16 @@ function cnyPrice(block, pattern) {
   return Number.isFinite(number) ? number : null;
 }
 
-function cnyToUsdRates(rates, exchangeRate) {
+function cnyToUsdRates(rates: ParsedRates, exchangeRate): ParsedRates | null {
   const divisor = Number(exchangeRate?.rate || 0);
   if (!Number.isFinite(divisor) || divisor <= 0) return null;
-  return Object.fromEntries(
-    Object.entries(rates).map(([key, value]) => [key, Number(value) / divisor])
-  );
+  return {
+    input: rates.input / divisor,
+    output: rates.output / divisor,
+    ...(rates.cachedInput == null ? {} : { cachedInput: rates.cachedInput / divisor }),
+    ...(rates.cacheWrite5m == null ? {} : { cacheWrite5m: rates.cacheWrite5m / divisor }),
+    ...(rates.cacheWrite1h == null ? {} : { cacheWrite1h: rates.cacheWrite1h / divisor })
+  };
 }
 
 function tableText(body) {

@@ -10,7 +10,7 @@ import { Delta } from './components-top.tsx';
 // ───────────────────────────────────────────────────────────────
 // ECharts wrapper
 // ───────────────────────────────────────────────────────────────
-function EChart({ option, height = 320, onEvents }) {
+function EChart({ option, height = 320, onEvents = null }) {
   const ref = useRef(null);
   const chartRef = useRef(null);
 
@@ -46,7 +46,7 @@ const TREND_MODES = [
   { id: 'bar',     label: '柱状' }
 ];
 
-function TrendChart({ rows, dates, sources, compareRows, compareDates, mode, onModeChange, totals, prevTotals, onExport, density }) {
+function TrendChart({ rows, dates, sources, compareRows, compareDates, mode, onModeChange, totals, prevTotals = null, onExport, density = null }) {
   // build series
   const byKey = useMemo(() => {
     const m = new Map();
@@ -625,7 +625,7 @@ function GrowthPanel({ totalsByDay }) {
   );
 }
 
-function GrowthStat({ label, value, sub, subUnit }) {
+function GrowthStat({ label, value, sub, subUnit = '' }) {
   return (
     <div style={{
       padding: '10px 12px',

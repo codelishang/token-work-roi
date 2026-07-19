@@ -3,6 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
+import type { WaitOptions } from './script-types.ts';
+
+interface PublishedArgs extends Record<string, string | boolean | undefined> {
+  version?: string;
+  v?: string;
+}
 
 const args = parseArgs(process.argv.slice(2));
 const version = args.version || args.v;
@@ -115,17 +121,17 @@ function createEmptyCollectorConfig(root) {
   }), 'utf8');
 }
 
-async function waitForJson(url, options = {}) {
+async function waitForJson(url, options: WaitOptions = {}) {
   const response = await waitForResponse(url, options);
   return response.json();
 }
 
-async function waitForText(url, options = {}) {
+async function waitForText(url, options: WaitOptions = {}) {
   const response = await waitForResponse(url, options);
   return response.text();
 }
 
-async function waitForResponse(url, { childState, timeoutMs = 120000, intervalMs = 500 } = {}) {
+async function waitForResponse(url, { childState, timeoutMs = 120000, intervalMs = 500 }: WaitOptions = {}) {
   const started = Date.now();
   let last = '';
   while (Date.now() - started < timeoutMs) {
@@ -154,7 +160,7 @@ async function freePort(start) {
 }
 
 function canListen(port) {
-  return new Promise(resolvePort => {
+  return new Promise<boolean>(resolvePort => {
     const server = createServer();
     server.once('error', () => resolvePort(false));
     server.once('listening', () => server.close(() => resolvePort(true)));
@@ -162,8 +168,8 @@ function canListen(port) {
   });
 }
 
-function parseArgs(argv) {
-  const parsed = {};
+function parseArgs(argv): PublishedArgs {
+  const parsed: PublishedArgs = {};
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (!arg.startsWith('--')) continue;
@@ -194,7 +200,7 @@ function safeEnv(extra = {}) {
 
 function stopChild(child) {
   if (child.exitCode != null) return Promise.resolve();
-  return new Promise(resolveStop => {
+  return new Promise<void>(resolveStop => {
     const timer = setTimeout(resolveStop, 5000);
     timer.unref?.();
     child.once('close', () => {

@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ProcessResult } from '../test-support/process.ts';
 import { openDb } from '../src/db.ts';
 
 test('CLI bridge refuses non-interactive external scans without --yes', async () => {
@@ -145,7 +146,7 @@ function createMockCcusage(dir) {
 }
 
 function runCli(argv, env = {}) {
-  return new Promise(resolve => {
+  return new Promise<ProcessResult>(resolve => {
     const child = spawn(process.execPath, ['src/cli.ts', ...argv], {
       cwd: process.cwd(),
       env: { ...process.env, ...env },

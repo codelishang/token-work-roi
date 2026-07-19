@@ -94,7 +94,7 @@ async function collectClaudeDirs(dir) {
   return results;
 }
 
-function unique(values) {
+function unique(values: string[]): string[] {
   return [...new Set(values)];
 }
 
@@ -263,16 +263,23 @@ export async function collect(pricingData = null) {
       const records = await parseSessionFile(filePath);
       if (!records.length) continue;
       const sessionFileId = basename(filePath).replace(/\.jsonl$/i, '');
-      const primaryModel = primaryModelFor(records);
-      const sessionId = `local:${CLIENT_KEY}:${hashableSessionPart(sessionFileId)}:${primaryModel}`;
+      const sessionPrefix = `local:${CLIENT_KEY}:${hashableSessionPart(sessionFileId)}`;
+      const modelSessionIds = new Map(
+        [...new Set(records.map(record => normalizeModelForGrouping(record.model)))]
+          .map(model => [model, `${sessionPrefix}:${model}`])
+      );
+      const legacySessionIds = [...modelSessionIds.values()];
 
       for (let index = 0; index < records.length; index += 1) {
         const record = records[index];
         const tokens = extractTokens(record.usage);
+        const model = normalizeModelForGrouping(record.model);
         const normalized = {
           ...record,
+          model,
           tokens,
-          sessionId,
+          sessionId: modelSessionIds.get(model),
+          legacySessionIds,
           workspaceKey,
           workspaceLabel,
           eventIndex: index
@@ -422,15 +429,12 @@ function emptyAuditSummary() {
 
 function tokenEventFor(record) {
   const model = normalizeModelForGrouping(record.model);
+  const eventId = claudeEventId({ ...record, model, sessionId: record.sessionId });
   return {
-    eventId: `claude:${stableHash({
-      sessionId: record.sessionId,
-      dedupKey: record.dedupKey,
-      eventIndex: record.eventIndex,
-      timestamp: record.timestamp,
-      model,
-      tokens: record.tokens
-    })}`,
+    eventId,
+    legacyEventIds: (record.legacySessionIds || [])
+      .map(sessionId => claudeEventId({ ...record, model, sessionId }))
+      .filter(candidate => candidate !== eventId),
     source: CLIENT_KEY,
     sessionId: record.sessionId,
     timestamp: record.timestamp || new Date().toISOString(),
@@ -444,14 +448,8 @@ function tokenEventFor(record) {
   };
 }
 
-function primaryModelFor(records) {
-  const byModel = new Map();
-  for (const record of records) {
-    const model = normalizeModelForGrouping(record.model);
-    const tokens = extractTokens(record.usage);
-    byModel.set(model, (byModel.get(model) || 0) + tokenTotal(tokens));
-  }
-  return [...byModel.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || 'unknown';
+function claudeEventId({ sessionId, dedupKey, eventIndex, timestamp, model, tokens }) {
+  return `claude:${stableHash({ sessionId, dedupKey, eventIndex, timestamp, model, tokens })}`;
 }
 
 function tokenTotal(tokens) {

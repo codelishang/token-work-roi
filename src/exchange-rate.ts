@@ -11,7 +11,18 @@ const PACKAGE_ROOT = resolve(MODULE_DIR, '..');
 
 let cachedRate = null;
 
-export async function getUsdCnyExchangeRate({ now = Date.now(), fetchImpl = globalThis.fetch } = {}) {
+interface ExchangeRateResponse {
+  ok: boolean;
+  status?: number;
+  json(): Promise<Record<string, unknown>>;
+}
+
+type ExchangeRateFetch = (input: string | URL | Request, init?: RequestInit) => Promise<ExchangeRateResponse>;
+
+export async function getUsdCnyExchangeRate({
+  now = Date.now(),
+  fetchImpl = globalThis.fetch
+}: { now?: number; fetchImpl?: ExchangeRateFetch } = {}) {
   const persisted = readPersistedExchangeRate(now);
   if (persisted) return persisted;
 
@@ -28,16 +39,18 @@ export async function getUsdCnyExchangeRate({ now = Date.now(), fetchImpl = glob
     const response = await fetchImpl(sourceUrl, { signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
-    const rate = Number(payload?.rates?.CNY ?? payload?.conversion_rates?.CNY);
+    const rates = inputRecord(payload.rates);
+    const conversionRates = inputRecord(payload.conversion_rates);
+    const rate = Number(rates.CNY ?? conversionRates.CNY);
     if (!Number.isFinite(rate) || rate <= 0) throw new Error('CNY rate missing');
     cachedRate = {
       base: 'USD',
       quote: 'CNY',
       rate,
-      source: payload?.provider || sourceUrl,
+      source: typeof payload.provider === 'string' ? payload.provider : sourceUrl,
       sourceUrl,
-      lastUpdated: payload?.time_last_update_utc || null,
-      nextUpdated: payload?.time_next_update_utc || null,
+      lastUpdated: typeof payload.time_last_update_utc === 'string' ? payload.time_last_update_utc : null,
+      nextUpdated: typeof payload.time_next_update_utc === 'string' ? payload.time_next_update_utc : null,
       fetchedAt: new Date(now).toISOString(),
       fetchedAtMs: now,
       isFallback: false
@@ -96,4 +109,10 @@ function resolvePricingCachePath() {
     resolve(PACKAGE_ROOT, 'data', 'official-pricing.json')
   ];
   return candidates.find(candidate => existsSync(candidate)) || candidates[0];
+}
+
+function inputRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }

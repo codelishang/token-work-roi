@@ -3,7 +3,13 @@ import { stopProcessTree } from './process.ts';
 
 const DEFAULT_TIMEOUT_MS = 15000;
 
-export function spawnTestServer({ dbPath, host = '127.0.0.1', env = {} } = {}) {
+interface TestServerOptions {
+  dbPath?: string;
+  host?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+export function spawnTestServer({ dbPath, host = '127.0.0.1', env = {} }: TestServerOptions = {}) {
   const child = spawn(process.execPath, ['src/server.ts'], {
     cwd: process.cwd(),
     env: {
@@ -18,14 +24,16 @@ export function spawnTestServer({ dbPath, host = '127.0.0.1', env = {} } = {}) {
     windowsHide: true
   });
   const output = captureOutput(child);
-  const server = { child, output, port: null };
+  const server: { child: typeof child; output: typeof output; port: number | null } = { child, output, port: null };
   child.on('message', message => {
-    if (message?.type === 'listening' && validPort(message.port)) server.port = message.port;
+    if (!message || typeof message !== 'object') return;
+    const status = message as { type?: unknown; port?: unknown };
+    if (status.type === 'listening' && validPort(status.port)) server.port = status.port as number;
   });
   return server;
 }
 
-export function startTestServer(options = {}) {
+export function startTestServer(options: TestServerOptions = {}) {
   return spawnTestServer(options);
 }
 

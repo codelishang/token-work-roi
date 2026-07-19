@@ -1,6 +1,9 @@
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+
+type InputRecord = Record<string, unknown>;
 
 export const defaultDbPath = resolve(process.cwd(), 'data', 'usage.sqlite');
 export const TASK_TYPES = ['未分类', '功能开发', '问题修复', '代码审查', '技术调研', '内容创作', '运维配置', '其他'];
@@ -62,21 +65,51 @@ export function openReadOnlyDb(dbPath = defaultDbPath) {
   return db;
 }
 
-export function createSqliteBackup(db, dbPath = defaultDbPath, { reason = 'manual', backupDir = null } = {}) {
+export function createSqliteBackup(db, dbPath = defaultDbPath, {
+  reason = 'manual',
+  backupDir = null,
+  minimumIntervalMs = 0,
+  maxBackups = 0,
+  now = new Date()
+} = {}) {
   const resolvedDbPath = resolve(dbPath);
   if (!existsSync(resolvedDbPath)) {
     throw new Error(`SQLite database not found: ${resolvedDbPath}`);
   }
-  const createdAt = new Date().toISOString();
+  const createdAt = new Date(now).toISOString();
   const stamp = createdAt.replace(/[:.]/g, '-');
   const safeReason = String(reason || 'manual').replace(/[^a-z0-9-]+/gi, '-').toLowerCase();
   const targetDir = backupDir || process.env.BACKUP_DIR || join(dirname(resolvedDbPath), 'backups');
   mkdirSync(targetDir, { recursive: true });
+  const existing = backupFiles(targetDir, safeReason);
+  if (minimumIntervalMs > 0 && existing.length > 0) {
+    const latest = statSync(join(targetDir, existing[0]));
+    if (new Date(now).getTime() - latest.mtimeMs < minimumIntervalMs) {
+      pruneBackupFiles(targetDir, existing, maxBackups);
+      return null;
+    }
+  }
   db.exec('PRAGMA wal_checkpoint(FULL)');
   const fileName = `usage-${stamp}-${safeReason}.sqlite`;
   const backupPath = join(targetDir, fileName);
   copyFileSync(resolvedDbPath, backupPath);
+  pruneBackupFiles(targetDir, backupFiles(targetDir, safeReason), maxBackups);
   return { createdAt, path: backupPath, fileName };
+}
+
+function backupFiles(dir, reason) {
+  const suffix = `-${reason}.sqlite`;
+  return readdirSync(dir)
+    .filter(name => name.startsWith('usage-') && name.endsWith(suffix))
+    .sort()
+    .reverse();
+}
+
+function pruneBackupFiles(dir, files, maxBackups) {
+  if (!Number.isInteger(maxBackups) || maxBackups <= 0) return;
+  for (const name of files.slice(maxBackups)) {
+    unlinkSync(join(dir, name));
+  }
 }
 
 function initSchema(db) {
@@ -372,7 +405,7 @@ export function recordRun(db, row) {
   );
 }
 
-export function normalizeDailyUsage(row = {}) {
+export function normalizeDailyUsage(row: InputRecord = {}) {
   const tokens = normalizeUsageTokens(row);
   return {
     device: normalizedRequiredMax(row.device, 'device', 120),
@@ -385,7 +418,7 @@ export function normalizeDailyUsage(row = {}) {
   };
 }
 
-export function normalizeSessionUsage(row = {}) {
+export function normalizeSessionUsage(row: InputRecord = {}) {
   const tokens = normalizeUsageTokens(row);
   return {
     device: normalizedRequiredMax(row.device, 'device', 120),
@@ -400,7 +433,7 @@ export function normalizeSessionUsage(row = {}) {
   };
 }
 
-export function normalizeCollectionRun(row = {}) {
+export function normalizeCollectionRun(row: InputRecord = {}) {
   return {
     device: normalizedRequiredMax(row.device, 'device', 120),
     source: normalizedRequiredMax(row.source, 'source', 120),
@@ -411,7 +444,7 @@ export function normalizeCollectionRun(row = {}) {
   };
 }
 
-export function normalizeSessionAnnotation(row = {}, { defaultSource = 'manual' } = {}) {
+export function normalizeSessionAnnotation(row: InputRecord = {}, { defaultSource = 'manual' } = {}) {
   const required = {
     device: normalizedRequired(row.device, 'device'),
     source: normalizedRequired(row.source, 'source'),
@@ -526,11 +559,11 @@ export function deleteSessionAnnotation(db, row) {
   `).run(device, source, sessionId).changes;
 }
 
-export function batchUpsertSessionAnnotations(db, payload = {}) {
+export function batchUpsertSessionAnnotations(db, payload: InputRecord = {}) {
   const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
   if (!sessions.length) throw new Error('sessions must include at least one item');
 
-  const values = payload.values && typeof payload.values === 'object' ? payload.values : {};
+  const values = inputRecord(payload.values);
   const hasProjectAlias = hasAny(values, ['projectAlias', 'project_alias']);
   const hasTaskType = hasAny(values, ['taskType', 'task_type']);
   const hasOutputStatus = hasAny(values, ['outputStatus', 'output_status']);
@@ -607,7 +640,7 @@ export function listProjectAliasRules(db, { enabledOnly = false } = {}) {
   }));
 }
 
-export function normalizeProjectAliasRule(row = {}) {
+export function normalizeProjectAliasRule(row: InputRecord = {}) {
   const id = normalizeOptionalId(row.id, 'id');
   const pattern = normalizedRequired(row.pattern, 'pattern');
   const matchType = normalizeEnum(row.matchType ?? row.match_type, PROJECT_ALIAS_MATCH_TYPES, 'prefix', 'matchType');
@@ -639,7 +672,7 @@ export function upsertProjectAliasRule(db, row) {
   return { ...saved, enabled: Boolean(saved.enabled) };
 }
 
-export function deleteProjectAliasRule(db, row = {}) {
+export function deleteProjectAliasRule(db, row: InputRecord = {}) {
   const id = normalizeRequiredId(row.id, 'id');
   return db.prepare('DELETE FROM project_alias_rules WHERE id = ?').run(id).changes;
 }
@@ -672,7 +705,7 @@ export function matchProjectAliasRule(projectPath, rules = []) {
   return null;
 }
 
-export function normalizeSessionOutput(row = {}) {
+export function normalizeSessionOutput(row: InputRecord = {}) {
   const identity = normalizeSessionIdentity(row);
   const outputUrl = normalizeOutputUrl(row.outputUrl ?? row.output_url);
   const outputLabel = normalizeOptionalText(row.outputLabel ?? row.output_label, 'outputLabel', 120);
@@ -747,7 +780,7 @@ export function exportAnnotationData(db) {
   };
 }
 
-export function importAnnotationData(db, payload = {}) {
+export function importAnnotationData(db, payload: InputRecord = {}) {
   const sessionAnnotations = Array.isArray(payload.sessionAnnotations)
     ? payload.sessionAnnotations
     : Array.isArray(payload.annotations) ? payload.annotations : [];
@@ -853,7 +886,7 @@ export function applyAutoSessionAnnotations(db, suggestions = [], { runId = auto
   return result;
 }
 
-export function undoAutoSessionAnnotations(db, payload = {}) {
+export function undoAutoSessionAnnotations(db, payload: InputRecord = {}) {
   const runId = normalizedRequiredMax(payload.runId ?? payload.autoRunId ?? payload.auto_run_id, 'runId', 80);
   return db.prepare(`
     DELETE FROM session_annotations
@@ -861,7 +894,7 @@ export function undoAutoSessionAnnotations(db, payload = {}) {
   `).run(runId).changes;
 }
 
-export function normalizeTokenEvent(row = {}) {
+export function normalizeTokenEvent(row: InputRecord = {}) {
   const device = normalizedRequired(row.device, 'device');
   const source = normalizedRequired(row.source, 'source');
   const sessionId = normalizedRequired(row.sessionId ?? row.session_id, 'sessionId');
@@ -912,9 +945,9 @@ export function normalizeTokenEvent(row = {}) {
   };
 }
 
-export function upsertTokenEvent(db, row = {}) {
+export function upsertTokenEvent(db, row: InputRecord = {}) {
   const event = normalizeTokenEvent(row);
-  db.prepare(`
+  const upsert = db.prepare(`
     INSERT INTO token_events (
       event_id, device, source, session_id, timestamp, model,
       input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
@@ -937,7 +970,22 @@ export function upsertTokenEvent(db, row = {}) {
       repo_path_hash = excluded.repo_path_hash,
       privacy_level = excluded.privacy_level,
       updated_at = datetime('now')
-  `).run(
+    WHERE token_events.device = excluded.device
+      AND token_events.source = excluded.source
+  `);
+  let result = runTokenEventUpsert(upsert, event);
+  if (result.changes === 0) {
+    event.eventId = scopedTokenEventId(event);
+    result = runTokenEventUpsert(upsert, event);
+    if (result.changes === 0) {
+      throw new Error('token event id collision could not be resolved');
+    }
+  }
+  return event;
+}
+
+function runTokenEventUpsert(statement, event) {
+  return statement.run(
     event.eventId,
     event.device,
     event.source,
@@ -954,7 +1002,14 @@ export function upsertTokenEvent(db, row = {}) {
     event.repoPathHash,
     event.privacyLevel
   );
-  return event;
+}
+
+function scopedTokenEventId(event) {
+  const suffix = createHash('sha256')
+    .update(`${event.eventId}\0${event.device}\0${event.source}`)
+    .digest('hex')
+    .slice(0, 24);
+  return `${event.eventId.slice(0, 214)}::${suffix}`;
 }
 
 export function listTokenEvents(db, { limit = 500 } = {}) {
@@ -978,7 +1033,7 @@ export function listTokenEvents(db, { limit = 500 } = {}) {
   `).all(safeLimit);
 }
 
-export function normalizeWorkItem(row = {}) {
+export function normalizeWorkItem(row: InputRecord = {}) {
   const id = normalizeOptionalId(row.id, 'id');
   const title = normalizedRequiredMax(row.title, 'title', 160);
   const projectAlias = normalizeOptionalText(row.projectAlias ?? row.project_alias, 'projectAlias', 120);
@@ -990,7 +1045,7 @@ export function normalizeWorkItem(row = {}) {
   return { id, title, projectAlias, workType, status, valueLevel, outputUrl, outputType };
 }
 
-export function upsertWorkItem(db, row = {}) {
+export function upsertWorkItem(db, row: InputRecord = {}) {
   const item = normalizeWorkItem(row);
   db.prepare(`
     INSERT INTO work_items (
@@ -1068,7 +1123,7 @@ export function listWorkItems(db) {
   }));
 }
 
-export function linkWorkItemSessions(db, payload = {}) {
+export function linkWorkItemSessions(db, payload: InputRecord = {}) {
   const workItemId = normalizeRequiredId(payload.workItemId ?? payload.work_item_id ?? payload.id, 'workItemId');
   const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
   if (!sessions.length) throw new Error('sessions must include at least one item');
@@ -1091,12 +1146,12 @@ export function linkWorkItemSessions(db, payload = {}) {
   return { workItemId, linked };
 }
 
-export function deleteWorkItem(db, row = {}) {
+export function deleteWorkItem(db, row: InputRecord = {}) {
   const id = normalizeRequiredId(row.id, 'id');
   return db.prepare('DELETE FROM work_items WHERE id = ?').run(id).changes;
 }
 
-export function normalizeBudgetProfile(row = {}) {
+export function normalizeBudgetProfile(row: InputRecord = {}) {
   const id = normalizeOptionalId(row.id, 'id');
   const source = normalizeOptionalText(row.source, 'source', 120) || '';
   const modelGroup = normalizeOptionalText(row.modelGroup ?? row.model_group, 'modelGroup', 120) || '';
@@ -1115,7 +1170,7 @@ export function normalizeBudgetProfile(row = {}) {
   return { id, source, modelGroup, label, windowType, windowMinutes, tokenBudget, costBudgetUSD, resetAnchor, warningThreshold, hardThreshold, enabled };
 }
 
-export function upsertBudgetProfile(db, row = {}) {
+export function upsertBudgetProfile(db, row: InputRecord = {}) {
   const profile = normalizeBudgetProfile(row);
   db.prepare(`
     INSERT INTO budget_profiles (
@@ -1194,12 +1249,12 @@ export function listBudgetProfiles(db) {
   `).all().map(row => ({ ...row, enabled: Boolean(row.enabled) }));
 }
 
-export function deleteBudgetProfile(db, row = {}) {
+export function deleteBudgetProfile(db, row: InputRecord = {}) {
   const id = normalizeRequiredId(row.id, 'id');
   return db.prepare('DELETE FROM budget_profiles WHERE id = ?').run(id).changes;
 }
 
-export function normalizeAdvisorAction(row = {}) {
+export function normalizeAdvisorAction(row: InputRecord = {}) {
   const id = normalizeOptionalId(row.id, 'id');
   const periodStart = normalizedRequiredMax(row.periodStart ?? row.period_start, 'periodStart', 40);
   const periodEnd = normalizedRequiredMax(row.periodEnd ?? row.period_end, 'periodEnd', 40);
@@ -1215,7 +1270,7 @@ export function normalizeAdvisorAction(row = {}) {
   return { id, periodStart, periodEnd, category, title, action, evidence, sourceRule, status, completedAt };
 }
 
-export function upsertAdvisorAction(db, row = {}) {
+export function upsertAdvisorAction(db, row: InputRecord = {}) {
   const item = normalizeAdvisorAction(row);
   const existing = item.id ? null : item.sourceRule
     ? db.prepare(`
@@ -1275,7 +1330,7 @@ export function getAdvisorAction(db, id) {
   `).get(itemId);
 }
 
-export function listAdvisorActions(db, filters = {}) {
+export function listAdvisorActions(db, filters: InputRecord = {}) {
   const periodStart = normalizeOptionalText(filters.periodStart ?? filters.period_start, 'periodStart', 40);
   const periodEnd = normalizeOptionalText(filters.periodEnd ?? filters.period_end, 'periodEnd', 40);
   if (periodStart && periodEnd) {
@@ -1310,17 +1365,23 @@ export function listAdvisorActions(db, filters = {}) {
   `).all();
 }
 
-export function deleteAdvisorAction(db, row = {}) {
+export function deleteAdvisorAction(db, row: InputRecord = {}) {
   const id = normalizeRequiredId(row.id, 'id');
   return db.prepare('DELETE FROM advisor_actions WHERE id = ?').run(id).changes;
 }
 
-function normalizeSessionIdentity(row = {}) {
+function normalizeSessionIdentity(row: InputRecord = {}) {
   return {
     device: normalizedRequired(row.device, 'device'),
     source: normalizedRequired(row.source, 'source'),
     sessionId: normalizedRequired(row.sessionId ?? row.session_id, 'sessionId')
   };
+}
+
+function inputRecord(value: unknown): InputRecord {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as InputRecord
+    : {};
 }
 
 function normalizedRequired(value, field) {
@@ -1376,7 +1437,7 @@ function normalizeTokenCount(value, field) {
   return number;
 }
 
-function normalizeUsageTokens(row) {
+function normalizeUsageTokens(row: InputRecord) {
   return {
     inputTokens: normalizeTokenCount(row.inputTokens ?? row.input_tokens, 'inputTokens'),
     outputTokens: normalizeTokenCount(row.outputTokens ?? row.output_tokens, 'outputTokens'),
@@ -1387,9 +1448,10 @@ function normalizeUsageTokens(row) {
   };
 }
 
-function normalizeUsageTotal(value, tokens) {
-  if (value != null && value !== '') return normalizeTokenCount(value, 'totalTokens');
-  return Object.values(tokens).reduce((sum, count) => sum + count, 0);
+function normalizeUsageTotal(value: unknown, tokens: Record<string, number>) {
+  const computed = Object.values(tokens).reduce((sum, count) => sum + count, 0);
+  if (value == null || value === '') return computed;
+  return Math.max(normalizeTokenCount(value, 'totalTokens'), computed);
 }
 
 function normalizeUsageDate(value) {

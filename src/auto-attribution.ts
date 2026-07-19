@@ -1,6 +1,15 @@
 export const AUTO_ATTRIBUTION_VERSION = 'v2.0.0';
 export const AUTO_ATTRIBUTION_THRESHOLD = 80;
 
+type InputRecord = Record<string, unknown>;
+
+interface SuggestionOptions {
+  now?: Date | string | number;
+  generatedAt?: string;
+  threshold?: number;
+  projectAliasRules?: InputRecord[];
+}
+
 const DEFAULTS = {
   taskType: '未分类',
   outputStatus: '未标注',
@@ -78,7 +87,7 @@ export function buildAutoAttributionPlan({
     .filter(Boolean)
     .sort((a, b) => Number(b.canApply) - Number(a.canApply)
       || b.annotationConfidence - a.annotationConfidence
-      || (b.totalTokens || 0) - (a.totalTokens || 0));
+      || Number(b.totalTokens || 0) - Number(a.totalTokens || 0));
 
   const highConfidence = suggestions.filter(item => item.canApply);
   const lowConfidence = suggestions.filter(item =>
@@ -109,7 +118,7 @@ export function buildAutoAttributionPlan({
   };
 }
 
-export function buildAutoAttributionSuggestion(session = {}, options = {}) {
+export function buildAutoAttributionSuggestion(session: InputRecord = {}, options: SuggestionOptions = {}) {
   if (!canAutoWrite(session)) return null;
 
   const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
@@ -125,7 +134,7 @@ export function buildAutoAttributionSuggestion(session = {}, options = {}) {
     valueLevel: session.valueLevel || DEFAULTS.valueLevel,
     note: normalizeText(session.note) || null
   };
-  const fieldConfidence = {};
+  const fieldConfidence: Record<string, number> = {};
 
   const alias = inferProjectAlias(session, options.projectAliasRules || []);
   if (!values.projectAlias && alias.value) {
@@ -215,7 +224,7 @@ export function attachAutoSuggestions(sessions = [], suggestions = []) {
   }));
 }
 
-export function autoAttributionIdentity(suggestion = {}) {
+export function autoAttributionIdentity(suggestion: InputRecord = {}) {
   return {
     device: suggestion.device,
     source: suggestion.source,
@@ -373,7 +382,7 @@ function isUnhelpfulDefault(field, value) {
   return field in DEFAULTS && (value || DEFAULTS[field]) === DEFAULTS[field];
 }
 
-function isReviewIncomplete(session = {}) {
+function isReviewIncomplete(session: InputRecord = {}) {
   return Object.entries(DEFAULTS).some(([field, fallback]) => (session[field] || fallback) === fallback);
 }
 
@@ -392,7 +401,7 @@ function sameSession(left, right) {
   return sessionKey(left) === sessionKey(right);
 }
 
-function sessionKey(row = {}) {
+function sessionKey(row: InputRecord = {}) {
   return `${row.device || ''}::${row.source || ''}::${row.sessionId || ''}`;
 }
 

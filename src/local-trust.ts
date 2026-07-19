@@ -1,5 +1,7 @@
 const PATH_PATTERN = /(?:[A-Za-z]:[\\/][^\s，。；;|]+|\/(?:Users|home|mnt|private|var)\/[^\s，。；;|]+)/gu;
 
+type InputRecord = Record<string, unknown>;
+
 export function buildLocalTrust({
   runtime = null,
   coverageBridge = null,
@@ -208,7 +210,7 @@ function buildTrustSources({ coverageBridge, sourceHealth = [] }) {
 
 function buildCoverageToEvidenceSummary({ coverageBridge, evidenceFlywheel, sessions = [] }) {
   const quality = evidenceFlywheel?.quality || {};
-  const trustedSourceIds = new Set((Array.isArray(coverageBridge?.rows) ? coverageBridge.rows : [])
+  const trustedSourceIds = new Set<string>((Array.isArray(coverageBridge?.rows) ? coverageBridge.rows : [])
     .filter(row => row.successfulCoverage)
     .flatMap(row => [normalize(row.id), normalize(row.label)]));
   const trustedSessions = sessions.filter(session =>
@@ -237,7 +239,7 @@ function buildCoverageToEvidenceSummary({ coverageBridge, evidenceFlywheel, sess
   };
 }
 
-function buildSecuritySummary(server = {}) {
+function buildSecuritySummary(server: InputRecord = {}) {
   const loopbackBind = Boolean(server.loopbackBind);
   const remoteIngestMode = Boolean(server.remoteIngestMode);
   const dashboardApiRemoteAccess = Boolean(server.dashboardApiRemoteAccess);
@@ -327,7 +329,7 @@ function databaseCountsFromRows({ daily = [], sessions = [], tokenEvents = [], r
   };
 }
 
-function sanitizeCoverageGate(gate = {}) {
+function sanitizeCoverageGate(gate: InputRecord = {}) {
   return {
     status: gate.status || 'not-run',
     checkedAt: gate.checkedAt || null,
@@ -340,7 +342,7 @@ function sanitizeCoverageGate(gate = {}) {
   };
 }
 
-function sanitizeRun(row) {
+function sanitizeRun(row: InputRecord | null) {
   if (!row) return null;
   return {
     source: sanitizeText(row.source || ''),
@@ -379,7 +381,7 @@ function sumTokens(rows, selector) {
   return rows.reduce((sum, row) => sum + Number(selector(row) || 0), 0);
 }
 
-function eventTokens(row = {}) {
+function eventTokens(row: InputRecord = {}) {
   return Number(row.inputTokens || 0)
     + Number(row.outputTokens || 0)
     + Number(row.cacheReadTokens || 0)

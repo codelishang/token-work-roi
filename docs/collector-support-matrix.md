@@ -48,8 +48,8 @@ Yuanheng imports usage only when explicit token fields exist. It prefers missing
 ## 结构化 JSON 导入 / Structured JSON Import
 
 ```bash
-npx token-work import-usage --format=ccusage-json --file ccusage.json --dry-run
-npx token-work import-usage --format=ccusage-json --file ccusage.json --apply --yes
+npx token-work import-usage --format=ccusage-json --file ccusage.json --device other-computer --dry-run
+npx token-work import-usage --format=ccusage-json --file ccusage.json --device other-computer --apply --yes
 npx token-work import-usage --format=ccusage-cli --report=session --dry-run --yes
 ```
 

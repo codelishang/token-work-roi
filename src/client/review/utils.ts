@@ -3,6 +3,7 @@
    ============================================================= */
 
 import { U } from '../shared/utils.ts';
+import type { PeriodRange } from '../shared/types.ts';
 
 // Local YYYY-MM-DD (avoids toISOString's UTC drift)
 function localDateStr(d) {
@@ -67,7 +68,7 @@ function getPeriod(id, today = new Date(), rows = []) {
   return getPeriod('30d', today, rows);
 }
 
-function getCustomPeriod(range = {}, today = new Date()) {
+function getCustomPeriod(range: PeriodRange = {}, today = new Date()) {
   const t = new Date(today); t.setHours(0,0,0,0);
   const fallback = localDateStr(t);
   let startDateTime = String(range.startDateTime || `${fallback}T00:00`);
@@ -145,7 +146,7 @@ function dailyTotals(rows, period) {
   const pe = parseDateStr(period.end);
   const start = new Date(ps.y, ps.m, ps.d);
   const end = new Date(pe.y, pe.m, pe.d);
-  const days = [];
+  const days: Array<{ date: string; total: number; cost: number; byTool: Record<string, number> }> = [];
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const ds = localDateStr(d);
     days.push({ date: ds, total: 0, cost: 0, byTool: {} });

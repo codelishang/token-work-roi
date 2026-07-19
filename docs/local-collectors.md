@@ -65,6 +65,7 @@ v2 源码入口使用 TypeScript 文件。旧的 `.mjs` 源码直跑路径不再
 | `coverage` | 查看每个来源是否有可靠词元字段，以及 daily/session/event 是否能对上 |
 | `collect --dry-run` | 输出将要读取和写入的摘要，不修改 SQLite |
 | `collect --apply` | 明确确认后写入，写入前创建 SQLite 备份 |
+| 定时采集 | 用量发生变化时才备份，最多每小时一个，只保留最近 24 个定时备份 |
 | `compare-ccusage` | 调用 ccusage JSON 模式进行对比，但不采用 ccusage 的成本字段 |
 
 ## 写入前的保护 / Write Safety

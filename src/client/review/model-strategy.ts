@@ -1,4 +1,5 @@
 import { modelTier } from './roi-advisor.ts';
+import type { UsageRow } from '../shared/types.ts';
 
 const DEFAULT_TASK_TYPE = '未分类';
 const DEFAULT_WORK_PURPOSE = '未说明';
@@ -17,7 +18,7 @@ const REVIEW_STAGES = new Set(['发布']);
 const HIGH_VALUE_LEVELS = new Set(['高', '关键']);
 const LOW_VALUE_LEVELS = new Set(['低']);
 
-export function buildModelStrategy({ sessions = [] } = {}) {
+export function buildModelStrategy({ sessions = [] }: { sessions?: UsageRow[] } = {}) {
   const annotated = sessions.filter(hasStrategyAnnotation);
   const total = aggregateSessions(sessions);
   const annotatedTotal = aggregateSessions(annotated);
@@ -42,14 +43,14 @@ export function buildModelStrategy({ sessions = [] } = {}) {
   };
 }
 
-export function hasStrategyAnnotation(session = {}) {
+export function hasStrategyAnnotation(session: UsageRow = {}) {
   return (session.taskType || DEFAULT_TASK_TYPE) !== DEFAULT_TASK_TYPE
     || (session.workPurpose || DEFAULT_WORK_PURPOSE) !== DEFAULT_WORK_PURPOSE
     || (session.workStage || DEFAULT_WORK_STAGE) !== DEFAULT_WORK_STAGE
     || (session.valueLevel || DEFAULT_VALUE_LEVEL) !== DEFAULT_VALUE_LEVEL;
 }
 
-export function buildModelRowsFromSessions(sessions = []) {
+export function buildModelRowsFromSessions(sessions: UsageRow[] = []) {
   const rows = new Map();
   const totalTokens = sessions.reduce((sum, session) => sum + (session.totalTokens || 0), 0);
   for (const session of sessions) {
@@ -169,7 +170,7 @@ function buildModelPolicyRows(sessions) {
   });
 }
 
-function modelEvidenceState(sessions = []) {
+function modelEvidenceState(sessions: UsageRow[] = []) {
   if (!sessions.length) return '待标注验证';
   const breakdown = modelEvidenceBreakdown(sessions);
   if (breakdown.manual >= Math.ceil(sessions.length / 2)) return '人工确认';
@@ -178,8 +179,8 @@ function modelEvidenceState(sessions = []) {
   return '缺证据';
 }
 
-function modelEvidenceBreakdown(sessions = []) {
-  return sessions.reduce((acc, session) => {
+function modelEvidenceBreakdown(sessions: UsageRow[] = []) {
+  return sessions.reduce<{ manual: number; autoHigh: number; autoLow: number; draft: number }>((acc, session) => {
     if (session.annotationSource === 'manual' || session.annotationSource === 'imported') acc.manual += 1;
     else if (session.annotationSource === 'auto' && Number(session.annotationConfidence || 0) >= 80) acc.autoHigh += 1;
     else if (session.annotationSource === 'auto') acc.autoLow += 1;
@@ -188,19 +189,19 @@ function modelEvidenceBreakdown(sessions = []) {
   }, { manual: 0, autoHigh: 0, autoLow: 0, draft: 0 });
 }
 
-function isLightPolicyWork(session = {}) {
+function isLightPolicyWork(session: UsageRow = {}) {
   return EXPLORATION_TASKS.has(session.taskType)
     || EXPLORATION_PURPOSES.has(session.workPurpose)
     || EXPLORATION_STAGES.has(session.workStage);
 }
 
-function isMidPolicyWork(session = {}) {
+function isMidPolicyWork(session: UsageRow = {}) {
   return IMPLEMENTATION_TASKS.has(session.taskType)
     || IMPLEMENTATION_PURPOSES.has(session.workPurpose)
     || IMPLEMENTATION_STAGES.has(session.workStage);
 }
 
-function isHeavyPolicyWork(session = {}) {
+function isHeavyPolicyWork(session: UsageRow = {}) {
   return REVIEW_TASKS.has(session.taskType)
     || REVIEW_PURPOSES.has(session.workPurpose)
     || REVIEW_STAGES.has(session.workStage)
@@ -263,8 +264,8 @@ function buildStrategyRecommendations({ sessions, annotated, modelRows }) {
   return recommendations.slice(0, 5);
 }
 
-function aggregateSessions(sessions = []) {
-  return sessions.reduce((acc, session) => {
+function aggregateSessions(sessions: UsageRow[] = []) {
+  return sessions.reduce<{ sessionCount: number; totalTokens: number; costUSD: number }>((acc, session) => {
     acc.sessionCount += 1;
     acc.totalTokens += session.totalTokens || 0;
     acc.costUSD += session.costUSD || 0;

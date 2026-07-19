@@ -17,6 +17,14 @@ const UNSAFE_KEYS = new Set([
   'text'
 ]);
 
+interface ImportOptions {
+  device?: string;
+  now?: Date;
+  importSource?: string;
+  command?: string;
+  toolCategory?: string;
+}
+
 export function readCcusageImportInput(file) {
   if (!file || file === '-') {
     return readFileSync(0, 'utf8');
@@ -44,7 +52,7 @@ export function parseCcusageJsonText(text) {
   return payload;
 }
 
-export function planCcusageImport(payload, options = {}) {
+export function planCcusageImport(payload, options: ImportOptions = {}) {
   const device = cleanText(options.device, 120) || hostname();
   const now = options.now || new Date();
   const importSource = cleanText(options.importSource, 80) || 'import:ccusage-json';
@@ -208,7 +216,7 @@ function expandModelBreakdowns(row) {
     if (!usable.length) return [{ ...row, model: primaryModel(row) }];
     return usable.map((item, index) => ({
       ...row,
-      ...item,
+      ...inputRecord(item),
       model: item.model || item.modelName || primaryModel(row, index)
     }));
   }
@@ -219,12 +227,18 @@ function expandModelBreakdowns(row) {
     if (!usable.length) return [{ ...row, model: primaryModel(row) }];
     return usable.map(([model, item]) => ({
       ...row,
-      ...item,
+      ...inputRecord(item),
       model
     }));
   }
 
   return [{ ...row, model: primaryModel(row) }];
+}
+
+function inputRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function primaryModel(row, index = 0) {

@@ -1,4 +1,5 @@
 import { U } from '../shared/utils.ts';
+import type { UsageAggregate, UsageRow } from '../shared/types.ts';
 
 const DEFAULT_TASK_TYPE = '未分类';
 const DEFAULT_OUTPUT_STATUS = '未标注';
@@ -18,31 +19,31 @@ export const ATTRIBUTION_STATUS_ROWS = [
   { id: 'unattributed', label: '未归因', tone: 'unattributed' }
 ];
 
-export function isUnattributedSession(session = {}) {
+export function isUnattributedSession(session: UsageRow = {}) {
   return (session.taskType || DEFAULT_TASK_TYPE) === DEFAULT_TASK_TYPE
     || (session.outputStatus || DEFAULT_OUTPUT_STATUS) === DEFAULT_OUTPUT_STATUS;
 }
 
-export function isReviewUnattributedSession(session = {}) {
+export function isReviewUnattributedSession(session: UsageRow = {}) {
   return isUnattributedSession(session)
     || (session.workPurpose || DEFAULT_WORK_PURPOSE) === DEFAULT_WORK_PURPOSE
     || (session.workStage || DEFAULT_WORK_STAGE) === DEFAULT_WORK_STAGE
     || (session.valueLevel || DEFAULT_VALUE_LEVEL) === DEFAULT_VALUE_LEVEL;
 }
 
-export function buildUnattributedSessions(sessions = []) {
+export function buildUnattributedSessions(sessions: UsageRow[] = []) {
   return sessions
     .filter(isUnattributedSession)
     .sort((a, b) => (b.totalTokens || 0) - (a.totalTokens || 0));
 }
 
-export function buildReviewUnattributedSessions(sessions = []) {
+export function buildReviewUnattributedSessions(sessions: UsageRow[] = []) {
   return sessions
     .filter(isReviewUnattributedSession)
     .sort((a, b) => (b.totalTokens || 0) - (a.totalTokens || 0));
 }
 
-export function buildPendingConfirmationSessions(sessions = []) {
+export function buildPendingConfirmationSessions(sessions: UsageRow[] = []) {
   return sessions
     .filter(session =>
       isReviewUnattributedSession(session)
@@ -53,7 +54,7 @@ export function buildPendingConfirmationSessions(sessions = []) {
       || (b.totalTokens || 0) - (a.totalTokens || 0));
 }
 
-export function buildReviewAttributionProgress(sessions = []) {
+export function buildReviewAttributionProgress(sessions: UsageRow[] = []) {
   const total = aggregateSessions(sessions);
   const unattributed = buildReviewUnattributedSessions(sessions);
   const unattributedTotal = aggregateSessions(unattributed);
@@ -71,7 +72,7 @@ export function buildReviewAttributionProgress(sessions = []) {
   };
 }
 
-export function buildReviewAttributionChecklist(sessions = [], { limit = 10, generatedAt = new Date() } = {}) {
+export function buildReviewAttributionChecklist(sessions: UsageRow[] = [], { limit = 10, generatedAt = new Date() } = {}) {
   const rows = buildReviewUnattributedSessions(sessions).slice(0, Math.max(1, limit));
   const lines = [
     '# Token Work 归因工作清单',
@@ -108,7 +109,7 @@ export function buildReviewAttributionChecklist(sessions = [], { limit = 10, gen
   ].join('\n');
 }
 
-export function missingReviewAttributionFields(session = {}) {
+export function missingReviewAttributionFields(session: UsageRow = {}) {
   const fields = [];
   if ((session.taskType || DEFAULT_TASK_TYPE) === DEFAULT_TASK_TYPE) fields.push('任务类型');
   if ((session.outputStatus || DEFAULT_OUTPUT_STATUS) === DEFAULT_OUTPUT_STATUS) fields.push('产出状态');
@@ -118,7 +119,7 @@ export function missingReviewAttributionFields(session = {}) {
   return fields;
 }
 
-export function buildAttributionStatusSummary(sessions = []) {
+export function buildAttributionStatusSummary(sessions: UsageRow[] = []) {
   const total = aggregateSessions(sessions);
   return ATTRIBUTION_STATUS_ROWS.map(row => {
     const matching = row.id === 'unattributed'
@@ -133,7 +134,7 @@ export function buildAttributionStatusSummary(sessions = []) {
   });
 }
 
-export function buildRiskDistribution(sessions = []) {
+export function buildRiskDistribution(sessions: UsageRow[] = []) {
   const total = aggregateSessions(sessions);
   const groups = [
     { id: 'unattributed', label: '未归因', tone: 'unattributed', sessions: sessions.filter(isUnattributedSession) },
@@ -152,7 +153,7 @@ export function buildRiskDistribution(sessions = []) {
   });
 }
 
-export function buildProjectRoiRows(sessions = []) {
+export function buildProjectRoiRows(sessions: UsageRow[] = []) {
   const rows = new Map();
   for (const session of sessions) {
     const project = sessionProjectLabel(session);
@@ -224,7 +225,7 @@ export function buildProjectRoiRows(sessions = []) {
     .sort((a, b) => b.totalTokens - a.totalTokens);
 }
 
-export function buildWeeklyReview(sessions = [], { today = null, days = 7 } = {}) {
+export function buildWeeklyReview(sessions: UsageRow[] = [], { today = null, days = 7 } = {}) {
   const now = parseDate(today) || new Date();
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
@@ -253,8 +254,8 @@ export function buildWeeklyReview(sessions = [], { today = null, days = 7 } = {}
   };
 }
 
-export function aggregateSessions(sessions = []) {
-  return sessions.reduce((acc, session) => {
+export function aggregateSessions(sessions: UsageRow[] = []) {
+  return sessions.reduce<UsageAggregate>((acc, session) => {
     acc.sessionCount += 1;
     acc.totalTokens += session.totalTokens || 0;
     acc.inputTokens += session.inputTokens || 0;
@@ -270,7 +271,7 @@ export function aggregateSessions(sessions = []) {
   });
 }
 
-export function sessionProjectLabel(session = {}) {
+export function sessionProjectLabel(session: UsageRow = {}) {
   if (session.projectAlias) return session.projectAlias;
   if (session.projectPath && session.projectPath !== 'Unknown Project') return session.projectPath;
   if (session.sessionId) return session.sessionId.split('/').slice(-1)[0] || session.sessionId;

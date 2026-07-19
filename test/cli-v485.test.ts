@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import type { ProcessResult } from '../test-support/process.ts';
 import packageJson from '../package.json' with { type: 'json' };
 import { stopProcessTree } from '../test-support/process.ts';
 
@@ -197,7 +198,7 @@ function startCli(fixture, commandArgs = [], extraArgs = []) {
     windowsHide: true
   });
   child.on('message', message => {
-    if (message?.type === 'ready') cli.ready = message;
+    if (message && typeof message === 'object' && 'type' in message && message.type === 'ready') cli.ready = message;
   });
   const output = { stdout: '', stderr: '' };
   child.stdout.setEncoding('utf8');
@@ -265,7 +266,7 @@ function stopChild(child) {
 }
 
 function runNode(argv) {
-  return new Promise(resolve => {
+  return new Promise<ProcessResult>(resolve => {
     const child = spawn(process.execPath, argv, {
       cwd: process.cwd(),
       env: process.env,

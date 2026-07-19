@@ -54,7 +54,20 @@ const fmtCNY = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CN
 const FALLBACK_USD_CNY_RATE = 7.2;
 const EXCHANGE_RATE_REFRESH_MS = 60 * 60 * 1000;
 const LEGAL_NOTICE = 'AGPL-3.0-only 协议，版权所有 © 2026 coderlishang，All rights reserved.';
-let exchangeRate = {
+
+interface ExchangeRateState {
+  base: string;
+  quote: string;
+  rate: number;
+  source: string;
+  sourceUrl?: string | null;
+  lastUpdated?: string | null;
+  nextUpdated?: string | null;
+  fetchedAt: string | null;
+  isFallback: boolean;
+}
+
+let exchangeRate: ExchangeRateState = {
   base: 'USD',
   quote: 'CNY',
   rate: FALLBACK_USD_CNY_RATE,
@@ -102,7 +115,7 @@ function getExchangeRate() {
   return { ...exchangeRate };
 }
 
-function setExchangeRate(next = {}) {
+function setExchangeRate(next: Partial<ExchangeRateState> = {}) {
   const rate = Number(next.rate);
   if (!Number.isFinite(rate) || rate <= 0) return getExchangeRate();
   exchangeRate = {

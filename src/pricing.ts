@@ -10,6 +10,111 @@ const MTOK = 1_000_000;
 const VERIFIED_AT = '2026-07-13';
 const DEFAULT_ANTHROPIC_CACHE_WRITE_TTL = '5m';
 
+type InputRecord = Record<string, unknown>;
+
+interface PricingSource {
+  provider: string;
+  label: string;
+  url: string;
+  assetUrls?: string[];
+  note: string;
+}
+
+interface PricingRates {
+  input: number;
+  cachedInput: number;
+  cacheWrite5m: number;
+  cacheWrite1h: number;
+  output: number;
+}
+
+interface OfficialRateInput {
+  provider: string;
+  model: string;
+  aliases: string[];
+  input?: number;
+  cachedInput?: number;
+  cacheWrite5m?: number;
+  cacheWrite1h?: number;
+  output?: number;
+  source: string;
+  note: string;
+  unavailableReason?: string;
+}
+
+interface OfficialRate {
+  provider: string;
+  model: string;
+  aliases: string[];
+  priced: boolean;
+  unavailableReason: string | null;
+  ratesPerMTok: PricingRates | null;
+  officialRatesPerMTok?: PricingRates | null;
+  source: PricingSource | null;
+  pricingFetchStatus?: string | null;
+  note: string | null;
+}
+
+interface CachedRateInput {
+  provider: string;
+  model: string;
+  aliases?: string[];
+  priced?: boolean;
+  unavailableReason?: string | null;
+  ratesPerMTok?: Partial<PricingRates> | null;
+  officialRatesPerMTok?: PricingRates | null;
+  sourceProvider?: string | null;
+  source?: PricingSource | string | null;
+  pricingFetchStatus?: string | null;
+  note?: string | null;
+}
+
+interface PricingData {
+  mode?: string;
+  verifiedAt?: string;
+  fetchedAt?: string | null;
+  sources?: PricingSource[];
+  models?: CachedRateInput[];
+}
+
+interface PricingOptions {
+  provider?: string | null;
+  pricingData?: PricingData | null;
+  anthropicCacheWriteTtl?: string | null;
+}
+
+interface TokenInput extends InputRecord {
+  input?: unknown;
+  output?: unknown;
+  cacheRead?: unknown;
+  cache_read?: unknown;
+  cacheWrite?: unknown;
+  cache_write?: unknown;
+  reasoning?: unknown;
+}
+
+interface PricingRow extends InputRecord {
+  model?: unknown;
+  pricingModel?: unknown;
+  pricingStatus?: unknown;
+  pricingReason?: unknown;
+  costUSD?: unknown;
+  totalTokens?: unknown;
+  total_tokens?: unknown;
+  inputTokens?: unknown;
+  outputTokens?: unknown;
+  cacheReadTokens?: unknown;
+  cacheCreationTokens?: unknown;
+  reasoningOutputTokens?: unknown;
+  cachedInputTokens?: unknown;
+  cachedInput?: unknown;
+  cacheRead?: unknown;
+  input?: unknown;
+  output?: unknown;
+  cacheWrite?: unknown;
+  reasoning?: unknown;
+}
+
 export const OFFICIAL_PRICING_SOURCES = [
   {
     provider: 'openai',
@@ -580,7 +685,7 @@ export const OFFICIAL_PRICE_TABLE = [
 /**
  * Kept for the collector API shape. No network or third-party cache is used.
  */
-export async function loadPricing(cachePath = null) {
+export async function loadPricing(cachePath: string | null = null): Promise<PricingData> {
   const cached = await readPricingCache(cachePath);
   if (cached) return cached;
   return {
@@ -595,7 +700,7 @@ export function calculateCost(model, tokens, _pricingData = null, provider = nul
   return calculateOfficialCost(model, tokens, { provider, pricingData: _pricingData }).totalUSD;
 }
 
-export function calculateOfficialCost(model, tokens = {}, options = {}) {
+export function calculateOfficialCost(model, tokens: TokenInput = {}, options: PricingOptions = {}) {
   const pricing = resolveOfficialPricing(model, options.provider, options.pricingData);
   const normalizedTokens = normalizeTokens(tokens);
 
@@ -643,7 +748,7 @@ export function calculateOfficialCost(model, tokens = {}, options = {}) {
   };
 }
 
-export function resolveOfficialPricing(model, provider = null, pricingData = null) {
+export function resolveOfficialPricing(model, provider: string | null = null, pricingData: PricingData | null = null) {
   const normalized = normalizeModelId(model);
   if (!normalized || normalized === '<synthetic>') return null;
 
@@ -659,7 +764,7 @@ export function resolveOfficialPricing(model, provider = null, pricingData = nul
   return null;
 }
 
-export function officialPricingMetadata(rows = [], pricingData = null) {
+export function officialPricingMetadata(rows: PricingRow[] = [], pricingData: PricingData | null = null) {
   const byModel = new Map();
   let totalTokens = 0;
   let pricedTokens = 0;
@@ -699,7 +804,7 @@ export function officialPricingMetadata(rows = [], pricingData = null) {
   };
 }
 
-export function attachOfficialPricing(row, model = row?.model, provider = null, pricingData = null) {
+export function attachOfficialPricing(row: PricingRow, model = row?.model, provider: string | null = null, pricingData: PricingData | null = null) {
   const cacheRead = Number(row?.cacheReadTokens ?? row?.cacheRead ?? 0)
     + Number(row?.cachedInputTokens ?? row?.cachedInput ?? 0);
   const tokens = {
@@ -735,7 +840,7 @@ function officialRate({
   source,
   note,
   unavailableReason
-}) {
+}: OfficialRateInput): OfficialRate {
   const sourceMeta = findPricingSource(source);
   const priced = input != null && output != null && !unavailableReason;
   return {
@@ -756,7 +861,7 @@ function officialRate({
   };
 }
 
-export function serializeOfficialPricingModels(models = OFFICIAL_PRICE_TABLE) {
+export function serializeOfficialPricingModels(models: OfficialRate[] = OFFICIAL_PRICE_TABLE) {
   return models.map(row => ({
     provider: row.provider,
     model: row.model,
@@ -771,7 +876,7 @@ export function serializeOfficialPricingModels(models = OFFICIAL_PRICE_TABLE) {
   }));
 }
 
-function pricingTableFrom(pricingData = null) {
+function pricingTableFrom(pricingData: PricingData | null = null) {
   if (!pricingData?.models?.length) return OFFICIAL_PRICE_TABLE;
   const merged = new Map(OFFICIAL_PRICE_TABLE.map(model => [pricingKey(model), model]));
   const cached = pricingData.models
@@ -783,8 +888,10 @@ function pricingTableFrom(pricingData = null) {
   return Array.from(merged.values());
 }
 
-function normalizeCachedRate(row = {}) {
-  const sourceKey = row.sourceProvider || row.source?.provider || row.source || row.provider;
+function normalizeCachedRate(row: CachedRateInput): OfficialRate {
+  const sourceKey = row.sourceProvider
+    || (row.source && typeof row.source === 'object' ? row.source.provider : row.source)
+    || row.provider;
   const provider = canonicalProvider(row.provider);
   const sourceMeta = findPricingSource(sourceKey);
   const rates = row.ratesPerMTok || {};
@@ -810,7 +917,7 @@ function normalizeCachedRate(row = {}) {
   };
 }
 
-function pricingKey(row = {}) {
+function pricingKey(row: Pick<OfficialRate, 'provider' | 'model'>) {
   return `${normalizeProvider(row.provider)}::${normalizeModelId(row.model)}`;
 }
 
@@ -896,7 +1003,7 @@ function longestAliasLength(rate) {
   return Math.max(...rate.aliases.map(alias => alias.length));
 }
 
-function normalizeTokens(tokens = {}) {
+function normalizeTokens(tokens: TokenInput = {}) {
   return {
     input: positive(tokens.input),
     output: positive(tokens.output),
@@ -906,7 +1013,7 @@ function normalizeTokens(tokens = {}) {
   };
 }
 
-function tokenTotal(row = {}) {
+function tokenTotal(row: PricingRow = {}) {
   return positive(row.totalTokens ?? row.total_tokens)
     || positive(row.inputTokens) + positive(row.outputTokens)
       + positive(row.cacheReadTokens) + positive(row.cacheCreationTokens)

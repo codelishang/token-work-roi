@@ -56,7 +56,7 @@ function syncMacIcon() {
   mkdirSync(iconsetDir, { recursive: true });
 
   let iconsetReady = true;
-  for (const [name, size] of [
+  for (const [name, size] of <Array<[string, number]>>[
     ['icon_16x16.png', 16],
     ['icon_16x16@2x.png', 32],
     ['icon_32x32.png', 32],
