@@ -140,6 +140,7 @@ async function parseSessionFile(filePath) {
 
   const records = [];
   const dedupIndex = new Map();
+  const anonymousRecordCount = new Map();
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -154,15 +155,19 @@ async function parseSessionFile(filePath) {
     // Only assistant turns carry usage information
     if (obj.type !== 'assistant' || !obj.message?.usage) continue;
 
+    const dedupKey = dedupKeyForAssistant(obj);
+    const anonymousCount = anonymousRecordCount.get(trimmed) || 0;
+    anonymousRecordCount.set(trimmed, anonymousCount + 1);
     const record = {
       timestamp: typeof obj.timestamp === 'string' ? obj.timestamp : null,
       model: obj.message.model || obj.model || 'unknown',
       usage: obj.message.usage,
       costUSD: typeof obj.costUSD === 'number' ? obj.costUSD : 0,
-      dedupKey: dedupKeyForAssistant(obj)
+      dedupKey,
+      // Some local-agent records omit message and request IDs. Keep those
+      // records distinct without depending on their position in the file.
+      identityKey: dedupKey || `anonymous:${stableHash(trimmed)}:${anonymousCount}`
     };
-
-    const dedupKey = record.dedupKey;
 
     if (dedupKey && dedupIndex.has(dedupKey)) {
       const existing = records[dedupIndex.get(dedupKey)];
@@ -254,6 +259,7 @@ export async function collect(pricingData = null) {
   // sessionId -> true session-file aggregate
   const sessionMap = new Map();
   const tokenEvents = [];
+  const managedEventSessionPrefixes = new Set();
 
   for (const root of await getScanRoots()) {
     const filePaths = await collectJsonlFiles(root.path);
@@ -269,6 +275,7 @@ export async function collect(pricingData = null) {
           .map(model => [model, `${sessionPrefix}:${model}`])
       );
       const legacySessionIds = [...modelSessionIds.values()];
+      managedEventSessionPrefixes.add(`${sessionPrefix}:`);
 
       for (let index = 0; index < records.length; index += 1) {
         const record = records[index];
@@ -282,7 +289,6 @@ export async function collect(pricingData = null) {
           legacySessionIds,
           workspaceKey,
           workspaceLabel,
-          eventIndex: index
         };
         aggregateRecord(normalized, dailyMap, sessionMap, pricingData);
         tokenEvents.push(tokenEventFor(normalized));
@@ -339,7 +345,15 @@ export async function collect(pricingData = null) {
 
   const modelsJson = { entries };
 
-  return { graphJson, modelsJson, tokenEvents };
+  return {
+    graphJson,
+    modelsJson,
+    tokenEvents,
+    reconciliation: {
+      managedEventIdPrefix: 'claude:',
+      managedEventSessionPrefixes: [...managedEventSessionPrefixes]
+    }
+  };
 }
 
 export async function audit() {
@@ -448,8 +462,8 @@ function tokenEventFor(record) {
   };
 }
 
-function claudeEventId({ sessionId, dedupKey, eventIndex, timestamp, model, tokens }) {
-  return `claude:${stableHash({ sessionId, dedupKey, eventIndex, timestamp, model, tokens })}`;
+function claudeEventId({ sessionId, identityKey }) {
+  return `claude:${stableHash({ sessionId, identityKey })}`;
 }
 
 function tokenTotal(tokens) {

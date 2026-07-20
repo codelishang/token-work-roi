@@ -1639,14 +1639,15 @@ function SourceHealthPanel({ rows = [], coverageBridge = null, visibleUsage = nu
   ]).slice(0, 10).map(row => {
     const bridge = bridgeById.get(row.id) || row;
     const usage = findVisibleSourceUsage(visibleUsageMap, row);
+    const reconciliationRisk = row.reconciliation?.status === 'risk';
     return {
       ...row,
       sessions: usage ? usage.sessions : hasVisibleUsage ? 0 : row.sessions,
       dailyRows: usage ? usage.dailyRows : hasVisibleUsage ? 0 : row.dailyRows,
       totalTokens: usage ? usage.totalTokens : hasVisibleUsage ? 0 : row.totalTokens,
-      bridgeStatus: bridge.status || bridge.bridgeStatus || supportStatusToBridgeStatus(row),
-      bridgeStatusLabel: bridge.statusLabel || bridge.bridgeStatusLabel || bridgeStatusLabel(supportStatusToBridgeStatus(row)),
-      recommendedAction: bridge.recommendedAction || row.recommendedImport || sourceHealthStatusLabel(row),
+      bridgeStatus: reconciliationRisk ? 'native-unverified' : bridge.status || bridge.bridgeStatus || supportStatusToBridgeStatus(row),
+      bridgeStatusLabel: reconciliationRisk ? '原生数据待核查' : bridge.statusLabel || bridge.bridgeStatusLabel || bridgeStatusLabel(supportStatusToBridgeStatus(row)),
+      recommendedAction: reconciliationRisk ? row.reconciliation.note : bridge.recommendedAction || row.recommendedImport || sourceHealthStatusLabel(row),
       privacy: bridge.privacy || (row.readsConversationContent ? '可能读取内容' : '不读取正文')
     };
   });
@@ -1782,6 +1783,7 @@ function supportStatusToBridgeStatus(row) {
 function bridgeStatusLabel(status) {
   const labels = {
     'native-trusted': '原生可信采集',
+    'native-unverified': '原生数据待核查',
     'ccusage-importable': 'ccusage 可导入',
     'experimental-audit': '实验采集',
     'detected-only': '仅检测到',
@@ -1803,6 +1805,7 @@ function tokenReliabilityLabel(value) {
 function sourceHealthStatusLabel(row) {
   const labels = {
     'has-data': '已有真实用量',
+    'reconciliation-risk': '总量待核查',
     'last-run-error': '上次采集失败',
     'detected-no-data': '检测到工具，但还没有采到 token',
     'import-ready': '可通过导入桥接入',

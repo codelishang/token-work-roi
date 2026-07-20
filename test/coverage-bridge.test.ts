@@ -57,3 +57,24 @@ test('coverage bridge separates native trusted, importable, experimental, detect
   assert.equal(bridge.rows.find(row => row.id === 'cursor').workflow.state, 'audit-required');
   assert.match(bridge.rows.find(row => row.id === 'cursor').failureReason, /实验来源/);
 });
+
+test('coverage bridge does not call mismatched native data trusted', () => {
+  const bridge = buildCoverageBridge({
+    sourceHealth: [{
+      id: 'claude',
+      label: 'Claude Code',
+      supportStatus: 'stable',
+      tokenReliability: 'native-token-fields',
+      tokenEvents: 10,
+      sessions: 2,
+      dailyRows: 2,
+      totalTokens: 100,
+      reconciliation: { status: 'risk' }
+    }]
+  });
+
+  const [claude] = bridge.rows;
+  assert.equal(claude.status, 'native-unverified');
+  assert.equal(claude.successfulCoverage, false);
+  assert.equal(bridge.summary.nativeTrusted, 0);
+});

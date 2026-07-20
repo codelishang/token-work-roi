@@ -24,6 +24,7 @@
  * Only assistant messages with a resolved model are counted.
  */
 
+import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { existsSync }              from 'node:fs';
 import { join, basename, extname } from 'node:path';
@@ -161,6 +162,7 @@ async function parseSessionFile(filePath, sessionId, agentPath) {
   let currentModel    = null;
   let currentProvider = null;
   const events        = [];
+  const recordOccurrences = new Map();
 
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -225,10 +227,14 @@ async function parseSessionFile(filePath, sessionId, agentPath) {
         ? Math.max(0, Number(usage.cost.total) || 0)
         : 0;
       const timestamp = msg.timestamp != null ? String(msg.timestamp) : String(fallbackTimestamp);
+      const recordHash = createHash('sha256').update(line).digest('hex').slice(0, 32);
+      const occurrence = recordOccurrences.get(recordHash) || 0;
+      recordOccurrences.set(recordHash, occurrence + 1);
 
       events.push({
         sessionId,
         agentPath,
+        identityKey: `${recordHash}:${occurrence}`,
         timestamp,
         date,
         model: normalizeModelForGrouping(model),
@@ -311,17 +317,10 @@ async function scanAgentsRoot(root) {
 }
 
 function openClawEventKey(event) {
-  const tokens = event.tokens || {};
   return [
     event.agentPath,
     event.sessionId,
-    event.timestamp,
-    event.model,
-    event.provider,
-    tokens.input,
-    tokens.output,
-    tokens.cacheRead,
-    tokens.cacheWrite
+    event.identityKey
   ].join('::');
 }
 
