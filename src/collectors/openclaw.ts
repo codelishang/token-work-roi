@@ -224,10 +224,12 @@ async function parseSessionFile(filePath, sessionId, agentPath) {
       const cost = (usage.cost && usage.cost.total != null)
         ? Math.max(0, Number(usage.cost.total) || 0)
         : 0;
+      const timestamp = msg.timestamp != null ? String(msg.timestamp) : String(fallbackTimestamp);
 
       events.push({
         sessionId,
         agentPath,
+        timestamp,
         date,
         model: normalizeModelForGrouping(model),
         provider: canonicalProvider(provider) || provider,
@@ -262,6 +264,15 @@ async function parseSessionFile(filePath, sessionId, agentPath) {
  */
 async function scanAgentsRoot(root) {
   const events = [];
+  const seenEvents = new Set();
+  const addEvents = (rows) => {
+    for (const event of rows) {
+      const key = openClawEventKey(event);
+      if (seenEvents.has(key)) continue;
+      seenEvents.add(key);
+      events.push(event);
+    }
+  };
 
   const agentEntries = await safeReaddir(root);
   for (const agentEntry of agentEntries) {
@@ -275,7 +286,6 @@ async function scanAgentsRoot(root) {
     const targetDir   = existsSync(sessionsDir) ? sessionsDir : agentDir;
     const fileEntries = await safeReaddir(targetDir);
 
-    // --- index file first (to avoid double-counting files referenced by index)
     const indexRefs = new Set();
     const indexEntry = fileEntries.find(e => e.isFile() && e.name === 'sessions.json');
     if (indexEntry) {
@@ -283,26 +293,36 @@ async function scanAgentsRoot(root) {
       const indexed   = await parseIndexFile(indexPath);
       for (const { sessionId, filePath } of indexed) {
         indexRefs.add(filePath);
-        const ev = await parseSessionFile(filePath, sessionId, agentPath);
-        events.push(...ev);
+        addEvents(await parseSessionFile(filePath, sessionId, agentPath));
       }
     }
 
-    // --- individual transcript files
     for (const fileEntry of fileEntries) {
       if (!fileEntry.isFile()) continue;
       if (!isTranscriptFile(fileEntry.name)) continue;
-
       const filePath = join(targetDir, fileEntry.name);
-      if (indexRefs.has(filePath)) continue;   // already handled via index
-
+      if (indexRefs.has(filePath)) continue;
       const sessionId = sessionIdFromFilename(fileEntry.name);
-      const ev = await parseSessionFile(filePath, sessionId, agentPath);
-      events.push(...ev);
+      addEvents(await parseSessionFile(filePath, sessionId, agentPath));
     }
   }
 
   return events;
+}
+
+function openClawEventKey(event) {
+  const tokens = event.tokens || {};
+  return [
+    event.agentPath,
+    event.sessionId,
+    event.timestamp,
+    event.model,
+    event.provider,
+    tokens.input,
+    tokens.output,
+    tokens.cacheRead,
+    tokens.cacheWrite
+  ].join('::');
 }
 
 // ---------------------------------------------------------------------------
