@@ -1,8 +1,10 @@
 const REASONING_TIERS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'auto', 'none']);
-
-function pad2(value) {
-  return String(value).padStart(2, '0');
-}
+const CHINA_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
 
 export function localDateFromTimestamp(value, fallback = 'unknown') {
   if (value == null || value === '') return fallback;
@@ -18,11 +20,9 @@ export function localDateFromTimestamp(value, fallback = 'unknown') {
   const date = new Date(ms);
   if (Number.isNaN(date.getTime())) return fallback;
 
-  return [
-    date.getFullYear(),
-    pad2(date.getMonth() + 1),
-    pad2(date.getDate())
-  ].join('-');
+  const parts = CHINA_DATE_FORMATTER.formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 export function normalizeModelForGrouping(modelId) {

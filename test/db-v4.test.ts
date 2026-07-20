@@ -13,11 +13,13 @@ import {
   listTokenEvents,
   listWorkItems,
   openDb,
+  repairUsageTotals,
   upsertDaily,
   upsertAdvisorAction,
   upsertBudgetProfile,
   upsertSession,
   upsertTokenEvent,
+  usageTotalsNeedRepair,
   upsertWorkItem
 } from '../src/db.ts';
 import { buildTerminalReport } from '../src/terminal-report.ts';
@@ -104,6 +106,41 @@ test('token_events upsert is idempotent and privacy bounded', () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].inputTokens, 20);
   assert.equal(rows[0].privacyLevel, 'safe');
+  db.close();
+});
+
+test('stored usage totals include reasoning tokens after repair', () => {
+  const db = tempDb();
+  upsertDaily(db, {
+    device: 'demo', source: 'codex', usageDate: '2026-07-20', model: 'gpt-5.6',
+    inputTokens: 10, outputTokens: 5, cachedInputTokens: 7, reasoningOutputTokens: 3, totalTokens: 25
+  });
+  upsertSession(db, {
+    device: 'demo', source: 'codex', sessionId: 's1', model: 'gpt-5.6',
+    inputTokens: 10, outputTokens: 5, cachedInputTokens: 7, reasoningOutputTokens: 3, totalTokens: 25
+  });
+  db.prepare(`UPDATE daily_usage SET total_tokens = 15`).run();
+  db.prepare(`UPDATE session_usage SET total_tokens = 15`).run();
+  assert.equal(usageTotalsNeedRepair(db), true);
+  assert.deepEqual(repairUsageTotals(db), { daily: 1, sessions: 1 });
+  assert.equal(usageTotalsNeedRepair(db), false);
+  db.close();
+});
+
+test('stored usage totals preserve a larger upstream total', () => {
+  const db = tempDb();
+  upsertDaily(db, {
+    device: 'demo', source: 'aggregate', usageDate: '2026-07-20', model: 'unknown',
+    inputTokens: 10, outputTokens: 5, totalTokens: 30
+  });
+  upsertSession(db, {
+    device: 'demo', source: 'aggregate', sessionId: 's1', model: 'unknown',
+    inputTokens: 10, outputTokens: 5, totalTokens: 30
+  });
+  assert.equal(usageTotalsNeedRepair(db), false);
+  assert.deepEqual(repairUsageTotals(db), { daily: 0, sessions: 0 });
+  assert.equal(db.prepare(`SELECT total_tokens FROM daily_usage`).get().total_tokens, 30);
+  assert.equal(db.prepare(`SELECT total_tokens FROM session_usage`).get().total_tokens, 30);
   db.close();
 });
 

@@ -34,6 +34,7 @@ export function buildSourceHealth({
     ]);
     const stats = mergeStats(matchedKeys, { daily, sessions, events });
     const run = firstRun(matchedKeys, latestRuns);
+    const reconciliation = reconciliationStatus(stats);
     const lastSeenAt = latestDate([
       stats.latestDailyAt,
       stats.latestSessionAt,
@@ -64,24 +65,33 @@ export function buildSourceHealth({
       sessions: stats.sessions,
       tokenEvents: stats.tokenEvents,
       totalTokens: stats.totalTokens,
+      dailyTokens: stats.dailyTokens,
+      sessionTokens: stats.sessionTokens,
+      eventTokens: stats.eventTokens,
+      reconciliation,
       lastSeenAt,
       lastRunStatus: run?.status || null,
       lastRunAt: run?.collectedAt || null,
       lastRunMessage: sanitizeRunMessage(run?.message),
-      health: healthStatus({ collector, stats, run, lastSeenAt }),
+      health: healthStatus({ collector, stats, run, lastSeenAt, reconciliation }),
       note: collector.note || null
     };
   });
 }
 
 function groupSourceRows(rows, countField) {
+  const tokenField = {
+    dailyRows: 'dailyTokens',
+    sessions: 'sessionTokens',
+    tokenEvents: 'eventTokens'
+  }[countField];
   const map = new Map();
   for (const row of rows) {
     const key = normalizeKey(row.source);
     if (!key) continue;
     const current = map.get(key) || emptyStats();
     current[countField] += Number(row.count ?? row[countField] ?? 0);
-    current.totalTokens += Number(row.totalTokens || 0);
+    current[tokenField] += Number(row.totalTokens || 0);
     if (row.latestDailyAt) current.latestDailyAt = latestDate([current.latestDailyAt, row.latestDailyAt]);
     if (row.latestSessionAt) current.latestSessionAt = latestDate([current.latestSessionAt, row.latestSessionAt]);
     if (row.latestEventAt) current.latestEventAt = latestDate([current.latestEventAt, row.latestEventAt]);
@@ -124,12 +134,15 @@ function mergeStats(keys: string[], groups: Record<string, Map<string, ReturnTyp
       merged.dailyRows += row.dailyRows;
       merged.sessions += row.sessions;
       merged.tokenEvents += row.tokenEvents;
-      merged.totalTokens += row.totalTokens;
+      merged.dailyTokens += row.dailyTokens;
+      merged.sessionTokens += row.sessionTokens;
+      merged.eventTokens += row.eventTokens;
       merged.latestDailyAt = latestDate([merged.latestDailyAt, row.latestDailyAt]);
       merged.latestSessionAt = latestDate([merged.latestSessionAt, row.latestSessionAt]);
       merged.latestEventAt = latestDate([merged.latestEventAt, row.latestEventAt]);
     }
   }
+  merged.totalTokens = strongestTokenTotal(merged);
   return merged;
 }
 
@@ -145,11 +158,40 @@ function emptyStats() {
     dailyRows: 0,
     sessions: 0,
     tokenEvents: 0,
+    dailyTokens: 0,
+    sessionTokens: 0,
+    eventTokens: 0,
     totalTokens: 0,
     latestDailyAt: null,
     latestSessionAt: null,
     latestEventAt: null
   };
+}
+
+function strongestTokenTotal(stats) {
+  if (stats.eventTokens > 0) return stats.eventTokens;
+  if (stats.sessionTokens > 0) return stats.sessionTokens;
+  return stats.dailyTokens;
+}
+
+function reconciliationStatus(stats) {
+  if (stats.tokenEvents === 0) {
+    return { status: 'not-applicable', label: '仅聚合', note: '没有 event 级 token 数据，无法进行三表校验。' };
+  }
+  const eventTokens = Number(stats.eventTokens || 0);
+  const dailyDiff = diffPercent(stats.dailyTokens, eventTokens);
+  const sessionDiff = diffPercent(stats.sessionTokens, eventTokens);
+  if (dailyDiff === 0 && sessionDiff === 0) {
+    return { status: 'ok', label: '已校验', note: 'daily、session、event 总量一致。' };
+  }
+  return { status: 'risk', label: '待核查', note: 'daily、session 或 event 总量不一致，当前来源不应作为强可信统计。' };
+}
+
+function diffPercent(left, right) {
+  const a = Number(left || 0);
+  const b = Number(right || 0);
+  const baseline = Math.max(1, Math.abs(a), Math.abs(b));
+  return Math.abs(a - b) / baseline;
 }
 
 function coverageTier(status) {
@@ -191,7 +233,8 @@ function commandHintFor(collector) {
   return 'npx token-work collectors --json';
 }
 
-function healthStatus({ collector, stats, run, lastSeenAt }) {
+function healthStatus({ collector, stats, run, lastSeenAt, reconciliation }) {
+  if (reconciliation?.status === 'risk') return 'reconciliation-risk';
   if (stats.sessions || stats.tokenEvents || stats.dailyRows) return 'has-data';
   if (run?.status === 'error') return 'last-run-error';
   if (collector.detected) return 'detected-no-data';

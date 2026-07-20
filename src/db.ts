@@ -97,6 +97,35 @@ export function createSqliteBackup(db, dbPath = defaultDbPath, {
   return { createdAt, path: backupPath, fileName };
 }
 
+export function usageTotalsNeedRepair(db) {
+  return Boolean(db.prepare(`
+    SELECT 1
+    FROM daily_usage
+    WHERE total_tokens < input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens + cached_input_tokens + reasoning_output_tokens
+    UNION ALL
+    SELECT 1
+    FROM session_usage
+    WHERE total_tokens < input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens + cached_input_tokens + reasoning_output_tokens
+    LIMIT 1
+  `).get());
+}
+
+export function repairUsageTotals(db) {
+  const daily = db.prepare(`
+    UPDATE daily_usage
+    SET total_tokens = input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens + cached_input_tokens + reasoning_output_tokens,
+      updated_at = datetime('now')
+    WHERE total_tokens < input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens + cached_input_tokens + reasoning_output_tokens
+  `).run().changes;
+  const sessions = db.prepare(`
+    UPDATE session_usage
+    SET total_tokens = input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens + cached_input_tokens + reasoning_output_tokens,
+      updated_at = datetime('now')
+    WHERE total_tokens < input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens + cached_input_tokens + reasoning_output_tokens
+  `).run().changes;
+  return { daily, sessions };
+}
+
 function backupFiles(dir, reason) {
   const suffix = `-${reason}.sqlite`;
   return readdirSync(dir)

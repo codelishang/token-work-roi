@@ -71,6 +71,8 @@ export function buildCoverageBridge({ sourceHealth = [] } = {}) {
 function bridgeStatus(row: InputRecord = {}) {
   const supportStatus = String(row.supportStatus || '');
   const id = String(row.id || '');
+  const reconciliation = row.reconciliation as InputRecord | undefined;
+  if (reconciliation?.status === 'risk') return 'native-unverified';
   if (TRUSTED_NATIVE_STATUSES.has(supportStatus) && row.tokenReliability === 'native-token-fields') {
     return 'native-trusted';
   }
@@ -89,6 +91,7 @@ function bridgeStatus(row: InputRecord = {}) {
 function statusLabel(status) {
   return ({
     'native-trusted': '原生可信采集',
+    'native-unverified': '原生数据待核查',
     'ccusage-importable': 'ccusage 可导入',
     'experimental-audit': '实验采集',
     'detected-only': '仅检测到',
@@ -101,6 +104,9 @@ function bridgeRecommendation(row, status) {
     return row.hasUsage
       ? '已有原生结构化 token 数据；如需补齐其他工具，可再导入 ccusage JSON。'
       : `运行 ${row.commandHint || commandForStatus(status, row.id)} 做 dry-run，确认后再 apply。`;
+  }
+  if (status === 'native-unverified') {
+    return '原始事件与汇总总量不一致，保留记录供核查，但不作为可信用量覆盖。';
   }
   if (status === 'ccusage-importable') {
     return '用 ccusage CLI 或保存的 JSON 导入结构化 token；Token Work 会重算官方价并拒绝正文风险字段。';
@@ -143,6 +149,14 @@ function bridgeWorkflow(row, status, hasUsage, failureReason) {
       label: '先做原生 dry-run',
       nextStep: row.commandHint || commandForStatus(status, row.id),
       reason: failureReason
+    };
+  }
+  if (status === 'native-unverified') {
+    return {
+      state: 'reconciliation-required',
+      label: '先核查总量',
+      nextStep: '重新执行原生采集；确认事件、session 与 daily 总量一致后再用于复盘。',
+      reason: '当前来源存在未校验的历史事件。'
     };
   }
   if (status === 'ccusage-importable') {
@@ -217,10 +231,11 @@ function tokenReliabilityLabel(value) {
 function compareBridgeRows(a, b) {
   const rank = {
     'native-trusted': 0,
-    'ccusage-importable': 1,
-    'experimental-audit': 2,
-    'detected-only': 3,
-    unsupported: 4
+    'native-unverified': 1,
+    'ccusage-importable': 2,
+    'experimental-audit': 3,
+    'detected-only': 4,
+    unsupported: 5
   };
   return (rank[a.status] ?? 9) - (rank[b.status] ?? 9)
     || Number(b.hasUsage) - Number(a.hasUsage)

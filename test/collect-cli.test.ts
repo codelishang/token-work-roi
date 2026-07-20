@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import type { ProcessResult } from '../test-support/process.ts';
+import { localDateFromTimestamp } from '../src/collectors/utils.ts';
 
 interface CollectSourceSummary {
   id: string;
@@ -38,6 +39,11 @@ test('collect does not treat false boolean arguments as write confirmation', asy
   const result = await runNode(['src/collect.ts', '--apply', '--yes=false', '--json']);
   assert.notEqual(result.code, 0);
   assert.match(result.stderr, /requires --yes/);
+});
+
+test('collector dates always use China Standard Time', () => {
+  assert.equal(localDateFromTimestamp('2026-06-17T15:59:59.999Z'), '2026-06-17');
+  assert.equal(localDateFromTimestamp('2026-06-17T16:00:00.000Z'), '2026-06-18');
 });
 
 test('collect dry-run scans fixtures and does not write SQLite', async () => {
@@ -99,7 +105,7 @@ test('collect does not recount token history copied into a forked Codex session'
   }
 });
 
-test('collect removes legacy forked Codex events before applying corrected usage', async () => {
+test('collect reconciles current Codex events while preserving historical usage', async () => {
   const fixture = createForkedCodexFixture();
   try {
     const first = await runNode([
@@ -142,6 +148,42 @@ test('collect removes legacy forked Codex events before applying corrected usage
         777
       );
       db.prepare(`
+        INSERT INTO token_events (
+          event_id, device, source, session_id, timestamp, model, input_tokens
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        'codex:stale-event',
+        hostname(),
+        'Codex CLI',
+        'local:codex:parent:gpt-5.4-mini',
+        '2026-06-17T02:05:00.000Z',
+        'gpt-5.4-mini',
+        999
+      );
+      db.prepare(`
+        INSERT INTO token_events (
+          event_id, device, source, session_id, timestamp, model, input_tokens
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        'codex:unscanned-event',
+        hostname(),
+        'Codex CLI',
+        'local:codex:unscanned-session:gpt-5.4-mini',
+        '2026-06-17T02:05:00.000Z',
+        'gpt-5.4-mini',
+        777
+      );
+      db.prepare(`
+        INSERT INTO session_usage (device, source, session_id, model, total_tokens)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(
+        hostname(),
+        'Codex CLI',
+        'local:codex:unscanned-session:gpt-5.4-mini',
+        'gpt-5.4-mini',
+        0
+      );
+      db.prepare(`
         INSERT INTO daily_usage (device, source, usage_date, model, total_tokens)
         VALUES (?, ?, ?, ?, ?)
       `).run(hostname(), 'Codex CLI', '2026-06-17', 'legacy-model', 999);
@@ -169,15 +211,127 @@ test('collect removes legacy forked Codex events before applying corrected usage
         SELECT COUNT(*) AS count FROM token_events WHERE event_id = 'similarly-named-event'
       `).get().count, 1);
       assert.equal(repaired.prepare(`
+        SELECT COUNT(*) AS count FROM token_events WHERE event_id = 'codex:stale-event'
+      `).get().count, 0);
+      assert.equal(repaired.prepare(`
+        SELECT COUNT(*) AS count FROM token_events WHERE event_id = 'codex:unscanned-event'
+      `).get().count, 1);
+      assert.equal(repaired.prepare(`
+        SELECT total_tokens AS totalTokens FROM session_usage
+        WHERE source = 'Codex CLI' AND session_id = 'local:codex:unscanned-session:gpt-5.4-mini'
+      `).get().totalTokens, 777);
+      assert.equal(repaired.prepare(`
         SELECT COUNT(*) AS count FROM daily_usage
         WHERE source = 'Codex CLI' AND usage_date = '2026-06-17' AND model = 'legacy-model'
       `).get().count, 0);
       assert.equal(repaired.prepare(`
         SELECT total_tokens AS totalTokens FROM daily_usage
         WHERE source = 'Codex CLI' AND usage_date = '2026-06-17' AND model = 'gpt-5.4-mini'
-      `).get().totalTokens, 170);
+      `).get().totalTokens, 947);
     } finally {
       repaired.close();
+    }
+
+    const stable = await runNode([
+      'src/collect.ts',
+      '--sources=codex',
+      '--db',
+      fixture.dbPath,
+      '--apply',
+      '--yes',
+      '--json'
+    ], { ...fixture.env, SCHEDULED_COLLECT_ENABLED: '1' });
+    assert.equal(stable.code, 0, stable.stderr);
+    assert.equal(JSON.parse(stable.stdout).backup, null);
+    const stableDb = new DatabaseSync(fixture.dbPath);
+    try {
+      assert.equal(stableDb.prepare(`
+        SELECT total_tokens AS totalTokens FROM daily_usage
+        WHERE source = 'Codex CLI' AND usage_date = '2026-06-17' AND model = 'gpt-5.4-mini'
+      `).get().totalTokens, 947);
+    } finally {
+      stableDb.close();
+    }
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('collect keeps distinct Codex and Claude events without relying on file position', async () => {
+  const fixture = createCollectorFixture();
+  try {
+    writeFileSync(join(fixture.claudeRoot, 'projects', 'token-work', 'anonymous.jsonl'), [
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-06-17T02:00:00.000Z',
+        localRecordId: 'first',
+        message: {
+          model: 'claude-sonnet-4-5',
+          usage: { input_tokens: 11, output_tokens: 2 }
+        }
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-06-17T02:00:00.000Z',
+        localRecordId: 'second',
+        message: {
+          model: 'claude-sonnet-4-5',
+          usage: { input_tokens: 11, output_tokens: 2 }
+        }
+      })
+    ].join('\n'), 'utf8');
+    writeFileSync(join(fixture.codexHome, 'sessions', '2026', '06', '17', 'same-timestamp.jsonl'), [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'same-timestamp' } }),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-06-17T04:00:00.000Z',
+        payload: {
+          type: 'token_count', request_id: 'first',
+          info: { total_token_usage: { input_tokens: 10 } }
+        }
+      }),
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-06-17T04:00:00.000Z',
+        payload: {
+          type: 'token_count', request_id: 'second',
+          info: { total_token_usage: { input_tokens: 20 } }
+        }
+      })
+    ].join('\n'), 'utf8');
+
+    const result = await runNode([
+      'src/collect.ts',
+      '--sources=claude,codex',
+      '--db',
+      fixture.dbPath,
+      '--apply',
+      '--yes',
+      '--json'
+    ], fixture.env);
+    assert.equal(result.code, 0, result.stderr);
+
+    const db = new DatabaseSync(fixture.dbPath);
+    try {
+      const totals = db.prepare(`
+        SELECT
+          COUNT(*) AS eventCount,
+          COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens), 0) AS eventTokens
+        FROM token_events
+        WHERE source = 'Claude Code' AND session_id LIKE 'local:claude:anonymous:%'
+      `).get();
+      assert.equal(totals.eventCount, 2);
+      assert.equal(totals.eventTokens, 26);
+      const codex = db.prepare(`
+        SELECT COUNT(*) AS eventCount, SUM(input_tokens) AS inputTokens
+        FROM token_events
+        WHERE source = 'Codex CLI' AND session_id LIKE 'local:codex:same-timestamp:%'
+      `).get();
+      assert.equal(codex.eventCount, 2);
+      assert.equal(codex.inputTokens, 20);
+    } finally {
+      db.close();
     }
   } finally {
     cleanupFixture(fixture);
@@ -205,7 +359,7 @@ test('collect retains the request that follows a Codex counter reset', async () 
   }
 });
 
-test('collect does not count an unresolved forked Codex transcript', async () => {
+test('collect keeps post-fork usage when the parent Codex transcript is unavailable', async () => {
   const fixture = createUnresolvedForkedCodexFixture();
   try {
     const result = await runNode([
@@ -219,8 +373,8 @@ test('collect does not count an unresolved forked Codex transcript', async () =>
     assert.equal(result.code, 0, result.stderr);
     const summary = JSON.parse(result.stdout);
     const codex = summary.sources.find((source: CollectSourceSummary) => source.id === 'codex');
-    assert.equal(codex.tokenEvents, 0);
-    assert.equal(codex.totalTokens, 0);
+    assert.equal(codex.tokenEvents, 1);
+    assert.equal(codex.totalTokens, 100);
   } finally {
     cleanupFixture(fixture);
   }
@@ -558,6 +712,8 @@ function createCollectorFixture() {
 
   return {
     dir,
+    claudeRoot,
+    codexHome,
     dbPath: join(dir, 'usage.sqlite'),
     env: {
       TOKEN_WORK_CONFIG: configPath,
@@ -698,7 +854,6 @@ function createOpenClawArchiveFixture({ includeArchivedHistory = false } = {}) {
       type: 'message',
       message: {
         role: 'assistant',
-        timestamp: '2026-06-17T02:00:00.000Z',
         usage: { input: 10 }
       }
     })
@@ -710,7 +865,6 @@ function createOpenClawArchiveFixture({ includeArchivedHistory = false } = {}) {
           type: 'message',
           message: {
             role: 'assistant',
-            timestamp: '2026-06-17T01:00:00.000Z',
             usage: { input: 7 }
           }
         }),

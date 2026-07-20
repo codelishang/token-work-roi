@@ -161,7 +161,7 @@ function summaryAtLeast(current, baseline) {
  * Parse a single Codex JSONL session file.
  * Returns an array of { timestamp, date, model, workspace, tokens }.
  */
-async function parseSessionFile(filePath, sessionId, inheritedTotal = null) {
+async function parseSessionFile(filePath, sessionId, inheritedTotal = null, minimumTimestamp = null) {
   let text;
   try {
     text = await readFile(filePath, 'utf8');
@@ -177,6 +177,8 @@ async function parseSessionFile(filePath, sessionId, inheritedTotal = null) {
   let metaSessionId    = sessionId;
 
   const events = [];
+  const recordOccurrences = new Map();
+  const minimumTime = minimumTimestamp ? new Date(minimumTimestamp).getTime() : null;
 
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -247,15 +249,27 @@ async function parseSessionFile(filePath, sessionId, inheritedTotal = null) {
       if (summaryIsZero(increment)) continue;
 
       const tokens = summaryToTokens(increment);
+      const recordHash = stableHash(line);
+      const occurrence = recordOccurrences.get(recordHash) || 0;
+      recordOccurrences.set(recordHash, occurrence + 1);
 
       // Date from event timestamp
       const timestamp = typeof entry.timestamp === 'string' ? entry.timestamp : '';
+      if (minimumTime != null && (!timestamp || new Date(timestamp).getTime() <= minimumTime)) continue;
       let date = 'unknown';
       if (timestamp) {
         date = localDateFromTimestamp(timestamp);
       }
 
-      events.push({ timestamp, date, model, workspace, tokens, sessionId: metaSessionId });
+      events.push({
+        timestamp,
+        date,
+        model,
+        workspace,
+        tokens,
+        sessionId: metaSessionId,
+        identityKey: `${recordHash}:${occurrence}`
+      });
     }
   }
 
@@ -291,6 +305,7 @@ export async function collect(pricingData = null) {
   const seenEventKeys = new Set();
   const tokenEvents = [];
   const forkedSessionPrefixes = new Set();
+  const managedEventSessionPrefixes = new Set();
 
   for (const { filePath, fileSessionId, lineage, events } of sessionFiles) {
     if (lineage.parentSessionId) {
@@ -304,11 +319,12 @@ export async function collect(pricingData = null) {
         .map(model => [model, `${sessionPrefix}:${model}`])
     );
     const legacySessionIds = [...modelSessionIds.values()];
+    managedEventSessionPrefixes.add(`${sessionPrefix}:`);
 
     for (let index = 0; index < events.length; index += 1) {
-      const { timestamp, date, model, workspace, tokens } = events[index];
+      const { timestamp, date, model, workspace, tokens, identityKey } = events[index];
       const sessionId = modelSessionIds.get(model);
-      const eventKey = codexEventDedupKey({ sessionId, timestamp, model, tokens });
+      const eventKey = codexEventDedupKey({ sessionId, identityKey });
       if (eventKey && seenEventKeys.has(eventKey)) continue;
       if (eventKey) seenEventKeys.add(eventKey);
 
@@ -337,13 +353,17 @@ export async function collect(pricingData = null) {
       if (timestamp && (!sessionAgg.lastActivity || timestamp > sessionAgg.lastActivity)) {
         sessionAgg.lastActivity = timestamp;
       }
-      tokenEvents.push(tokenEventFor({ sessionId, legacySessionIds, timestamp, model, tokens, index }));
+      tokenEvents.push(tokenEventFor({ sessionId, legacySessionIds, timestamp, model, tokens, identityKey }));
     }
   }
 
   return {
     ...buildOutput(dailyMap, sessionMap, tokenEvents, pricingData),
-    reconciliation: { eventSessionPrefixes: [...forkedSessionPrefixes] }
+    reconciliation: {
+      eventSessionPrefixes: [...forkedSessionPrefixes],
+      managedEventIdPrefix: 'codex:',
+      managedEventSessionPrefixes: [...managedEventSessionPrefixes]
+    }
   };
 }
 
@@ -403,11 +423,17 @@ async function parseSessionFiles() {
     const inheritedTotal = baselines
       .sort((left, right) => right.timestamp - left.timestamp)[0]?.summary || null;
     const unresolvedFork = Boolean(file.lineage.parentSessionId) && !inheritedTotal;
+    const canParseWithoutParent = !unresolvedFork || Boolean(file.lineage.forkedAt);
     parsedFiles.push({
       ...file,
-      events: unresolvedFork
+      events: !canParseWithoutParent
         ? []
-        : await parseSessionFile(file.filePath, file.fileSessionId, inheritedTotal)
+        : await parseSessionFile(
+            file.filePath,
+            file.fileSessionId,
+            inheritedTotal,
+            unresolvedFork ? file.lineage.forkedAt : null
+          )
     });
   }
   return parsedFiles;
@@ -473,18 +499,8 @@ async function collectSessionFiles() {
   return [...new Set(nestedPaths.flat())];
 }
 
-function codexEventDedupKey({ sessionId, timestamp, model, tokens }) {
-  if (!timestamp) return null;
-  return [
-    sessionId,
-    timestamp,
-    model,
-    tokens.input,
-    tokens.output,
-    tokens.cacheRead,
-    tokens.cacheWrite,
-    tokens.reasoning
-  ].join('::');
+function codexEventDedupKey({ sessionId, identityKey }) {
+  return identityKey ? `${sessionId}:${identityKey}` : null;
 }
 
 /**
@@ -566,12 +582,12 @@ function emptyAuditSummary() {
   };
 }
 
-function tokenEventFor({ sessionId, legacySessionIds = [], timestamp, model, tokens, index }) {
-  const eventId = codexEventId({ sessionId, timestamp, model, tokens, index });
+function tokenEventFor({ sessionId, legacySessionIds = [], timestamp, model, tokens, identityKey }) {
+  const eventId = codexEventId({ sessionId, identityKey });
   return {
     eventId,
     legacyEventIds: legacySessionIds
-      .map(candidate => codexEventId({ sessionId: candidate, timestamp, model, tokens, index }))
+      .map(candidate => codexEventId({ sessionId: candidate, identityKey }))
       .filter(candidate => candidate !== eventId),
     source: CLIENT_KEY,
     sessionId,
@@ -586,8 +602,8 @@ function tokenEventFor({ sessionId, legacySessionIds = [], timestamp, model, tok
   };
 }
 
-function codexEventId({ sessionId, timestamp, model, tokens, index }) {
-  return `codex:${stableHash({ sessionId, timestamp, model, tokens, index })}`;
+function codexEventId({ sessionId, identityKey }) {
+  return `codex:${stableHash({ sessionId, identityKey })}`;
 }
 
 function tokenTotal(tokens) {
