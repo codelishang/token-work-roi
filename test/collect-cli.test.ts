@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
@@ -73,6 +73,196 @@ test('collect dry-run scans fixtures and does not write SQLite', async () => {
     assert.ok(summary.totals.tokenEvents >= 4);
     assert.equal(summary.totals.dailyTotalTokens, summary.totals.sessionTotalTokens);
     assert.equal(summary.totals.sessionTotalTokens, summary.totals.eventTotalTokens);
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('collect does not recount token history copied into a forked Codex session', async () => {
+  const fixture = createForkedCodexFixture();
+  try {
+    const result = await runNode([
+      'src/collect.ts',
+      '--sources=codex',
+      '--db',
+      fixture.dbPath,
+      '--dry-run',
+      '--json'
+    ], fixture.env);
+    assert.equal(result.code, 0, result.stderr);
+    const summary = JSON.parse(result.stdout);
+    const codex = summary.sources.find((source: CollectSourceSummary) => source.id === 'codex');
+    assert.equal(codex.tokenEvents, 3);
+    assert.equal(codex.totalTokens, 170);
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('collect removes legacy forked Codex events before applying corrected usage', async () => {
+  const fixture = createForkedCodexFixture();
+  try {
+    const first = await runNode([
+      'src/collect.ts',
+      '--sources=codex',
+      '--db',
+      fixture.dbPath,
+      '--apply',
+      '--yes',
+      '--json'
+    ], fixture.env);
+    assert.equal(first.code, 0, first.stderr);
+
+    const db = new DatabaseSync(fixture.dbPath);
+    try {
+      db.prepare(`
+        INSERT INTO token_events (
+          event_id, device, source, session_id, timestamp, model, input_tokens
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        'legacy-fork-event',
+        hostname(),
+        'Codex CLI',
+        'local:codex:child_1:gpt-5.4-mini',
+        '2026-06-17T02:05:00.000Z',
+        'gpt-5.4-mini',
+        999
+      );
+      db.prepare(`
+        INSERT INTO token_events (
+          event_id, device, source, session_id, timestamp, model, input_tokens
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        'similarly-named-event',
+        hostname(),
+        'Codex CLI',
+        'local:codex:childX1:gpt-5.4-mini',
+        '2026-06-17T02:05:00.000Z',
+        'gpt-5.4-mini',
+        777
+      );
+      db.prepare(`
+        INSERT INTO daily_usage (device, source, usage_date, model, total_tokens)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(hostname(), 'Codex CLI', '2026-06-17', 'legacy-model', 999);
+    } finally {
+      db.close();
+    }
+
+    const second = await runNode([
+      'src/collect.ts',
+      '--sources=codex',
+      '--db',
+      fixture.dbPath,
+      '--apply',
+      '--yes',
+      '--json'
+    ], fixture.env);
+    assert.equal(second.code, 0, second.stderr);
+
+    const repaired = new DatabaseSync(fixture.dbPath);
+    try {
+      assert.equal(repaired.prepare(`
+        SELECT COUNT(*) AS count FROM token_events WHERE event_id = 'legacy-fork-event'
+      `).get().count, 0);
+      assert.equal(repaired.prepare(`
+        SELECT COUNT(*) AS count FROM token_events WHERE event_id = 'similarly-named-event'
+      `).get().count, 1);
+      assert.equal(repaired.prepare(`
+        SELECT COUNT(*) AS count FROM daily_usage
+        WHERE source = 'Codex CLI' AND usage_date = '2026-06-17' AND model = 'legacy-model'
+      `).get().count, 0);
+      assert.equal(repaired.prepare(`
+        SELECT total_tokens AS totalTokens FROM daily_usage
+        WHERE source = 'Codex CLI' AND usage_date = '2026-06-17' AND model = 'gpt-5.4-mini'
+      `).get().totalTokens, 170);
+    } finally {
+      repaired.close();
+    }
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('collect retains the request that follows a Codex counter reset', async () => {
+  const fixture = createResettingCodexFixture();
+  try {
+    const result = await runNode([
+      'src/collect.ts',
+      '--sources=codex',
+      '--db',
+      fixture.dbPath,
+      '--dry-run',
+      '--json'
+    ], fixture.env);
+    assert.equal(result.code, 0, result.stderr);
+    const summary = JSON.parse(result.stdout);
+    const codex = summary.sources.find((source: CollectSourceSummary) => source.id === 'codex');
+    assert.equal(codex.tokenEvents, 3);
+    assert.equal(codex.totalTokens, 170);
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('collect does not count an unresolved forked Codex transcript', async () => {
+  const fixture = createUnresolvedForkedCodexFixture();
+  try {
+    const result = await runNode([
+      'src/collect.ts',
+      '--sources=codex',
+      '--db',
+      fixture.dbPath,
+      '--dry-run',
+      '--json'
+    ], fixture.env);
+    assert.equal(result.code, 0, result.stderr);
+    const summary = JSON.parse(result.stdout);
+    const codex = summary.sources.find((source: CollectSourceSummary) => source.id === 'codex');
+    assert.equal(codex.tokenEvents, 0);
+    assert.equal(codex.totalTokens, 0);
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('collect prefers an OpenClaw live transcript over its archived copy', async () => {
+  const fixture = createOpenClawArchiveFixture();
+  try {
+    const result = await runNode([
+      'src/collect.ts',
+      '--sources=openclaw',
+      '--db',
+      fixture.dbPath,
+      '--dry-run',
+      '--json'
+    ], fixture.env);
+    assert.equal(result.code, 0, result.stderr);
+    const summary = JSON.parse(result.stdout);
+    const openclaw = summary.sources.find((source: CollectSourceSummary) => source.id === 'openclaw');
+    assert.equal(openclaw.dailyTotalTokens, 10);
+    assert.equal(openclaw.sessionTotalTokens, 10);
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('collect retains distinct OpenClaw history from an archived transcript', async () => {
+  const fixture = createOpenClawArchiveFixture({ includeArchivedHistory: true });
+  try {
+    const result = await runNode([
+      'src/collect.ts',
+      '--sources=openclaw',
+      '--db',
+      fixture.dbPath,
+      '--dry-run',
+      '--json'
+    ], fixture.env);
+    assert.equal(result.code, 0, result.stderr);
+    const summary = JSON.parse(result.stdout);
+    const openclaw = summary.sources.find((source: CollectSourceSummary) => source.id === 'openclaw');
+    assert.equal(openclaw.dailyTotalTokens, 17);
+    assert.equal(openclaw.sessionTotalTokens, 17);
   } finally {
     cleanupFixture(fixture);
   }
@@ -373,6 +563,170 @@ function createCollectorFixture() {
       TOKEN_WORK_CONFIG: configPath,
       NODE_OPTIONS: '--no-warnings'
     }
+  };
+}
+
+function createForkedCodexFixture() {
+  const dir = tempDir();
+  const codexHome = join(dir, 'codex');
+  const sessionDir = join(codexHome, 'sessions', '2026', '06', '17');
+  mkdirSync(sessionDir, { recursive: true });
+  const tokenCount = (timestamp, inputTokens) => JSON.stringify({
+    type: 'event_msg',
+    timestamp,
+    payload: {
+      type: 'token_count',
+      info: {
+        total_token_usage: { input_tokens: inputTokens },
+        last_token_usage: { input_tokens: inputTokens }
+      }
+    }
+  });
+  writeFileSync(join(sessionDir, 'parent.jsonl'), [
+    JSON.stringify({ type: 'session_meta', payload: { id: 'parent', timestamp: '2026-06-17T02:00:00.000Z' } }),
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
+    tokenCount('2026-06-17T02:00:00.000Z', 100),
+    tokenCount('2026-06-17T02:04:00.000Z', 150)
+  ].join('\n'), 'utf8');
+  writeFileSync(join(sessionDir, 'child.jsonl'), [
+    JSON.stringify({
+      type: 'session_meta',
+      payload: {
+        id: 'child_1',
+        parent_thread_id: 'parent',
+        forked_from_id: 'parent',
+        timestamp: '2026-06-17T02:05:00.000Z'
+      }
+    }),
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
+    tokenCount('2026-06-17T02:05:00.000Z', 100),
+    tokenCount('2026-06-17T02:05:00.001Z', 150),
+    tokenCount('2026-06-17T02:06:00.000Z', 170)
+  ].join('\n'), 'utf8');
+  const configPath = join(dir, 'collectors.json');
+  writeFileSync(configPath, JSON.stringify({
+    collectors: { codex: { homes: [codexHome], sessionSubdirs: ['sessions'] } }
+  }), 'utf8');
+  return {
+    dir,
+    dbPath: join(dir, 'usage.sqlite'),
+    env: { TOKEN_WORK_CONFIG: configPath }
+  };
+}
+
+function createResettingCodexFixture() {
+  const dir = tempDir();
+  const codexHome = join(dir, 'codex');
+  const sessionDir = join(codexHome, 'sessions');
+  mkdirSync(sessionDir, { recursive: true });
+  const tokenCount = (timestamp, totalTokens, lastTokens) => JSON.stringify({
+    type: 'event_msg',
+    timestamp,
+    payload: {
+      type: 'token_count',
+      info: {
+        total_token_usage: { input_tokens: totalTokens },
+        last_token_usage: { input_tokens: lastTokens }
+      }
+    }
+  });
+  writeFileSync(join(sessionDir, 'reset.jsonl'), [
+    JSON.stringify({ type: 'session_meta', payload: { id: 'reset' } }),
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
+    tokenCount('2026-06-17T02:00:00.000Z', 100, 100),
+    tokenCount('2026-06-17T02:01:00.000Z', 150, 50),
+    tokenCount('2026-06-17T02:02:00.000Z', 20, 20)
+  ].join('\n'), 'utf8');
+  const configPath = join(dir, 'collectors.json');
+  writeFileSync(configPath, JSON.stringify({
+    collectors: { codex: { homes: [codexHome], sessionSubdirs: ['sessions'] } }
+  }), 'utf8');
+  return {
+    dir,
+    dbPath: join(dir, 'usage.sqlite'),
+    env: { TOKEN_WORK_CONFIG: configPath }
+  };
+}
+
+function createUnresolvedForkedCodexFixture() {
+  const dir = tempDir();
+  const codexHome = join(dir, 'codex');
+  const sessionDir = join(codexHome, 'sessions');
+  mkdirSync(sessionDir, { recursive: true });
+  writeFileSync(join(sessionDir, 'child.jsonl'), [
+    JSON.stringify({
+      type: 'session_meta',
+      payload: {
+        id: 'child',
+        parent_thread_id: 'missing-parent',
+        forked_from_id: 'missing-parent',
+        timestamp: '2026-06-17T02:00:00.000Z'
+      }
+    }),
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
+    JSON.stringify({
+      type: 'event_msg',
+      timestamp: '2026-06-17T02:00:01.000Z',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: { input_tokens: 100 },
+          last_token_usage: { input_tokens: 100 }
+        }
+      }
+    })
+  ].join('\n'), 'utf8');
+  const configPath = join(dir, 'collectors.json');
+  writeFileSync(configPath, JSON.stringify({
+    collectors: { codex: { homes: [codexHome], sessionSubdirs: ['sessions'] } }
+  }), 'utf8');
+  return {
+    dir,
+    dbPath: join(dir, 'usage.sqlite'),
+    env: { TOKEN_WORK_CONFIG: configPath }
+  };
+}
+
+function createOpenClawArchiveFixture({ includeArchivedHistory = false } = {}) {
+  const dir = tempDir();
+  const agentRoot = join(dir, 'openclaw');
+  const sessionDir = join(agentRoot, 'main', 'sessions');
+  mkdirSync(sessionDir, { recursive: true });
+  const transcript = [
+    JSON.stringify({ type: 'model_change', modelId: 'gpt-5.4-mini', provider: 'openai' }),
+    JSON.stringify({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        timestamp: '2026-06-17T02:00:00.000Z',
+        usage: { input: 10 }
+      }
+    })
+  ].join('\n');
+  const archivedTranscript = includeArchivedHistory
+    ? [
+        JSON.stringify({ type: 'model_change', modelId: 'gpt-5.4-mini', provider: 'openai' }),
+        JSON.stringify({
+          type: 'message',
+          message: {
+            role: 'assistant',
+            timestamp: '2026-06-17T01:00:00.000Z',
+            usage: { input: 7 }
+          }
+        }),
+        transcript
+      ].join('\n')
+    : transcript;
+  writeFileSync(join(sessionDir, 'session-1.jsonl'), transcript, 'utf8');
+  writeFileSync(join(sessionDir, 'session-1.jsonl.deleted.2026-06-17'), archivedTranscript, 'utf8');
+  const configPath = join(dir, 'collectors.json');
+  writeFileSync(configPath, JSON.stringify({
+    collectors: { openclaw: { agentRoots: [agentRoot] } }
+  }), 'utf8');
+  return {
+    dir,
+    dbPath: join(dir, 'usage.sqlite'),
+    env: { TOKEN_WORK_CONFIG: configPath }
   };
 }
 

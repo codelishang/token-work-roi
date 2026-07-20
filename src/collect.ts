@@ -131,6 +131,7 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
     let graphJson = {};
     let modelsJson = {};
     let tokenEvents = [];
+    let reconciliation = null;
     let audit = emptyAuditSummary();
     const sourceSummary = {
       id,
@@ -166,7 +167,7 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
       if (typeof collectorModule.collect !== 'function') {
         throw new Error(`Collector ${id} does not export collect()`);
       }
-      ({ graphJson = {}, modelsJson = {}, tokenEvents = [] } = await collectorModule.collect(pricingData));
+      ({ graphJson = {}, modelsJson = {}, tokenEvents = [], reconciliation = null } = await collectorModule.collect(pricingData));
     } catch (error) {
       sourceSummary.status = 'error';
       sourceSummary.message = error.message;
@@ -197,7 +198,7 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
     exportPayload.sessions.push(...sessionRows);
     exportPayload.tokenEvents.push(...eventRows);
 
-    payloads.push({ type: 'data', sourceSummary, label, module, dailyRows, sessionRows, eventRows });
+    payloads.push({ type: 'data', device, source: label, sourceSummary, label, module, dailyRows, sessionRows, eventRows, reconciliation });
   }
 
   const fatal = summary.sources.filter(source => source.fatalCoverageError);
@@ -234,7 +235,7 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
         exportPayload.runs.push(run);
         continue;
       }
-      const { sourceSummary, label, module, dailyRows, sessionRows, eventRows } = payload;
+      const { sourceSummary, label, module, dailyRows, sessionRows, eventRows, reconciliation } = payload;
       const run = runRecord({
         device,
         label,
@@ -244,6 +245,7 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
         module
       });
       runInTransaction(db, () => {
+        applyEventReconciliation(db, payload);
         dailyRows.forEach(row => upsertDaily(db, row));
         sessionRows.forEach(row => upsertSession(db, row));
         const deleteLegacyEvent = db.prepare(`
@@ -296,6 +298,7 @@ function tokenUsageWouldChange(db, payloads) {
 
   for (const payload of payloads) {
     if (payload.type === 'error') continue;
+    if (eventReconciliationPlan(db, payload).prefixes.length > 0) return true;
     for (const row of payload.dailyRows) {
       if (!matchingDaily.get(
         row.device, row.source, row.usageDate, row.model,
@@ -321,6 +324,86 @@ function tokenUsageWouldChange(db, payloads) {
     }
   }
   return false;
+}
+
+function applyEventReconciliation(db, payload) {
+  const plan = eventReconciliationPlan(db, payload);
+  if (!plan.prefixes.length) return;
+
+  const source = reconciliationSource(payload);
+  const deleteEvents = db.prepare(`
+    DELETE FROM token_events
+    WHERE device = ? AND source = ? AND session_id LIKE ? ESCAPE '\\'
+  `);
+  const resetSessions = db.prepare(`
+    UPDATE session_usage
+    SET input_tokens = 0,
+      output_tokens = 0,
+      cache_creation_tokens = 0,
+      cache_read_tokens = 0,
+      cached_input_tokens = 0,
+      reasoning_output_tokens = 0,
+      total_tokens = 0,
+      cost_usd = 0,
+      updated_at = datetime('now')
+    WHERE device = ? AND source = ? AND session_id LIKE ? ESCAPE '\\'
+  `);
+  const deleteDaily = db.prepare(`
+    DELETE FROM daily_usage
+    WHERE device = ? AND source = ? AND usage_date = ?
+  `);
+
+  for (const prefix of plan.prefixes) {
+    const pattern = sqlLikePrefix(prefix);
+    deleteEvents.run(payload.device, source, pattern);
+    // Preserve annotations and output links while removing stale session totals.
+    resetSessions.run(payload.device, source, pattern);
+  }
+  for (const date of plan.dates) {
+    deleteDaily.run(payload.device, source, date);
+  }
+}
+
+function eventReconciliationPlan(db, payload) {
+  const prefixes = normalizedEventSessionPrefixes(payload.reconciliation);
+  if (!prefixes.length) return { prefixes: [], dates: [] };
+
+  const source = reconciliationSource(payload);
+  const device = payload.device;
+  const selectEvents = db.prepare(`
+    SELECT event_id AS eventId, date(timestamp, '+8 hours') AS usageDate
+    FROM token_events
+    WHERE device = ? AND source = ? AND session_id LIKE ? ESCAPE '\\'
+  `);
+  const stalePrefixes = [];
+  const dates = new Set();
+
+  for (const prefix of prefixes) {
+    const expectedIds = new Set(payload.eventRows
+      .filter(row => row.sessionId.startsWith(prefix))
+      .map(row => row.eventId));
+    const existing = selectEvents.all(device, source, sqlLikePrefix(prefix));
+    if (!existing.some(row => !expectedIds.has(row.eventId))) continue;
+    stalePrefixes.push(prefix);
+    for (const row of existing) {
+      if (row.usageDate) dates.add(row.usageDate);
+    }
+  }
+  return { prefixes: stalePrefixes, dates: [...dates] };
+}
+
+function normalizedEventSessionPrefixes(reconciliation) {
+  const prefixes = reconciliation?.eventSessionPrefixes;
+  if (!Array.isArray(prefixes)) return [];
+  return [...new Set(prefixes.filter(prefix => typeof prefix === 'string' && prefix.trim()))];
+}
+
+function reconciliationSource(payload) {
+  return payload.eventRows[0]?.source || payload.sessionRows[0]?.source || payload.dailyRows[0]?.source || payload.source || '';
+}
+
+function sqlLikePrefix(value) {
+  return `${String(value).replace(/[\\%_]/g, '\\$&')}%`;
 }
 
 function isScheduledCollection() {

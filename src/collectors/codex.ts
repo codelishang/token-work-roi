@@ -12,9 +12,10 @@
  *   event_msg     – when payload.type === "token_count", carries token usage
  *
  * Token counting strategy:
- *   • Primary source: last_token_usage  (per-request increment)
- *   • Fallback:        delta of total_token_usage between consecutive events
- *   • Dedup:           skip events where total_token_usage unchanged
+ *   • total_token_usage establishes deltas between consecutive counters.
+ *   • last_token_usage covers the first record and counter resets.
+ *   • Forked sessions start from their parent's counter at fork time, so copied
+ *     history is not counted again as new usage.
  */
 
 import { createHash } from 'node:crypto';
@@ -127,11 +128,6 @@ function summaryIsZero(s) {
   return s.input === 0 && s.output === 0 && s.cached === 0 && s.reasoning === 0;
 }
 
-function summaryEqual(a, b) {
-  return a.input === b.input && a.output === b.output &&
-         a.cached === b.cached && a.reasoning === b.reasoning;
-}
-
 function summaryDelta(current, previous) {
   if (
     current.input < previous.input ||
@@ -150,19 +146,11 @@ function summaryDelta(current, previous) {
   };
 }
 
-function summaryTotal(s) {
-  return s.input + s.output + s.cached + s.reasoning;
-}
-
-function looksLikeStaleRegression(current, previous, last) {
-  const previousTotal = summaryTotal(previous);
-  const currentTotal = summaryTotal(current);
-  const lastTotal = summaryTotal(last);
-
-  if (previousTotal <= 0 || currentTotal <= 0 || lastTotal <= 0) return false;
-
-  return currentTotal * 100 >= previousTotal * 98 ||
-         currentTotal + lastTotal * 2 >= previousTotal;
+function summaryAtLeast(current, baseline) {
+  return current.input >= baseline.input &&
+    current.output >= baseline.output &&
+    current.cached >= baseline.cached &&
+    current.reasoning >= baseline.reasoning;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +161,7 @@ function looksLikeStaleRegression(current, previous, last) {
  * Parse a single Codex JSONL session file.
  * Returns an array of { timestamp, date, model, workspace, tokens }.
  */
-async function parseSessionFile(filePath, sessionId) {
+async function parseSessionFile(filePath, sessionId, inheritedTotal = null) {
   let text;
   try {
     text = await readFile(filePath, 'utf8');
@@ -183,7 +171,8 @@ async function parseSessionFile(filePath, sessionId) {
 
   // Per-file state
   let currentModel     = null;
-  let previousTotal    = null;   // last seen total_token_usage summary
+  let previousTotal    = inheritedTotal;
+  let awaitingForkBase = Boolean(inheritedTotal);
   let workspace        = null;
   let metaSessionId    = sessionId;
 
@@ -232,43 +221,28 @@ async function parseSessionFile(filePath, sessionId) {
 
       currentModel = model;
 
-      const lastUsage  = info.last_token_usage  ? usageSummary(info.last_token_usage)  : null;
       const totalUsage = info.total_token_usage ? usageSummary(info.total_token_usage) : null;
 
-      // Dedup: skip if total hasn't changed since last event
-      if (totalUsage && previousTotal && summaryEqual(totalUsage, previousTotal)) continue;
-
-      // Choose token increment
+      const lastUsage = info.last_token_usage ? usageSummary(info.last_token_usage) : null;
       let increment;
-      if (lastUsage && totalUsage && previousTotal) {
-        if (!summaryDelta(totalUsage, previousTotal) &&
-            looksLikeStaleRegression(totalUsage, previousTotal, lastUsage)) {
+      if (totalUsage) {
+        // Forked Codex sessions replay the parent's history when created.
+        // Keep their parent total as the baseline until the child exceeds it.
+        if (awaitingForkBase && !summaryAtLeast(totalUsage, inheritedTotal)) {
           continue;
         }
-        // Standard path: use last_token_usage as increment
-        increment = lastUsage;
-      } else if (lastUsage && totalUsage && !previousTotal) {
-        // First event in session: use last to avoid overcounting resumed session context
-        increment = lastUsage;
-      } else if (!lastUsage && totalUsage && previousTotal) {
-        // Fallback: delta of cumulative totals
-        increment = summaryDelta(totalUsage, previousTotal);
+        awaitingForkBase = false;
+        increment = previousTotal ? summaryDelta(totalUsage, previousTotal) : lastUsage || totalUsage;
         if (!increment) {
-          // Total went backwards (session context reset or stale event).
-          // Accept the new total as the new baseline to avoid future overcounting.
           previousTotal = totalUsage;
-          continue;
+          if (!lastUsage || summaryIsZero(lastUsage)) continue;
+          increment = lastUsage;
         }
-      } else if (!lastUsage && totalUsage) {
-        // Very first event, no last — use full total (legacy/degraded)
-        increment = totalUsage;
-      } else if (lastUsage) {
-        increment = lastUsage;
+        previousTotal = totalUsage;
       } else {
-        continue;
+        if (awaitingForkBase || !lastUsage || summaryIsZero(lastUsage)) continue;
+        increment = lastUsage;
       }
-
-      if (totalUsage) previousTotal = totalUsage;
 
       if (summaryIsZero(increment)) continue;
 
@@ -310,16 +284,18 @@ function extractSessionId(obj) {
 
 export async function collect(pricingData = null) {
   // Scan active, archived, and optional headless Codex outputs.
-  const filePaths = await collectSessionFiles();
+  const sessionFiles = await parseSessionFiles();
 
   const dailyMap = new Map();   // "date::model" → aggregated
   const sessionMap = new Map(); // true rollout session aggregate
   const seenEventKeys = new Set();
   const tokenEvents = [];
+  const forkedSessionPrefixes = new Set();
 
-  for (const filePath of filePaths) {
-    const fileSessionId = basename(filePath).replace(/\.jsonl$/, '');
-    const events = await parseSessionFile(filePath, fileSessionId);
+  for (const { filePath, fileSessionId, lineage, events } of sessionFiles) {
+    if (lineage.parentSessionId) {
+      forkedSessionPrefixes.add(`local:${CLIENT_KEY}:${hashableSessionPart(lineage.sessionId)}:`);
+    }
     if (!events.length) continue;
     const rawSessionId = events.find(event => event.sessionId)?.sessionId || fileSessionId;
     const sessionPrefix = `local:${CLIENT_KEY}:${hashableSessionPart(rawSessionId)}`;
@@ -365,20 +341,21 @@ export async function collect(pricingData = null) {
     }
   }
 
-  return buildOutput(dailyMap, sessionMap, tokenEvents, pricingData);
+  return {
+    ...buildOutput(dailyMap, sessionMap, tokenEvents, pricingData),
+    reconciliation: { eventSessionPrefixes: [...forkedSessionPrefixes] }
+  };
 }
 
 export async function audit() {
-  const filePaths = await collectSessionFiles();
+  const sessionFiles = await parseSessionFiles();
   const summary = emptyAuditSummary();
   const sessions = new Set();
-  summary.candidateFiles = filePaths.length;
-  for (const filePath of filePaths) {
-    const sessionId = basename(filePath).replace(/\.jsonl$/, '');
-    const events = await parseSessionFile(filePath, sessionId);
+  summary.candidateFiles = sessionFiles.length;
+  for (const { fileSessionId, events } of sessionFiles) {
     if (events.length) {
       summary.usableTokenRecords += events.length;
-      sessions.add(events.find(event => event.sessionId)?.sessionId || sessionId);
+      sessions.add(events.find(event => event.sessionId)?.sessionId || fileSessionId);
       for (const event of events) {
         summary.totalTokens += tokenTotal(event.tokens);
         summary.firstTimestamp = earlierTimestamp(summary.firstTimestamp, event.timestamp);
@@ -391,6 +368,103 @@ export async function audit() {
   summary.sessionRows = sessions.size;
   summary.tokenEvents = summary.usableTokenRecords;
   return summary;
+}
+
+async function parseSessionFiles() {
+  const filePaths = await collectSessionFiles();
+  const files = [];
+  for (const filePath of filePaths) {
+    const fileSessionId = basename(filePath).replace(/\.jsonl$/, '');
+    files.push({
+      filePath,
+      fileSessionId,
+      lineage: await readSessionLineage(filePath, fileSessionId)
+    });
+  }
+  const bySessionId = new Map();
+  for (const file of files) {
+    const matches = bySessionId.get(file.lineage.sessionId) || [];
+    matches.push(file);
+    bySessionId.set(file.lineage.sessionId, matches);
+  }
+
+  const parsedFiles = [];
+  for (const file of files) {
+    const parents = file.lineage.parentSessionId
+      ? bySessionId.get(file.lineage.parentSessionId) || []
+      : [];
+    const baselines = [];
+    for (const parent of parents) {
+      const baseline = file.lineage.forkedAt
+        ? await totalUsageAt(parent.filePath, file.lineage.forkedAt)
+        : null;
+      if (baseline) baselines.push(baseline);
+    }
+    const inheritedTotal = baselines
+      .sort((left, right) => right.timestamp - left.timestamp)[0]?.summary || null;
+    const unresolvedFork = Boolean(file.lineage.parentSessionId) && !inheritedTotal;
+    parsedFiles.push({
+      ...file,
+      events: unresolvedFork
+        ? []
+        : await parseSessionFile(file.filePath, file.fileSessionId, inheritedTotal)
+    });
+  }
+  return parsedFiles;
+}
+
+async function readSessionLineage(filePath, fallbackSessionId) {
+  let text;
+  try {
+    text = await readFile(filePath, 'utf8');
+  } catch {
+    return { sessionId: fallbackSessionId, parentSessionId: null, forkedAt: null };
+  }
+  for (const raw of text.split('\n')) {
+    let entry;
+    try { entry = JSON.parse(raw); } catch { continue; }
+    if (entry.type !== 'session_meta') continue;
+    const payload = entry.payload || {};
+    return {
+      sessionId: extractSessionId(payload) || fallbackSessionId,
+      parentSessionId: normalizeSessionId(payload.parent_thread_id || payload.forked_from_id),
+      forkedAt: validTimestamp(payload.timestamp || entry.timestamp)
+    };
+  }
+  return { sessionId: fallbackSessionId, parentSessionId: null, forkedAt: null };
+}
+
+async function totalUsageAt(filePath, timestamp) {
+  let text;
+  try {
+    text = await readFile(filePath, 'utf8');
+  } catch {
+    return null;
+  }
+  const forkTime = new Date(timestamp).getTime();
+  let latest = null;
+  let latestTime = -Infinity;
+  for (const raw of text.split('\n')) {
+    let entry;
+    try { entry = JSON.parse(raw); } catch { continue; }
+    if (entry.type !== 'event_msg' || entry.payload?.type !== 'token_count') continue;
+    const eventTime = new Date(entry.timestamp).getTime();
+    if (!Number.isFinite(eventTime) || eventTime > forkTime || eventTime < latestTime) continue;
+    const total = entry.payload?.info?.total_token_usage;
+    if (!total) continue;
+    latest = usageSummary(total);
+    latestTime = eventTime;
+  }
+  return latest ? { summary: latest, timestamp: latestTime } : null;
+}
+
+function normalizeSessionId(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function validTimestamp(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  return Number.isFinite(new Date(value).getTime()) ? value : null;
 }
 
 async function collectSessionFiles() {
