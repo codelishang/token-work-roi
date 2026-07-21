@@ -141,7 +141,7 @@ function fallbackPricingModel(model, previous, exchangeRate) {
     ...model,
     aliases: uniqueModelAliases(model.aliases || [model.model])
   };
-  const officialRates = previous?.officialRatesPerMTok || model.officialRatesPerMTok || null;
+  const officialRates = model.officialRatesPerMTok || previous?.officialRatesPerMTok || null;
   if (officialRates?.currency !== 'CNY' || !officialRates.ratesPerMTok) {
     return { ...normalizedModel, pricingFetchStatus: 'fallback-table' };
   }
@@ -158,7 +158,7 @@ function fallbackPricingModel(model, previous, exchangeRate) {
       exchangeRate: exchangeRate.rate
     },
     pricingFetchStatus: 'cached-official-cny',
-    note: previous?.note || model.note
+    note: model.note || previous?.note
   };
 }
 
@@ -176,6 +176,9 @@ function officialRateSource(model) {
     if (rates.cacheWrite5m != null) lines.push(`    cacheWrite5m: ${numberLiteral(rates.cacheWrite5m)},`);
     if (rates.cacheWrite1h != null) lines.push(`    cacheWrite1h: ${numberLiteral(rates.cacheWrite1h)},`);
     lines.push(`    output: ${numberLiteral(rates.output)},`);
+  }
+  if (model.officialRatesPerMTok) {
+    lines.push(`    officialRatesPerMTok: ${JSON.stringify(model.officialRatesPerMTok)},`);
   }
   const tail = [
     `    source: ${literal(model.sourceProvider || model.provider)}`,
@@ -347,6 +350,7 @@ function parseSourceModels(source, body, exchangeRate) {
   });
   if (isZhipuSource(source)) return parseZaiModels(body, exchangeRate);
   if (isDoubaoSource(source)) return parseVolcengineModels(body, exchangeRate);
+  if (source.provider === 'Gemini') return parseGeminiModels(body);
   if (source.provider === 'Kimi') return parseKimiModels(body, exchangeRate);
   if (isQwenSource(source)) return parseQwenModels(body, exchangeRate);
   return [];
@@ -396,23 +400,28 @@ function escapeRegex(value) {
 
 function parseAnthropicModels(body) {
   const cards = body.split('card_pricing_api_wrap').slice(1);
-  const rates = cards
-    .map(card => Array.from(card.matchAll(/data-value="([0-9.]+)"/g), match => Number(match[1])))
-    .filter(values => values.length >= 4)
-    .map(values => ({
+  const rates = cards.map(card => {
+    const values = Array.from(card.matchAll(/data-value="([0-9.]+)"/g), match => Number(match[1]));
+    if (values.length < 4) return null;
+    return {
+      label: tableText(card).toLowerCase(),
       input: values[0],
       output: values[1],
       cacheWrite5m: values[2],
+      cacheWrite1h: values[0] * 2,
       cachedInput: values[3]
-    }));
+    };
+  }).filter(Boolean);
 
-  const opus = rates.find(rate => rate.input === 5 && rate.output === 25);
-  const fable = rates.find(rate => rate.input === 10 && rate.output === 50);
-  const sonnet = rates.find(rate => rate.input === 3 && rate.output === 15);
-  const haiku = rates.find(rate => rate.input === 1 && rate.output === 5);
+  const opus = rates.find(rate => rate.label.includes('opus 4.8'));
+  const fable = rates.find(rate => rate.label.includes('fable 5'));
+  const sonnet5 = rates.find(rate => rate.label.includes('sonnet 5'));
+  const sonnet = rates.find(rate => rate.label.includes('sonnet 4.6'));
+  const haiku = rates.find(rate => rate.label.includes('haiku 4.5'));
   return [
     rateModel('anthropic', 'claude-fable-5', fable, 'anthropic', 'official-page', null, 'First-party Claude Fable 5 pricing; cache write defaults to 5-minute prompt caching.'),
     ...['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6'].map(model => rateModel('anthropic', model, opus, 'anthropic')),
+    rateModel('anthropic', 'claude-sonnet-5', sonnet5, 'anthropic', 'official-page', null, 'Claude Sonnet 5 introductory pricing through August 31, 2026; standard pricing is USD 3/15 per MTok afterward.'),
     rateModel('anthropic', 'claude-sonnet-4-6', sonnet, 'anthropic'),
     rateModel('anthropic', 'claude-haiku-4-5', haiku, 'anthropic')
   ].filter(Boolean);
@@ -524,9 +533,57 @@ function parseVolcengineModels(body, exchangeRate) {
   }).filter(Boolean);
 }
 
+function parseGeminiModels(body) {
+  const models = [
+    ['gemini-3.5-flash', 'gemini-3.5-flash', 0],
+    ['gemini-3.1-flash-lite', 'gemini-3.1-flash-lite', 0],
+    ['gemini-3.1-pro-preview', 'gemini-3.1-pro-preview', 0],
+    ['gemini-2.5-flash', 'gemini-2.5-flash', 0],
+    ['gemini-2.5-pro', 'gemini-2.5-pro', 0],
+    ['gemini-2.5-pro-long-context', 'gemini-2.5-pro', 1]
+  ];
+  return models.map(([model, sourceModel, tier]) => {
+    const rows = geminiStandardPricingRows(body, sourceModel);
+    if (rows.length < 3) return null;
+    const input = usdAmounts(rows[0])[tier];
+    const output = usdAmounts(rows[1])[tier];
+    const cachedInput = usdAmounts(rows[2])[tier];
+    if (![input, output, cachedInput].every(isFiniteRate)) return null;
+    return rateModel('Gemini', model, {
+      input,
+      cachedInput,
+      cacheWrite5m: input,
+      cacheWrite1h: input,
+      output
+    }, 'Gemini');
+  }).filter(Boolean);
+}
+
+function geminiStandardPricingRows(body, model) {
+  const marker = new RegExp(`<code[^>]*>\\s*${escapeRegex(model)}[\\s\\S]*?<\\/code>`, 'i').exec(body);
+  if (!marker) return [];
+  const nextModel = body.indexOf('<div class="models-section"', marker.index + marker[0].length);
+  const sectionStart = body.indexOf('<section ', marker.index + marker[0].length);
+  if (sectionStart < 0 || (nextModel >= 0 && sectionStart > nextModel)) return [];
+  const sectionEnd = body.indexOf('</section>', sectionStart);
+  const tableStart = body.indexOf('<table class="pricing-table"', sectionStart);
+  if (sectionEnd < 0 || tableStart < 0 || tableStart > sectionEnd) return [];
+  const tableEnd = body.indexOf('</table>', tableStart);
+  if (tableEnd < 0 || tableEnd > sectionEnd) return [];
+  const tbody = body.slice(tableStart, tableEnd).match(/<tbody>([\s\S]*?)<\/tbody>/i)?.[1] || '';
+  return Array.from(tbody.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi), match => match[1]);
+}
+
+function usdAmounts(value) {
+  return Array.from(
+    value.matchAll(/(?:\$\s*([0-9]+(?:\.[0-9]+)?)|([0-9]+(?:\.[0-9]+)?)\s*(?:USD|美元))/gi),
+    match => Number(match[1] ?? match[2])
+  );
+}
+
 function parseKimiModels(body, exchangeRate) {
   const rows = Array.from(
-    body.matchAll(/\["(kimi-k2\.(?:7-code(?:-highspeed)?|6))",\s*"1M tokens",\s*"¥([0-9.]+)",\s*"¥([0-9.]+)",\s*"¥([0-9.]+)"/g),
+    body.matchAll(/\["(kimi-(?:k3|k2\.(?:7-code(?:-highspeed)?|6|5)))",\s*"1M tokens",\s*"¥([0-9.]+)",\s*"¥([0-9.]+)",\s*"¥([0-9.]+)"/g),
     match => ({
       model: match[1],
       cachedInput: Number(match[2]),

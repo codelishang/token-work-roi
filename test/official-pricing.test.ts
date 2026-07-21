@@ -80,39 +80,45 @@ test('keeps normalized official pricing aliases unique', () => {
 });
 
 test('calculates Gemini API USD price from official rates', () => {
-  const flash = calculateOfficialCost('gemini-2.5-flash', {
-    input: 1_000_000,
-    cacheRead: 1_000_000,
-    output: 1_000_000
-  });
-  const pro = calculateOfficialCost('google/gemini-2.5-pro', {
-    input: 1_000_000,
-    output: 1_000_000
-  });
-
-  assert.equal(flash.priced, true);
-  assert.equal(flash.provider, 'Gemini');
-  assert.equal(flash.totalUSD, 2.875);
-  assert.equal(pro.priced, true);
-  assert.equal(pro.totalUSD, 11.25);
+  for (const model of [
+    'google/gemini-3.5-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-3.1-pro-preview-customtools',
+    'gemini-2.5-flash',
+    'google/gemini-2.5-pro',
+    'gemini-2.5-pro-long-context'
+  ]) {
+    const cost = calculateOfficialCost(model, {
+      input: 1_000_000,
+      cacheRead: 1_000_000,
+      output: 1_000_000
+    });
+    assert.equal(cost.priced, true, model);
+    assert.equal(cost.provider, 'Gemini', model);
+    assert.ok(Math.abs(cost.totalUSD - (
+      cost.ratesPerMTok.input + cost.ratesPerMTok.cachedInput + cost.ratesPerMTok.output
+    )) < 1e-12, model);
+  }
 });
 
 test('calculates Kimi API USD price from official RMB rates', () => {
-  const code = calculateOfficialCost('kimi-k2.7-code', {
-    input: 1_000_000,
-    cacheRead: 1_000_000,
-    output: 1_000_000
-  });
+  for (const model of ['kimi-k3', 'kimi-k2.7-code']) {
+    const cost = calculateOfficialCost(model, {
+      input: 1_000_000,
+      cacheRead: 1_000_000,
+      output: 1_000_000
+    });
+    assert.equal(cost.priced, true, model);
+    assert.equal(cost.provider, 'Kimi', model);
+    assert.equal(cost.totalUSD,
+      cost.ratesPerMTok.input + cost.ratesPerMTok.cachedInput + cost.ratesPerMTok.output,
+      model);
+  }
   const light = calculateOfficialCost('moonshotai/kimi-k2.5', {
     input: 1_000_000,
     output: 1_000_000
   });
 
-  assert.equal(code.priced, true);
-  assert.equal(code.provider, 'Kimi');
-  assert.ok(Math.abs(code.totalUSD - (
-    code.ratesPerMTok.input + code.ratesPerMTok.cachedInput + code.ratesPerMTok.output
-  )) < 1e-12);
   assert.equal(calculateOfficialCost('kimi-k2-7-code', { input: 1_000_000 }).resolvedModel, 'kimi-k2.7-code');
   assert.equal(calculateOfficialCost('kimi/kimi-k2-5', { input: 1_000_000 }).provider, 'Kimi');
   assert.equal(light.priced, true);
@@ -151,26 +157,28 @@ test('provider additions keep Gemini, Kimi and Qwen at the end', () => {
     assert.ok(firstGoogle > 0);
     assert.ok(firstKimi > firstGoogle);
     assert.ok(firstQwen > firstKimi);
-    assert.deepEqual(modelProviders.slice(firstGoogle, firstKimi), ['Gemini', 'Gemini', 'Gemini']);
-    assert.deepEqual(modelProviders.slice(firstKimi, firstQwen), ['Kimi', 'Kimi', 'Kimi', 'Kimi']);
-    assert.deepEqual(modelProviders.slice(firstQwen), ['Qwen', 'Qwen', 'Qwen', 'Qwen', 'Qwen', 'Qwen', 'Qwen']);
+    assert.ok(modelProviders.slice(firstGoogle, firstKimi).every(provider => provider === 'Gemini'));
+    assert.ok(modelProviders.slice(firstKimi, firstQwen).every(provider => provider === 'Kimi'));
+    assert.ok(modelProviders.slice(firstQwen).every(provider => provider === 'Qwen'));
   });
 });
 
-test('calculates Claude prompt-cache cost with official 5-minute cache write default', () => {
-  const cost = calculateOfficialCost('claude-opus-4-7', {
-    input: 1_000_000,
-    cacheWrite: 1_000_000,
-    cacheRead: 1_000_000,
-    output: 1_000_000
-  });
-
-  assert.equal(cost.priced, true);
-  assert.equal(cost.provider, 'anthropic');
-  assert.ok(Math.abs(cost.totalUSD - (
-    cost.ratesPerMTok.input + cost.ratesPerMTok.cacheWrite + cost.ratesPerMTok.cachedInput + cost.ratesPerMTok.output
-  )) < 1e-12);
-  assert.ok(cost.ratesPerMTok.cacheWrite >= cost.ratesPerMTok.input);
+test('calculates Claude prompt-cache costs', () => {
+  for (const model of ['claude-opus-4-7', 'anthropic/claude-sonnet-5']) {
+    const cost = calculateOfficialCost(model, {
+      input: 1_000_000,
+      cacheWrite: 1_000_000,
+      cacheRead: 1_000_000,
+      output: 1_000_000
+    });
+    assert.equal(cost.priced, true, model);
+    assert.equal(cost.provider, 'anthropic', model);
+    assert.equal(cost.totalUSD,
+      cost.ratesPerMTok.input + cost.ratesPerMTok.cacheWrite
+        + cost.ratesPerMTok.cachedInput + cost.ratesPerMTok.output,
+      model);
+    assert.ok(cost.ratesPerMTok.cacheWrite >= cost.ratesPerMTok.input, model);
+  }
 });
 
 test('calculates Grok 4.5 and Claude Fable 5 official prices', () => {
@@ -263,14 +271,26 @@ test('does not let a source provider hint hide explicit model provider pricing',
   assert.equal(qwen.provider, 'Qwen');
 });
 
-test('does not price DoubaoSeed without parsed official billing rates', () => {
-  const cost = calculateOfficialCost('doubao-pro-32k', {
+test('prices current DoubaoSeed models without inventing legacy rates', () => {
+  const current = calculateOfficialCost('doubao_seed_2_1_pro', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    cacheWrite: 1_000_000,
+    output: 1_000_000
+  }, { provider: 'DoubaoSeed' });
+  const legacy = calculateOfficialCost('doubao-pro-32k', {
     input: 1_000_000,
     output: 1_000_000
   }, { provider: 'DoubaoSeed' });
 
-  assert.equal(cost.priced, false);
-  assert.equal(cost.totalUSD, 0);
+  assert.equal(current.priced, true);
+  assert.equal(current.ratesPerMTok.cacheWrite, 0);
+  assert.ok(Math.abs(current.totalUSD - (
+    current.ratesPerMTok.input + current.ratesPerMTok.cachedInput
+      + current.ratesPerMTok.cacheWrite + current.ratesPerMTok.output
+  )) < 1e-12);
+  assert.equal(legacy.priced, false);
+  assert.equal(legacy.totalUSD, 0);
 });
 
 test('uses official pricing cache when provided', async () => {

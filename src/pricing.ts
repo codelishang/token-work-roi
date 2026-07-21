@@ -7,7 +7,7 @@
  */
 
 const MTOK = 1_000_000;
-const VERIFIED_AT = '2026-07-19';
+const VERIFIED_AT = '2026-07-21';
 const DEFAULT_ANTHROPIC_CACHE_WRITE_TTL = '5m';
 
 type InputRecord = Record<string, unknown>;
@@ -28,6 +28,14 @@ interface PricingRates {
   output: number;
 }
 
+interface OfficialCurrencyRates {
+  currency: string;
+  unit: string;
+  ratesPerMTok: Partial<PricingRates>;
+  exchangeRate?: number;
+  sourceUnit?: string;
+}
+
 interface OfficialRateInput {
   provider: string;
   model: string;
@@ -40,6 +48,7 @@ interface OfficialRateInput {
   source: string;
   note: string;
   unavailableReason?: string;
+  officialRatesPerMTok?: OfficialCurrencyRates | null;
 }
 
 interface OfficialRate {
@@ -49,7 +58,7 @@ interface OfficialRate {
   priced: boolean;
   unavailableReason: string | null;
   ratesPerMTok: PricingRates | null;
-  officialRatesPerMTok?: PricingRates | null;
+  officialRatesPerMTok?: OfficialCurrencyRates | null;
   source: PricingSource | null;
   pricingFetchStatus?: string | null;
   note: string | null;
@@ -62,7 +71,7 @@ interface CachedRateInput {
   priced?: boolean;
   unavailableReason?: string | null;
   ratesPerMTok?: Partial<PricingRates> | null;
-  officialRatesPerMTok?: PricingRates | null;
+  officialRatesPerMTok?: OfficialCurrencyRates | null;
   sourceProvider?: string | null;
   source?: PricingSource | string | null;
   pricingFetchStatus?: string | null;
@@ -181,9 +190,10 @@ export const OFFICIAL_PRICING_SOURCES = [
     label: 'Kimi API pricing',
     url: 'https://platform.kimi.com/docs/pricing/chat',
     assetUrls: [
+      'https://platform.kimi.com/docs/pricing/chat-k3.md',
       'https://platform.kimi.com/docs/pricing/chat-k27-code.md',
       'https://platform.kimi.com/docs/pricing/chat-k26.md',
-      'https://platform.kimi.com/docs/pricing/chat-v1.md'
+      'https://platform.kimi.com/docs/pricing/chat-k25.md'
     ],
     note: 'Official Kimi API RMB prices converted to USD for internal cost math.'
   },
@@ -334,6 +344,18 @@ export const OFFICIAL_PRICE_TABLE = [
   }),
   officialRate({
     provider: "anthropic",
+    model: "claude-sonnet-5",
+    aliases: ["claude-sonnet-5"],
+    input: 2,
+    cachedInput: 0.2,
+    cacheWrite5m: 2.5,
+    cacheWrite1h: 4,
+    output: 10,
+    source: "anthropic",
+    note: "Claude Sonnet 5 introductory pricing through August 31, 2026; standard pricing is USD 3/15 per MTok afterward."
+  }),
+  officialRate({
+    provider: "anthropic",
     model: "claude-sonnet-4-6",
     aliases: ["claude-sonnet-4-6"],
     input: 3,
@@ -420,11 +442,12 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Zhipu GLM",
     model: "glm-5.2",
     aliases: ["glm-5-2"],
-    input: 1.178342072703706,
-    cachedInput: 0.2945855181759265,
-    cacheWrite5m: 1.178342072703706,
-    cacheWrite1h: 1.178342072703706,
-    output: 4.12419725446297,
+    input: 1.1802745436616011,
+    cachedInput: 0.2950686359154003,
+    cacheWrite5m: 1.1802745436616011,
+    cacheWrite1h: 1.1802745436616011,
+    output: 4.1309609028156045,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":8,"output":28,"cachedInput":2,"cacheWrite5m":8,"cacheWrite1h":8},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Zhipu GLM",
     note: "Official BigModel RMB rate converted to USD at the last verified refresh rate."
   }),
@@ -432,11 +455,12 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Zhipu GLM",
     model: "glm-5.1",
     aliases: ["glm-5-1"],
-    input: 0.8837565545277793,
-    cachedInput: 0.1914805868143522,
-    cacheWrite5m: 0.8837565545277793,
-    cacheWrite1h: 0.8837565545277793,
-    output: 3.5350262181111174,
+    input: 0.8852059077462009,
+    cachedInput: 0.1917946133450102,
+    cacheWrite5m: 0.8852059077462009,
+    cacheWrite1h: 0.8852059077462009,
+    output: 3.5408236309848036,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":6,"output":24,"cachedInput":1.3,"cacheWrite5m":6,"cacheWrite1h":6},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Zhipu GLM",
     note: "Official BigModel RMB short-context rate converted to USD at the last verified refresh rate."
   }),
@@ -444,11 +468,12 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Zhipu GLM",
     model: "glm-4.5-air",
     aliases: ["glm-4-5-air"],
-    input: 0.1178342072703706,
-    cachedInput: 0.023566841454074117,
-    cacheWrite5m: 0.1178342072703706,
-    cacheWrite1h: 0.1178342072703706,
-    output: 0.2945855181759265,
+    input: 0.11802745436616012,
+    cachedInput: 0.023605490873232025,
+    cacheWrite5m: 0.11802745436616012,
+    cacheWrite1h: 0.11802745436616012,
+    output: 0.2950686359154003,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":0.8,"output":2,"cachedInput":0.16,"cacheWrite5m":0.8,"cacheWrite1h":0.8},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Zhipu GLM",
     note: "Official BigModel pricing page. RMB prices are converted to USD for internal cost math."
   }),
@@ -456,11 +481,12 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Zhipu GLM",
     model: "glm-4.7",
     aliases: ["glm-4-7"],
-    input: 0.2945855181759265,
-    cachedInput: 0.0589171036351853,
-    cacheWrite5m: 0.2945855181759265,
-    cacheWrite1h: 0.2945855181759265,
-    output: 1.178342072703706,
+    input: 0.2950686359154003,
+    cachedInput: 0.05901372718308006,
+    cacheWrite5m: 0.2950686359154003,
+    cacheWrite1h: 0.2950686359154003,
+    output: 1.1802745436616011,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":2,"output":8,"cachedInput":0.4,"cacheWrite5m":2,"cacheWrite1h":2},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Zhipu GLM",
     note: "Official BigModel pricing page. RMB prices are converted to USD for internal cost math."
   }),
@@ -468,11 +494,12 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Zhipu GLM",
     model: "glm-5",
     aliases: ["glm-5"],
-    input: 0.589171036351853,
-    cachedInput: 0.14729275908796324,
-    cacheWrite5m: 0.589171036351853,
-    cacheWrite1h: 0.589171036351853,
-    output: 2.651269663583338,
+    input: 0.5901372718308006,
+    cachedInput: 0.14753431795770014,
+    cacheWrite5m: 0.5901372718308006,
+    cacheWrite1h: 0.5901372718308006,
+    output: 2.6556177232386027,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":4,"output":18,"cachedInput":1,"cacheWrite5m":4,"cacheWrite1h":4},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Zhipu GLM",
     note: "Official BigModel pricing page. RMB prices are converted to USD for internal cost math."
   }),
@@ -480,13 +507,53 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Zhipu GLM",
     model: "glm-5-turbo",
     aliases: ["glm-5-turbo"],
-    input: 0.7364637954398162,
-    cachedInput: 0.17675131090555588,
-    cacheWrite5m: 0.7364637954398162,
-    cacheWrite1h: 0.7364637954398162,
-    output: 3.240440699935191,
+    input: 0.7376715897885008,
+    cachedInput: 0.17704118154924017,
+    cacheWrite5m: 0.7376715897885008,
+    cacheWrite1h: 0.7376715897885008,
+    output: 3.245754995069403,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":5,"output":22,"cachedInput":1.2,"cacheWrite5m":5,"cacheWrite1h":5},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Zhipu GLM",
     note: "Official BigModel pricing page. RMB prices are converted to USD for internal cost math."
+  }),
+  officialRate({
+    provider: "DoubaoSeed",
+    model: "doubao-seed-evolving",
+    aliases: ["doubao-seed-evolving", "doubao_seed_evolving"],
+    input: 0.8852059077462009,
+    cachedInput: 0.17704118154924017,
+    cacheWrite5m: 0,
+    cacheWrite1h: 0,
+    output: 4.4260295387310045,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":6,"cachedInput":1.2,"cacheWrite5m":0,"cacheWrite1h":0,"output":30},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
+    source: "DoubaoSeed",
+    note: "Official Volcengine Ark CNY online-inference rate converted to USD at the last verified refresh rate. Cache-storage charges are not included."
+  }),
+  officialRate({
+    provider: "DoubaoSeed",
+    model: "doubao-seed-2.1-pro",
+    aliases: ["doubao-seed-2-1-pro", "doubao_seed_2_1_pro"],
+    input: 0.8852059077462009,
+    cachedInput: 0.17704118154924017,
+    cacheWrite5m: 0,
+    cacheWrite1h: 0,
+    output: 4.4260295387310045,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":6,"cachedInput":1.2,"cacheWrite5m":0,"cacheWrite1h":0,"output":30},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
+    source: "DoubaoSeed",
+    note: "Official Volcengine Ark CNY online-inference rate converted to USD at the last verified refresh rate. Cache-storage charges are not included."
+  }),
+  officialRate({
+    provider: "DoubaoSeed",
+    model: "doubao-seed-2.1-turbo",
+    aliases: ["doubao-seed-2-1-turbo", "doubao_seed_2_1_turbo"],
+    input: 0.44260295387310045,
+    cachedInput: 0.08852059077462009,
+    cacheWrite5m: 0,
+    cacheWrite1h: 0,
+    output: 2.2130147693655022,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":3,"cachedInput":0.6,"cacheWrite5m":0,"cacheWrite1h":0,"output":15},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
+    source: "DoubaoSeed",
+    note: "Official Volcengine Ark CNY online-inference rate converted to USD at the last verified refresh rate. Cache-storage charges are not included."
   }),
   officialRate({
     provider: "DoubaoSeed",
@@ -514,10 +581,46 @@ export const OFFICIAL_PRICE_TABLE = [
   }),
   officialRate({
     provider: "Gemini",
+    model: "gemini-3.5-flash",
+    aliases: ["gemini-3-5-flash"],
+    input: 1.5,
+    cachedInput: 0.15,
+    cacheWrite5m: 1.5,
+    cacheWrite1h: 1.5,
+    output: 9,
+    source: "Gemini",
+    note: "Gemini API standard text-token rate. Context-cache storage charges are not included."
+  }),
+  officialRate({
+    provider: "Gemini",
+    model: "gemini-3.1-flash-lite",
+    aliases: ["gemini-3-1-flash-lite"],
+    input: 0.25,
+    cachedInput: 0.025,
+    cacheWrite5m: 0.25,
+    cacheWrite1h: 0.25,
+    output: 1.5,
+    source: "Gemini",
+    note: "Gemini API standard text-token rate. Context-cache storage charges are not included."
+  }),
+  officialRate({
+    provider: "Gemini",
+    model: "gemini-3.1-pro-preview",
+    aliases: ["gemini-3-1-pro-preview", "gemini-3-1-pro-preview-customtools"],
+    input: 2,
+    cachedInput: 0.2,
+    cacheWrite5m: 2,
+    cacheWrite1h: 2,
+    output: 12,
+    source: "Gemini",
+    note: "Gemini API preview rate for prompts up to 200k tokens. Context-cache storage charges are not included."
+  }),
+  officialRate({
+    provider: "Gemini",
     model: "gemini-2.5-flash",
     aliases: ["gemini-2-5-flash", "gemini-flash-latest"],
     input: 0.3,
-    cachedInput: 0.075,
+    cachedInput: 0.03,
     cacheWrite5m: 0.3,
     cacheWrite1h: 0.3,
     output: 2.5,
@@ -529,7 +632,7 @@ export const OFFICIAL_PRICE_TABLE = [
     model: "gemini-2.5-pro",
     aliases: ["gemini-2-5-pro", "gemini-pro-latest"],
     input: 1.25,
-    cachedInput: 0.31,
+    cachedInput: 0.125,
     cacheWrite5m: 1.25,
     cacheWrite1h: 1.25,
     output: 10,
@@ -541,7 +644,7 @@ export const OFFICIAL_PRICE_TABLE = [
     model: "gemini-2.5-pro-long-context",
     aliases: ["gemini-2-5-pro-long-context"],
     input: 2.5,
-    cachedInput: 0.625,
+    cachedInput: 0.25,
     cacheWrite5m: 2.5,
     cacheWrite1h: 2.5,
     output: 15,
@@ -550,13 +653,27 @@ export const OFFICIAL_PRICE_TABLE = [
   }),
   officialRate({
     provider: "Kimi",
+    model: "kimi-k3",
+    aliases: ["kimi-k3"],
+    input: 2.950686359154003,
+    cachedInput: 0.2950686359154003,
+    cacheWrite5m: 2.950686359154003,
+    cacheWrite1h: 2.950686359154003,
+    output: 14.753431795770014,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":20,"cachedInput":2,"cacheWrite5m":20,"cacheWrite1h":20,"output":100},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
+    source: "Kimi",
+    note: "Official Kimi API CNY rate parsed from the current model pricing pages."
+  }),
+  officialRate({
+    provider: "Kimi",
     model: "kimi-k2.7-code",
     aliases: ["kimi-k2-7-code"],
-    input: 0.957402934071761,
-    cachedInput: 0.1914805868143522,
-    cacheWrite5m: 0.957402934071761,
-    cacheWrite1h: 0.957402934071761,
-    output: 3.9769044953750075,
+    input: 0.9589730667250509,
+    cachedInput: 0.1917946133450102,
+    cacheWrite5m: 0.9589730667250509,
+    cacheWrite1h: 0.9589730667250509,
+    output: 3.983426584857904,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":6.5,"cachedInput":1.3,"cacheWrite5m":6.5,"cacheWrite1h":6.5,"output":27},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Kimi",
     note: "Official Kimi API CNY rate parsed from the current model pricing pages."
   }),
@@ -564,11 +681,12 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Kimi",
     model: "kimi-k2.7-code-highspeed",
     aliases: ["kimi-k2-7-code-highspeed"],
-    input: 1.914805868143522,
-    cachedInput: 0.3829611736287044,
-    cacheWrite5m: 1.914805868143522,
-    cacheWrite1h: 1.914805868143522,
-    output: 7.953808990750015,
+    input: 1.9179461334501018,
+    cachedInput: 0.3835892266900204,
+    cacheWrite5m: 1.9179461334501018,
+    cacheWrite1h: 1.9179461334501018,
+    output: 7.966853169715808,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":13,"cachedInput":2.6,"cacheWrite5m":13,"cacheWrite1h":13,"output":54},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Kimi",
     note: "Official Kimi API CNY rate parsed from the current model pricing pages."
   }),
@@ -576,11 +694,12 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Kimi",
     model: "kimi-k2.6",
     aliases: ["kimi-k2-6"],
-    input: 0.957402934071761,
-    cachedInput: 0.16202203499675957,
-    cacheWrite5m: 0.957402934071761,
-    cacheWrite1h: 0.957402934071761,
-    output: 3.9769044953750075,
+    input: 0.9589730667250509,
+    cachedInput: 0.16228774975347018,
+    cacheWrite5m: 0.9589730667250509,
+    cacheWrite1h: 0.9589730667250509,
+    output: 3.983426584857904,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":6.5,"cachedInput":1.1,"cacheWrite5m":6.5,"cacheWrite1h":6.5,"output":27},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Kimi",
     note: "Official Kimi API CNY rate parsed from the current model pricing pages."
   }),
@@ -588,23 +707,25 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Kimi",
     model: "kimi-k2.5",
     aliases: ["kimi-k2-5"],
-    input: 0.5893690494906452,
-    cachedInput: 0.1031395836608629,
-    cacheWrite5m: 0.5893690494906452,
-    cacheWrite1h: 0.5893690494906452,
-    output: 3.094187509825887,
+    input: 0.5901372718308006,
+    cachedInput: 0.10327402257039009,
+    cacheWrite5m: 0.5901372718308006,
+    cacheWrite1h: 0.5901372718308006,
+    output: 3.098220677111703,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":4,"cachedInput":0.7,"cacheWrite5m":4,"cacheWrite1h":4,"output":21},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Kimi",
-    note: "Official Kimi API RMB rate converted to USD at the last verified refresh rate."
+    note: "Official Kimi API CNY rate parsed from the current model pricing pages."
   }),
   officialRate({
     provider: "Qwen",
     model: "qwen3.7-plus",
     aliases: ["qwen3-7-plus"],
-    input: 0.2945855181759265,
-    cachedInput: 0.2945855181759265,
-    cacheWrite5m: 0.2945855181759265,
-    cacheWrite1h: 0.2945855181759265,
-    output: 1.178342072703706,
+    input: 0.2950686359154003,
+    cachedInput: 0.2950686359154003,
+    cacheWrite5m: 0.2950686359154003,
+    cacheWrite1h: 0.2950686359154003,
+    output: 1.1802745436616011,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":2,"output":8,"cachedInput":2,"cacheWrite5m":2,"cacheWrite1h":2},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Qwen",
     note: "Official Alibaba Cloud Model Studio RMB short-context rate converted to USD at the last verified refresh rate."
   }),
@@ -612,11 +733,12 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Qwen",
     model: "qwen3.7-max",
     aliases: ["qwen3-7-max"],
-    input: 1.7675131090555587,
-    cachedInput: 1.7675131090555587,
-    cacheWrite5m: 1.7675131090555587,
-    cacheWrite1h: 1.7675131090555587,
-    output: 5.302539327166676,
+    input: 1.7704118154924018,
+    cachedInput: 1.7704118154924018,
+    cacheWrite5m: 1.7704118154924018,
+    cacheWrite1h: 1.7704118154924018,
+    output: 5.311235446477205,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":12,"output":36,"cachedInput":12,"cacheWrite5m":12,"cacheWrite1h":12},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Qwen",
     note: "Official Alibaba Cloud Model Studio RMB rate converted to USD at the last verified refresh rate."
   }),
@@ -624,11 +746,12 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Qwen",
     model: "qwen3.6-flash",
     aliases: ["qwen3-6-flash"],
-    input: 0.17675131090555588,
-    cachedInput: 0.17675131090555588,
-    cacheWrite5m: 0.17675131090555588,
-    cacheWrite1h: 0.17675131090555588,
-    output: 1.0605078654333353,
+    input: 0.17704118154924017,
+    cachedInput: 0.17704118154924017,
+    cacheWrite5m: 0.17704118154924017,
+    cacheWrite1h: 0.17704118154924017,
+    output: 1.062247089295441,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":1.2,"output":7.2,"cachedInput":1.2,"cacheWrite5m":1.2,"cacheWrite1h":1.2},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Qwen",
     note: "Official Alibaba Cloud Model Studio RMB rate converted to USD at the last verified refresh rate."
   }),
@@ -636,11 +759,12 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Qwen",
     model: "qwen3-coder-plus",
     aliases: ["qwen3-coder-plus", "qwen3-coder"],
-    input: 0.589171036351853,
-    cachedInput: 0.589171036351853,
-    cacheWrite5m: 0.589171036351853,
-    cacheWrite1h: 0.589171036351853,
-    output: 2.356684145407412,
+    input: 0.5901372718308006,
+    cachedInput: 0.5901372718308006,
+    cacheWrite5m: 0.5901372718308006,
+    cacheWrite1h: 0.5901372718308006,
+    output: 2.3605490873232022,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":4,"output":16,"cachedInput":4,"cacheWrite5m":4,"cacheWrite1h":4},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Qwen",
     note: "Official Alibaba Cloud Model Studio RMB short-context Coder rate converted to USD at the last verified refresh rate."
   }),
@@ -648,11 +772,12 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Qwen",
     model: "qwen3-coder-flash",
     aliases: ["qwen3-coder-flash"],
-    input: 0.14729275908796324,
-    cachedInput: 0.14729275908796324,
-    cacheWrite5m: 0.14729275908796324,
-    cacheWrite1h: 0.14729275908796324,
-    output: 0.589171036351853,
+    input: 0.14753431795770014,
+    cachedInput: 0.14753431795770014,
+    cacheWrite5m: 0.14753431795770014,
+    cacheWrite1h: 0.14753431795770014,
+    output: 0.5901372718308006,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":1,"output":4,"cachedInput":1,"cacheWrite5m":1,"cacheWrite1h":1},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Qwen",
     note: "Official Alibaba Cloud Model Studio RMB short-context Coder rate converted to USD at the last verified refresh rate."
   }),
@@ -660,11 +785,12 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Qwen",
     model: "qwen-coder-plus",
     aliases: ["qwen-coder-plus"],
-    input: 0.5155246568078713,
-    cachedInput: 0.5155246568078713,
-    cacheWrite5m: 0.5155246568078713,
-    cacheWrite1h: 0.5155246568078713,
-    output: 1.0310493136157426,
+    input: 0.5163701128519506,
+    cachedInput: 0.5163701128519506,
+    cacheWrite5m: 0.5163701128519506,
+    cacheWrite1h: 0.5163701128519506,
+    output: 1.0327402257039011,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":3.5,"output":7,"cachedInput":3.5,"cacheWrite5m":3.5,"cacheWrite1h":3.5},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Qwen",
     note: "Official Alibaba Cloud Model Studio RMB Coder rate converted to USD at the last verified refresh rate."
   }),
@@ -672,11 +798,12 @@ export const OFFICIAL_PRICE_TABLE = [
     provider: "Qwen",
     model: "qwen-coder-turbo",
     aliases: ["qwen-coder-turbo"],
-    input: 0.2945855181759265,
-    cachedInput: 0.2945855181759265,
-    cacheWrite5m: 0.2945855181759265,
-    cacheWrite1h: 0.2945855181759265,
-    output: 0.8837565545277793,
+    input: 0.2950686359154003,
+    cachedInput: 0.2950686359154003,
+    cacheWrite5m: 0.2950686359154003,
+    cacheWrite1h: 0.2950686359154003,
+    output: 0.8852059077462009,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":2,"output":6,"cachedInput":2,"cacheWrite5m":2,"cacheWrite1h":2},"exchangeRate":6.778084,"sourceUnit":"元 / 1M tokens"},
     source: "Qwen",
     note: "Official Alibaba Cloud Model Studio RMB Coder rate converted to USD at the last verified refresh rate."
   })
@@ -839,7 +966,8 @@ function officialRate({
   output,
   source,
   note,
-  unavailableReason
+  unavailableReason,
+  officialRatesPerMTok
 }: OfficialRateInput): OfficialRate {
   const sourceMeta = findPricingSource(source);
   const priced = input != null && output != null && !unavailableReason;
@@ -856,6 +984,7 @@ function officialRate({
       cacheWrite1h: Number(cacheWrite1h ?? cacheWrite5m ?? input),
       output: Number(output)
     } : null,
+    officialRatesPerMTok: officialRatesPerMTok || null,
     source: sourceMeta,
     note: note || sourceMeta?.note || null
   };
