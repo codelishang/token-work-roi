@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const FALLBACK_USD_CNY_RATE = 7.2;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const REQUEST_TIMEOUT_MS = 3500;
+const REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_SOURCE_URL = 'https://open.er-api.com/v6/latest/USD';
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(MODULE_DIR, '..');
