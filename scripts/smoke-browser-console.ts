@@ -14,6 +14,7 @@ const dbPath = join(tempRoot, 'data', 'usage.sqlite');
 try {
   createCollectorFixture(fixtureDir);
   mkdirSync(dirname(dbPath), { recursive: true });
+  collectFixtureUsage();
   const apiPort = await freePort(4280);
   const uiPort = await freePort(apiPort + 1000);
   const app = spawn(process.execPath, [
@@ -21,6 +22,7 @@ try {
     '--db', dbPath,
     '--api-port', String(apiPort),
     '--ui-port', String(uiPort),
+    '--no-collect',
     '--no-open'
   ], {
     cwd: packageRoot,
@@ -70,6 +72,28 @@ try {
   console.error(error.message);
   console.error(`smoke temp dir: ${tempRoot}`);
   process.exit(1);
+}
+
+function collectFixtureUsage() {
+  const result = spawnSync(process.execPath, [
+    resolve(packageRoot, 'src', 'collect.ts'),
+    '--db', dbPath,
+    '--sources', 'claude,codex,cursor',
+    '--apply',
+    '--yes',
+    '--json'
+  ], {
+    cwd: packageRoot,
+    env: safeEnv({
+      TOKEN_WORK_CONFIG: join(fixtureDir, 'collectors.json'),
+      NODE_OPTIONS: '--no-warnings'
+    }),
+    encoding: 'utf8',
+    windowsHide: true
+  });
+  if (result.status !== 0) {
+    throw new Error(`fixture collection failed:\n${result.stderr || result.stdout || `exit ${result.status}`}`);
+  }
 }
 
 async function runBrowserConsoleCheck(url) {
