@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -17,7 +18,7 @@ test('CLI help exposes bare auto entrypoint', async () => {
   assert.match(result.stdout, /Use port 0 to let the OS assign a free local port/);
 });
 
-test('bare CLI auto apply writes trusted event usage before starting UI', async () => {
+test('bare CLI starts the UI before its scheduled collection begins', async () => {
   const fixture = createAutoFixture();
   const { child, output } = startBareCli(fixture, []);
 
@@ -27,11 +28,12 @@ test('bare CLI auto apply writes trusted event usage before starting UI', async 
     assert.match(output.stdout, /\[token-work\] API http:\/\/127\.0\.0\.1:\d+/);
     const data = await waitForData(apiPort);
     assert.equal(data.meta.runtime.packageVersion, packageJson.version);
-    assert.equal(data.meta.runtime.counts.tokenEventRows, 1);
-    assert.equal(data.meta.dataMode.id, 'real-event-verified');
+    assert.equal(data.meta.runtime.counts.tokenEventRows, 0);
+    assert.equal(data.meta.dataMode.id, 'empty');
     const live = await getJson(apiPort, '/api/live');
     assert.equal(live.autoCollectEnabled, true);
     assert.equal(live.refreshIntervalSeconds, 60);
+    assert.equal(live.collectionState.status, 'idle');
   } finally {
     await stopChild(child);
     cleanupFixture(fixture);
@@ -78,7 +80,7 @@ test('bare CLI no-collect starts UI without scanning or writing usage', async ()
   }
 });
 
-test('start command applies trusted usage before opening UI', async () => {
+test('start command enables scheduled collection without blocking the UI', async () => {
   const fixture = createAutoFixture();
   const { child, output, cli } = startCli(fixture, ['start']);
 
@@ -87,8 +89,11 @@ test('start command applies trusted usage before opening UI', async () => {
     assert.match(output.stdout, /\[token-work\] UI  http:\/\/127\.0\.0\.1:\d+/);
     assert.match(output.stdout, /\[token-work\] API http:\/\/127\.0\.0\.1:\d+/);
     const data = await waitForData(apiPort);
-    assert.equal(data.meta.runtime.counts.tokenEventRows, 1);
-    assert.equal(data.meta.dataMode.id, 'real-event-verified');
+    assert.equal(data.meta.runtime.counts.tokenEventRows, 0);
+    assert.equal(data.meta.dataMode.id, 'empty');
+    const live = await getJson(apiPort, '/api/live');
+    assert.equal(live.autoCollectEnabled, true);
+    assert.equal(live.collectionState.status, 'idle');
   } finally {
     await stopChild(child);
     cleanupFixture(fixture);
@@ -110,7 +115,37 @@ test('start command keeps explicit no-collect read-only', async () => {
   }
 });
 
-test('live command applies trusted usage and opens live route', async () => {
+test('CLI shutdown releases API and UI ports', async () => {
+  const fixture = createAutoFixture();
+  const { child, output, cli } = startCli(fixture, ['start'], ['--no-collect']);
+
+  try {
+    await waitForCliApiPort(child, output, cli);
+    await stopChildWithSignal(child, 'SIGINT');
+    assert.equal(await canListen(cli.ready.apiPort), true);
+    assert.equal(await canListen(cli.ready.uiPort), true);
+  } finally {
+    await stopChild(child);
+    cleanupFixture(fixture);
+  }
+});
+
+test('Ctrl+C during startup releases the API port', async () => {
+  const fixture = createAutoFixture();
+  const apiPort = await freePort();
+  const { child } = startCli(fixture, ['start'], ['--no-collect'], { apiPort, uiPort: await freePort() });
+
+  try {
+    await waitForPortInUse(apiPort);
+    await stopChildWithSignal(child, 'SIGINT');
+    assert.equal(await canListen(apiPort), true);
+  } finally {
+    await stopChild(child);
+    cleanupFixture(fixture);
+  }
+});
+
+test('live command opens the live route without starting an immediate collection', async () => {
   const fixture = createAutoFixture();
   const { child, output, cli } = startCli(fixture, ['live']);
 
@@ -118,9 +153,10 @@ test('live command applies trusted usage and opens live route', async () => {
     const apiPort = await waitForCliApiPort(child, output, cli);
     assert.match(output.stdout, /\[token-work\] UI  http:\/\/127\.0\.0\.1:\d+\/live/);
     const data = await waitForData(apiPort);
-    assert.equal(data.meta.runtime.counts.tokenEventRows, 1);
+    assert.equal(data.meta.runtime.counts.tokenEventRows, 0);
     const live = await getJson(apiPort, '/api/live');
     assert.equal(live.autoCollectEnabled, true);
+    assert.equal(live.collectionState.status, 'idle');
   } finally {
     await stopChild(child);
     cleanupFixture(fixture);
@@ -177,7 +213,7 @@ function startBareCli(fixture, extraArgs) {
   return startCli(fixture, [], extraArgs);
 }
 
-function startCli(fixture, commandArgs = [], extraArgs = []) {
+function startCli(fixture, commandArgs = [], extraArgs = [], ports: { apiPort?: number; uiPort?: number } = {}) {
   const cli = { ready: null };
   const child = spawn(process.execPath, [
     'src/cli.ts',
@@ -185,9 +221,9 @@ function startCli(fixture, commandArgs = [], extraArgs = []) {
     '--db',
     fixture.dbPath,
     '--api-port',
-    '0',
+    String(ports.apiPort || 0),
     '--ui-port',
-    '0',
+    String(ports.uiPort || 0),
     '--no-open',
     ...extraArgs
   ], {
@@ -224,6 +260,36 @@ function validPort(port) {
   return Number.isInteger(port) && port > 0 && port <= 65535;
 }
 
+function canListen(port) {
+  return new Promise(resolveListen => {
+    const server = createServer();
+    server.once('error', () => resolveListen(false));
+    server.once('listening', () => server.close(() => resolveListen(true)));
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+function freePort(): Promise<number> {
+  return new Promise(resolvePort => {
+    const server = createServer();
+    server.once('error', () => resolvePort(0));
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      server.close(() => resolvePort(port));
+    });
+  });
+}
+
+async function waitForPortInUse(port) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (!await canListen(port)) return;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error(`CLI did not bind ${port}`);
+}
+
 async function waitForCliApiPort(child, output, cli = null) {
   const start = Date.now();
   while (Date.now() - start < 45000) {
@@ -247,14 +313,17 @@ function cleanupFixture(fixture) {
   rmSync(fixture.dir, { recursive: true, force: true });
 }
 
-async function waitForData(port) {
+async function waitForData(port, { tokenEventRows = null } = {}) {
   const start = Date.now();
   while (Date.now() - start < 15000) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/api/data`);
-      if (response.ok) return response.json();
+      if (response.ok) {
+        const data = await response.json();
+        if (tokenEventRows == null || data.meta.runtime.counts.tokenEventRows >= tokenEventRows) return data;
+      }
     } catch {
-      // Retry while the CLI finishes coverage/apply and starts the API.
+      // Retry while the CLI starts its local services.
     }
     await new Promise(resolve => setTimeout(resolve, 250));
   }
@@ -263,6 +332,25 @@ async function waitForData(port) {
 
 function stopChild(child) {
   return stopProcessTree(child, { detached: process.platform !== 'win32' });
+}
+
+function stopChildWithSignal(child, signal) {
+  if (!child || child.exitCode != null) return Promise.resolve();
+  return new Promise<void>((resolveStop, rejectStop) => {
+    const timer = setTimeout(() => rejectStop(new Error(`CLI did not exit after ${signal}`)), 5000);
+    timer.unref?.();
+    child.once('close', () => {
+      clearTimeout(timer);
+      resolveStop();
+    });
+    try {
+      if (process.platform === 'win32') child.kill(signal);
+      else process.kill(-child.pid, signal);
+    } catch (error) {
+      clearTimeout(timer);
+      rejectStop(error);
+    }
+  });
 }
 
 function runNode(argv) {

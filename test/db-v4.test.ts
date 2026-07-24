@@ -29,7 +29,7 @@ function tempDb() {
   return openDb(join(dir, 'usage.sqlite'));
 }
 
-test('scheduled backups are rate limited and retained independently', () => {
+test('backup retention is rate limited and keeps only the latest full backup', () => {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-backup-'));
   const dbPath = join(dir, 'usage.sqlite');
   const backupDir = join(dir, 'backups');
@@ -39,7 +39,6 @@ test('scheduled backups are rate limited and retained independently', () => {
     reason: 'scheduled-collect',
     backupDir,
     minimumIntervalMs: 60_000,
-    maxBackups: 2,
     now: new Date('2026-07-19T00:00:00.000Z')
   });
   assert.ok(first && existsSync(first.path));
@@ -49,7 +48,6 @@ test('scheduled backups are rate limited and retained independently', () => {
     reason: 'scheduled-collect',
     backupDir,
     minimumIntervalMs: 60_000,
-    maxBackups: 2,
     now: new Date('2026-07-19T00:00:30.000Z')
   });
   assert.equal(skipped, null);
@@ -58,12 +56,11 @@ test('scheduled backups are rate limited and retained independently', () => {
     const backup = createSqliteBackup(db, dbPath, {
       reason: 'scheduled-collect',
       backupDir,
-      maxBackups: 2,
       now: new Date(now)
     });
     assert.ok(backup && existsSync(backup.path));
   }
-  assert.equal(readdirSync(backupDir).filter(name => name.endsWith('-scheduled-collect.sqlite')).length, 2);
+  assert.equal(readdirSync(backupDir).filter(name => name.endsWith('-scheduled-collect.sqlite')).length, 1);
 
   const manual = createSqliteBackup(db, dbPath, {
     reason: 'collect',
@@ -71,7 +68,17 @@ test('scheduled backups are rate limited and retained independently', () => {
     now: new Date('2026-07-19T02:00:00.000Z')
   });
   assert.ok(manual && existsSync(manual.path));
-  assert.equal(readdirSync(backupDir).filter(name => name.endsWith('-collect.sqlite')).length, 3);
+  const manualBackups = () => readdirSync(backupDir)
+    .filter(name => name.endsWith('-collect.sqlite') && !name.endsWith('-scheduled-collect.sqlite'));
+  assert.deepEqual(readdirSync(backupDir), [manual.fileName]);
+
+  const newerManual = createSqliteBackup(db, dbPath, {
+    reason: 'collect',
+    backupDir,
+    now: new Date('2026-07-19T03:00:00.000Z')
+  });
+  assert.ok(newerManual && existsSync(newerManual.path));
+  assert.deepEqual(manualBackups(), [newerManual.fileName]);
   db.close();
 });
 

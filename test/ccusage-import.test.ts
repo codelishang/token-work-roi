@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyCcusageImport, parseCcusageJsonText, planCcusageImport } from '../src/ccusage-import.ts';
+import { applyCcusageImport, ccusageImportWouldChange, parseCcusageJsonText, planCcusageImport } from '../src/ccusage-import.ts';
 import { openDb } from '../src/db.ts';
 
 function tempDb() {
@@ -119,7 +119,9 @@ test('ccusage apply is idempotent and dry-run plans do not write', () => {
   const plan = planCcusageImport(payload, { device: 'test-device' });
 
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM session_usage').get().count, 0);
+  assert.equal(ccusageImportWouldChange(db, plan), true);
   applyCcusageImport(db, plan);
+  assert.equal(ccusageImportWouldChange(db, plan), false);
   applyCcusageImport(db, plan);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM daily_usage').get().count, 1);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM session_usage').get().count, 1);

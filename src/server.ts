@@ -1,5 +1,5 @@
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { basename, dirname, extname, join, resolve } from 'node:path';
@@ -101,6 +101,7 @@ const pricingCachePath = resolve(process.cwd(), 'data', 'official-pricing.json')
 const packageVersion = readPackageVersion();
 const SPA_ROUTES = new Set(['/', '/review', '/live', '/trust']);
 const MAX_INGEST_ROWS = 50_000;
+const COLLECTION_TIMEOUT_MS = 90_000;
 const db = openDb(dbPath);
 let activeCollection = null;
 let lastCoverageGate = null;
@@ -135,6 +136,40 @@ function parseRequestUrl(req, res) {
     sendJson(res, { error: 'Bad request URL' }, 400);
     return null;
   }
+}
+
+let shuttingDown = false;
+
+function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  if (activeCollection && activeCollection.exitCode == null) {
+    stopCollection(activeCollection);
+  }
+
+  server.close(() => process.exit(0));
+  server.closeIdleConnections?.();
+  const forceExit = setTimeout(() => process.exit(0), 2500);
+  forceExit.unref?.();
+}
+
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);
+if (process.send) process.once('disconnect', shutdown);
+if (process.platform !== 'win32') {
+  process.once('SIGHUP', shutdown);
+}
+
+function stopCollection(child, { force = false } = {}) {
+  if (process.platform === 'win32' && child.pid) {
+    const result = spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    if (result.status === 0) return;
+  }
+  child.kill(force ? 'SIGKILL' : 'SIGTERM');
 }
 
 server.listen(port, host, () => {
@@ -1041,6 +1076,7 @@ function startCollection({ reason = 'manual' } = {}) {
   activeCollection = child;
   let stdout = '';
   let stderr = '';
+  let timedOut = false;
   const startedAt = new Date().toISOString();
   collectionState = {
     status: 'running',
@@ -1059,7 +1095,18 @@ function startCollection({ reason = 'manual' } = {}) {
   child.stdout.on('data', chunk => { stdout += chunk; });
   child.stderr.on('data', chunk => { stderr += chunk; });
 
+  const timeout = setTimeout(() => {
+    if (activeCollection !== child || child.exitCode != null) return;
+    timedOut = true;
+    stopCollection(child);
+    setTimeout(() => {
+      if (activeCollection === child && child.exitCode == null) stopCollection(child, { force: true });
+    }, 5000).unref?.();
+  }, COLLECTION_TIMEOUT_MS);
+  timeout.unref?.();
+
   child.on('error', error => {
+    clearTimeout(timeout);
     activeCollection = null;
     collectionState = {
       ...collectionState,
@@ -1072,14 +1119,29 @@ function startCollection({ reason = 'manual' } = {}) {
   });
 
   child.on('close', code => {
+    clearTimeout(timeout);
     activeCollection = null;
+    if (collectionAlreadyRunning(stderr)) {
+      collectionState = {
+        status: 'idle',
+        message: '已有采集正在运行，本次请求未重复执行',
+        startedAt: null,
+        finishedAt: null,
+        exitCode: null,
+        stdout: '',
+        stderr: '',
+        backup: null,
+        summary: null
+      };
+      return;
+    }
     const parsedSummary = parseCollectSummary(stdout);
     if (parsedSummary) {
       lastCoverageGate = summarizeCoverageGate(parsedSummary);
     }
     collectionState = {
-      status: code === 0 ? 'ok' : 'error',
-      message: code === 0 ? '采集完成' : '采集失败',
+      status: !timedOut && code === 0 ? 'ok' : 'error',
+      message: timedOut ? '采集超过 90 秒，已停止。请稍后重试。' : code === 0 ? '采集完成' : '采集失败',
       exitCode: code,
       startedAt,
       finishedAt: new Date().toISOString(),
@@ -1091,6 +1153,10 @@ function startCollection({ reason = 'manual' } = {}) {
   });
 
   return true;
+}
+
+function collectionAlreadyRunning(stderr) {
+  return /A collection is (already running|starting) for this SQLite database/.test(String(stderr || ''));
 }
 
 function startScheduledCollect() {

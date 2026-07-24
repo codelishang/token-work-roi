@@ -41,6 +41,33 @@ test('collect does not treat false boolean arguments as write confirmation', asy
   assert.match(result.stderr, /requires --yes/);
 });
 
+test('collect apply rejects a second writer for the same SQLite database', async () => {
+  const fixture = createCollectorFixture();
+  const lockPath = `${fixture.dbPath}.collect.lock`;
+  const owner = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1_000)'], {
+    stdio: 'ignore',
+    windowsHide: true
+  });
+  try {
+    writeFileSync(lockPath, JSON.stringify({ pid: owner.pid, startedAt: new Date().toISOString() }));
+    const result = await runNode([
+      'src/collect.ts',
+      '--sources=claude',
+      '--db',
+      fixture.dbPath,
+      '--apply',
+      '--yes',
+      '--json'
+    ], fixture.env);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /already running for this SQLite database/);
+    assert.equal(existsSync(lockPath), true);
+  } finally {
+    if (owner.exitCode == null) owner.kill('SIGKILL');
+    cleanupFixture(fixture);
+  }
+});
+
 test('collector dates always use China Standard Time', () => {
   assert.equal(localDateFromTimestamp('2026-06-17T15:59:59.999Z'), '2026-06-17');
   assert.equal(localDateFromTimestamp('2026-06-17T16:00:00.000Z'), '2026-06-18');
@@ -562,7 +589,9 @@ test('collect apply writes temp SQLite with backup and before/after counts', asy
       '--json'
     ], { ...fixture.env, SCHEDULED_COLLECT_ENABLED: '1' });
     assert.equal(unchanged.code, 0, unchanged.stderr);
-    assert.equal(JSON.parse(unchanged.stdout).backup, null, unchanged.stderr);
+    const refreshed = JSON.parse(unchanged.stdout);
+    assert.ok(refreshed.backup?.path, unchanged.stderr);
+    assert.equal(existsSync(refreshed.backup.path), true);
     assert.equal(
       readdirSync(backupDir).filter(name => name.endsWith('-scheduled-collect.sqlite')).length,
       1

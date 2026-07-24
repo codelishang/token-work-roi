@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -8,6 +8,7 @@ type InputRecord = Record<string, unknown>;
 export const defaultDbPath = resolve(process.cwd(), 'data', 'usage.sqlite');
 export const TASK_TYPES = ['未分类', '功能开发', '问题修复', '代码审查', '技术调研', '内容创作', '运维配置', '其他'];
 export const OUTPUT_STATUSES = ['未标注', '进行中', '已完成', '已发布', '已废弃'];
+const DEFAULT_MAX_BACKUPS = 1;
 export const WORK_PURPOSES = ['未说明', '需求澄清', '方案设计', '功能开发', '调试修复', '测试验证', '代码审查', '技术调研', '文档内容', '部署运维', '上下文整理', '其他'];
 export const WORK_STAGES = ['未说明', '探索', '实现', '验证', '发布', '维护'];
 export const VALUE_LEVELS = ['未评估', '低', '中', '高', '关键'];
@@ -69,7 +70,6 @@ export function createSqliteBackup(db, dbPath = defaultDbPath, {
   reason = 'manual',
   backupDir = null,
   minimumIntervalMs = 0,
-  maxBackups = 0,
   now = new Date()
 } = {}) {
   const resolvedDbPath = resolve(dbPath);
@@ -85,15 +85,15 @@ export function createSqliteBackup(db, dbPath = defaultDbPath, {
   if (minimumIntervalMs > 0 && existing.length > 0) {
     const latest = statSync(join(targetDir, existing[0]));
     if (new Date(now).getTime() - latest.mtimeMs < minimumIntervalMs) {
-      pruneBackupFiles(targetDir, existing, maxBackups);
+      pruneBackupFiles(targetDir, backupFiles(targetDir));
       return null;
     }
   }
-  db.exec('PRAGMA wal_checkpoint(FULL)');
   const fileName = `usage-${stamp}-${safeReason}.sqlite`;
   const backupPath = join(targetDir, fileName);
-  copyFileSync(resolvedDbPath, backupPath);
-  pruneBackupFiles(targetDir, backupFiles(targetDir, safeReason), maxBackups);
+  db.exec(`VACUUM INTO '${backupPath.replace(/'/g, "''")}'`);
+  const allBackups = backupFiles(targetDir).filter(name => name !== fileName);
+  pruneBackupFiles(targetDir, [fileName, ...allBackups]);
   return { createdAt, path: backupPath, fileName };
 }
 
@@ -126,17 +126,19 @@ export function repairUsageTotals(db) {
   return { daily, sessions };
 }
 
-function backupFiles(dir, reason) {
-  const suffix = `-${reason}.sqlite`;
+function backupFiles(dir, reason = null) {
   return readdirSync(dir)
-    .filter(name => name.startsWith('usage-') && name.endsWith(suffix))
-    .sort()
-    .reverse();
+    .filter(name => backupReason(name) === reason || (reason === null && backupReason(name) !== null))
+    .sort((left, right) => statSync(join(dir, right)).mtimeMs - statSync(join(dir, left)).mtimeMs);
 }
 
-function pruneBackupFiles(dir, files, maxBackups) {
-  if (!Number.isInteger(maxBackups) || maxBackups <= 0) return;
-  for (const name of files.slice(maxBackups)) {
+function backupReason(name) {
+  const match = /^usage-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(.+)\.sqlite$/.exec(name);
+  return match ? match[1] : null;
+}
+
+function pruneBackupFiles(dir, files) {
+  for (const name of files.slice(DEFAULT_MAX_BACKUPS)) {
     unlinkSync(join(dir, name));
   }
 }

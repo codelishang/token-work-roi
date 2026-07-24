@@ -62,9 +62,10 @@ test('package bin uses a stable checked-in launcher', () => {
   assert.match(launcher, /src', 'cli\.ts'/);
 });
 
-test('npx smoke runs the installed command wrapper directly', () => {
+test('npx smoke exercises the installed package through npx', () => {
   const smoke = readFileSync(resolve(root, 'scripts', 'smoke-npx.ts'), 'utf8');
-  assert.match(smoke, /spawnInstalledCli\(cliPath,/);
+  assert.match(smoke, /spawnNpxCli\(\[/);
+  assert.match(smoke, /spawn\('npx', \['--no-install', 'token-work'/);
   assert.match(smoke, /cmd\.exe/);
   assert.doesNotMatch(smoke, /spawn\(process\.execPath,\s*\[\s*cliPath/);
 });

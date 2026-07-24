@@ -10,7 +10,7 @@
 npx token-work
 ```
 
-默认入口先只读检查本机结构化来源。Claude Code 或 Codex CLI 的事件级记录通过可信门槛后，元衡会备份并更新本地 SQLite，然后打开浏览器。
+默认入口先打开浏览器，再在后台采集 Claude Code 和 Codex CLI 的可信事件级记录。采集通过可信门槛后，元衡会备份并更新本地 SQLite。
 持续运行时，定时采集只在用量发生变化时备份，最多每小时一个，并保留最近 24 个定时备份；人工采集、导入和手工备份不受此限制。
 
 只想熟悉界面：
@@ -105,7 +105,7 @@ npm run desktop:install
 npm run desktop
 ```
 
-状态栏只读 SQLite；桌面小窗默认不执行采集。桌面说明见 [desktop/README.md](../desktop/README.md)。
+状态栏只读 SQLite；桌面小窗启动后会在后台采集可信事件级记录。桌面说明见 [desktop/README.md](../desktop/README.md)。
 
 ## 8. 遇到问题
 

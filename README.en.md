@@ -52,7 +52,7 @@ Requires Node.js 24.0.0 or newer.
 npx token-work
 ```
 
-The default entrypoint first checks local structured sources in read-only mode. When Claude Code or Codex CLI event records pass the trust gate, Token Work ROI backs up and updates the local SQLite database, then opens the browser UI.
+The default entrypoint opens the browser UI first, then collects trusted event-level records from Claude Code and Codex CLI in the background. When collection passes the trust gate, Token Work ROI backs up and updates the local SQLite database.
 While the service stays running, scheduled collection backs up only when usage changes, at most once per hour, and retains the latest 24 scheduled backups. Manual collection, imports, and manual backups are unaffected.
 
 For a first look without writing real usage:

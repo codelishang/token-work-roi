@@ -43,9 +43,13 @@ test('CLI bridge dry-run/apply imports ccusage CLI JSON safely', async () => {
     assert.ok(appliedBody.backup?.path);
     assert.ok(existsSync(appliedBody.backup.path));
 
+    const repeated = await runCli(['import-usage', '--format=ccusage-cli', '--report=session', '--ccusage-bin', mock, '--db', dbPath, '--apply', '--yes', '--json']);
+    assert.equal(repeated.code, 0, repeated.stderr);
+    assert.equal(JSON.parse(repeated.stdout).backup, null);
+
     const db = openDb(dbPath);
     try {
-      assert.equal(db.prepare('SELECT COUNT(*) AS count FROM collection_runs WHERE source = ?').get('import:ccusage-cli').count, 1);
+      assert.equal(db.prepare('SELECT COUNT(*) AS count FROM collection_runs WHERE source = ?').get('import:ccusage-cli').count, 2);
       assert.equal(db.prepare('SELECT COUNT(*) AS count FROM token_events WHERE tool_category = ?').get('import:ccusage-cli').count, 1);
       assert.equal(db.prepare('SELECT COUNT(*) AS count FROM session_usage').get().count, 1);
     } finally {
