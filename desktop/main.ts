@@ -1,5 +1,5 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage, screen, session } from 'electron';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -48,9 +48,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
-  if (serviceProcess && !serviceProcess.killed) {
-    serviceProcess.kill();
-  }
+  stopServiceProcess();
 });
 
 function createWindow(currentUrls, initialRoute = '/live?surface=desktop') {
@@ -213,6 +211,9 @@ async function ensureLocalService() {
   if (await isTokenWorkApi(existingApi) && await isTokenWorkUi(existingUi) && await isTokenWorkUiApi(existingUi)) {
     return { api: existingApi, ui: existingUi };
   }
+  if (await isTokenWorkApi(existingApi) && await isTokenWorkUi(existingApi)) {
+    return { api: existingApi, ui: existingApi };
+  }
 
   const apiPort = await freePort(defaultApiPort);
   const uiPort = await freePort(defaultUiPort);
@@ -235,14 +236,34 @@ async function ensureLocalService() {
     windowsHide: true
   });
   serviceProcess = child;
+  child.once('exit', () => {
+    if (serviceProcess === child) serviceProcess = undefined;
+  });
   child.stdout.on('data', chunk => process.stdout.write(`[token-work-desktop] ${chunk}`));
   child.stderr.on('data', chunk => process.stderr.write(`[token-work-desktop] ${chunk}`));
   const api = `http://127.0.0.1:${apiPort}`;
   const ui = `http://127.0.0.1:${uiPort}`;
-  await waitForTokenWork(api, 'local API', isTokenWorkApi);
-  await waitForTokenWork(ui, 'local UI', isTokenWorkUi);
-  await waitForTokenWork(ui, 'local UI API proxy', isTokenWorkUiApi);
-  return { api, ui };
+  try {
+    await waitForTokenWork(api, 'local API', isTokenWorkApi);
+    await waitForTokenWork(ui, 'local UI', isTokenWorkUi);
+    await waitForTokenWork(ui, 'local UI API proxy', isTokenWorkUiApi);
+    return { api, ui };
+  } catch (error) {
+    stopServiceProcess(child);
+    throw error;
+  }
+}
+
+function stopServiceProcess(child = serviceProcess) {
+  if (!child || child.exitCode != null) return;
+  if (process.platform === 'win32' && child.pid) {
+    const result = spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    if (result.status === 0) return;
+  }
+  child.kill('SIGTERM');
 }
 
 function liveCollectIntervalSeconds() {

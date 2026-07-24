@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 const nodeCmd = process.execPath;
@@ -24,7 +24,7 @@ for (const child of children) {
     if (shuttingDown) return;
     shuttingDown = true;
     for (const other of children) {
-      if (other !== child && !other.killed) other.kill();
+      if (other !== child && !other.killed) stopDevChild(other);
     }
     if (signal) process.kill(process.pid, signal);
     process.exit(code ?? 0);
@@ -35,9 +35,20 @@ function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
   for (const child of children) {
-    if (!child.killed) child.kill();
+    if (!child.killed) stopDevChild(child);
   }
+}
+
+function stopDevChild(child) {
+  if (process.platform === 'win32' && child.pid) {
+    const result = spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true });
+    if (result.status === 0) return;
+  }
+  child.kill('SIGTERM');
 }
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+if (process.platform !== 'win32') {
+  process.on('SIGHUP', shutdown);
+}

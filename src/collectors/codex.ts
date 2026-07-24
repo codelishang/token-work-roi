@@ -48,6 +48,9 @@ async function collectJsonlFiles(dir) {
 export const CLIENT_KEY = 'codex';
 export const SOURCE_LABEL = 'Codex CLI';
 
+const sessionTextCache = new Map();
+const usageTimelineCache = new Map();
+
 // ---------------------------------------------------------------------------
 // Path resolution
 // ---------------------------------------------------------------------------
@@ -162,12 +165,8 @@ function summaryAtLeast(current, baseline) {
  * Returns an array of { timestamp, date, model, workspace, tokens }.
  */
 async function parseSessionFile(filePath, sessionId, inheritedTotal = null, minimumTimestamp = null) {
-  let text;
-  try {
-    text = await readFile(filePath, 'utf8');
-  } catch {
-    return [];
-  }
+  const text = await readSessionText(filePath);
+  if (text == null) return [];
 
   // Per-file state
   let currentModel     = null;
@@ -297,9 +296,18 @@ function extractSessionId(obj) {
 // ---------------------------------------------------------------------------
 
 export async function collect(pricingData = null) {
-  // Scan active, archived, and optional headless Codex outputs.
-  const sessionFiles = await parseSessionFiles();
+  return collectFromSessionFiles(await parseSessionFiles(), pricingData);
+}
 
+export async function collectWithAudit(pricingData = null) {
+  const sessionFiles = await parseSessionFiles();
+  return {
+    ...collectFromSessionFiles(sessionFiles, pricingData),
+    audit: auditFromSessionFiles(sessionFiles)
+  };
+}
+
+function collectFromSessionFiles(sessionFiles, pricingData) {
   const dailyMap = new Map();   // "date::model" → aggregated
   const sessionMap = new Map(); // true rollout session aggregate
   const seenEventKeys = new Set();
@@ -368,7 +376,10 @@ export async function collect(pricingData = null) {
 }
 
 export async function audit() {
-  const sessionFiles = await parseSessionFiles();
+  return auditFromSessionFiles(await parseSessionFiles());
+}
+
+function auditFromSessionFiles(sessionFiles) {
   const summary = emptyAuditSummary();
   const sessions = new Set();
   summary.candidateFiles = sessionFiles.length;
@@ -440,12 +451,8 @@ async function parseSessionFiles() {
 }
 
 async function readSessionLineage(filePath, fallbackSessionId) {
-  let text;
-  try {
-    text = await readFile(filePath, 'utf8');
-  } catch {
-    return { sessionId: fallbackSessionId, parentSessionId: null, forkedAt: null };
-  }
+  const text = await readSessionText(filePath);
+  if (text == null) return { sessionId: fallbackSessionId, parentSessionId: null, forkedAt: null };
   for (const raw of text.split('\n')) {
     let entry;
     try { entry = JSON.parse(raw); } catch { continue; }
@@ -461,27 +468,56 @@ async function readSessionLineage(filePath, fallbackSessionId) {
 }
 
 async function totalUsageAt(filePath, timestamp) {
-  let text;
-  try {
-    text = await readFile(filePath, 'utf8');
-  } catch {
-    return null;
-  }
+  const usageTimeline = await usageTimelineFor(filePath);
+  if (!usageTimeline.length) return null;
   const forkTime = new Date(timestamp).getTime();
-  let latest = null;
-  let latestTime = -Infinity;
+  if (!Number.isFinite(forkTime)) return null;
+
+  let left = 0;
+  let right = usageTimeline.length - 1;
+  let match = null;
+  while (left <= right) {
+    const middle = Math.floor((left + right) / 2);
+    const point = usageTimeline[middle];
+    if (point.timestamp <= forkTime) {
+      match = point;
+      left = middle + 1;
+    } else {
+      right = middle - 1;
+    }
+  }
+  return match ? { summary: match.summary, timestamp: match.timestamp } : null;
+}
+
+async function readSessionText(filePath) {
+  if (!sessionTextCache.has(filePath)) {
+    sessionTextCache.set(filePath, readFile(filePath, 'utf8').catch(() => null));
+  }
+  return sessionTextCache.get(filePath);
+}
+
+async function usageTimelineFor(filePath) {
+  if (!usageTimelineCache.has(filePath)) {
+    usageTimelineCache.set(filePath, buildUsageTimeline(filePath));
+  }
+  return usageTimelineCache.get(filePath);
+}
+
+async function buildUsageTimeline(filePath) {
+  const text = await readSessionText(filePath);
+  if (text == null) return [];
+  const timeline = [];
   for (const raw of text.split('\n')) {
     let entry;
     try { entry = JSON.parse(raw); } catch { continue; }
     if (entry.type !== 'event_msg' || entry.payload?.type !== 'token_count') continue;
-    const eventTime = new Date(entry.timestamp).getTime();
-    if (!Number.isFinite(eventTime) || eventTime > forkTime || eventTime < latestTime) continue;
+    const timestamp = new Date(entry.timestamp).getTime();
     const total = entry.payload?.info?.total_token_usage;
-    if (!total) continue;
-    latest = usageSummary(total);
-    latestTime = eventTime;
+    if (!Number.isFinite(timestamp) || !total) continue;
+    timeline.push({ timestamp, summary: usageSummary(total) });
   }
-  return latest ? { summary: latest, timestamp: latestTime } : null;
+  timeline.sort((left, right) => left.timestamp - right.timestamp);
+  return timeline;
 }
 
 function normalizeSessionId(value) {

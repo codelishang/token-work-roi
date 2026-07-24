@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { createServer } from 'node:net';
@@ -11,7 +12,7 @@ import { createRequire } from 'node:module';
 import { seedDemoDatabase } from './demo-seed.ts';
 import { auditExperimentalCollectors, detectCollectors } from './collector-registry.ts';
 import { CCUSAGE_CLI_REPORTS, ccusageInvocation, runCcusageCliImportPlan } from './ccusage-bridge.ts';
-import { applyCcusageImport, parseCcusageJsonText, planCcusageImport, readCcusageImportInput } from './ccusage-import.ts';
+import { applyCcusageImport, ccusageImportWouldChange, parseCcusageJsonText, planCcusageImport, readCcusageImportInput } from './ccusage-import.ts';
 import { createSqliteBackup, defaultDbPath, deleteBudgetProfile, listBudgetProfiles, openDb, openReadOnlyDb, upsertBudgetProfile } from './db.ts';
 import { formatPrivacyCheckReport, runPrivacyCheck } from './privacy-check.ts';
 import { buildTerminalReport, formatTerminalReport } from './terminal-report.ts';
@@ -65,13 +66,6 @@ interface CliArgs {
   windowType?: string;
   writeSources?: string;
   yes?: boolean;
-}
-
-interface CollectProcessResult {
-  code: number;
-  stdout: string;
-  stderr: string;
-  parsed: InputRecord | null;
 }
 
 interface ImportUsageSummary {
@@ -140,24 +134,10 @@ try {
 
 async function autoCommand({ route = '/', defaultOpenBrowser = true } = {}) {
   const dbPath = cliDbPath();
-  const coverageSources = args.sources || args.collectors || 'claude,codex,cursor';
-  const applySources = args.applySources || args.writeSources || 'claude,codex';
   const openBrowser = args.noOpen ? false : defaultOpenBrowser;
 
   if (args.noCollect) {
     console.log('[token-work] auto collect skipped (--no-collect). Starting local UI.');
-    await startCommand({ demo: false, dbPath, route, openBrowser, liveCollect: false });
-    return;
-  }
-
-  console.log(`[token-work] coverage ${coverageSources} (read-only)`);
-  let coverage;
-  try {
-    coverage = await runCollectDryRun({ sources: coverageSources, dbPath });
-    printCoverageSummary(coverage);
-  } catch (error) {
-    console.error(`[token-work] coverage failed: ${error.message}`);
-    console.error('[token-work] SQLite was not modified. Starting local UI so the failure is visible.');
     await startCommand({ demo: false, dbPath, route, openBrowser, liveCollect: false });
     return;
   }
@@ -168,22 +148,7 @@ async function autoCommand({ route = '/', defaultOpenBrowser = true } = {}) {
     return;
   }
 
-  if (shouldAutoApplyCoverage(coverage, applySources)) {
-    console.log(`[token-work] applying trusted usage from ${applySources}`);
-    const result = await runCollectApply({ sources: applySources, dbPath });
-    if (result.parsed) {
-      printApplySummary(result.parsed);
-    } else if (result.stdout.trim()) {
-      console.log(result.stdout.trim());
-    }
-    if (result.code !== 0) {
-      console.error(result.stderr.trim() || '[token-work] collect apply failed.');
-      console.error('[token-work] Starting local UI with the current SQLite state.');
-    }
-  } else {
-    console.log('[token-work] no trusted Claude/Codex event-level history found; SQLite was not modified.');
-  }
-
+  console.log('[token-work] Starting local UI. Trusted Claude/Codex collection will run in the background.');
   await startCommand({ demo: false, dbPath, route, openBrowser, liveCollect: true });
 }
 
@@ -198,20 +163,20 @@ async function demoCommand() {
   await startCommand({ demo: true, dbPath });
 }
 
-async function startCommand({ demo = false, dbPath = null, route = '/', openBrowser = false, liveCollect = false, liveCollectRunOnStart = false } = {}) {
+async function startCommand({ demo = false, dbPath = null, route = '/', openBrowser = false, liveCollect = false } = {}) {
   const requestedApiPort = Number(args.apiPort || args.port || await freePort(4173));
-  const requestedUiPort = Number(args.uiPort || await freePort(5173));
-  const vitePort = requestedUiPort === 0 ? await freePort(5173) : requestedUiPort;
   const env = {
     ...process.env,
     PORT: String(requestedApiPort),
     API_PORT: String(requestedApiPort),
     DB_PATH: dbPath || resolve(USER_CWD, args.db || process.env.DB_PATH || 'data/usage.sqlite'),
     TOKEN_WORK_DEMO_MODE: demo ? '1' : process.env.TOKEN_WORK_DEMO_MODE || '',
-    ...liveCollectEnv({ enabled: liveCollect && !demo, runOnStart: liveCollectRunOnStart })
+    ...liveCollectEnv({ enabled: liveCollect && !demo })
   };
-  const viteBin = resolveViteBin({ packageRoot: PACKAGE_ROOT, requireLike: requireFromCli });
   const launchCwd = resolveLaunchCwd(PACKAGE_ROOT);
+  const useStaticUi = hasStaticUi(launchCwd) && !args.uiPort;
+  const requestedUiPort = useStaticUi ? requestedApiPort : Number(args.uiPort || await freePort(5173));
+  const vitePort = requestedUiPort === 0 ? await freePort(5173) : requestedUiPort;
   const server = spawn(process.execPath, [resolve(SOURCE_DIR, 'server.ts')], {
     cwd: launchCwd,
     env,
@@ -220,24 +185,28 @@ async function startCommand({ demo = false, dbPath = null, route = '/', openBrow
   });
   const serverOutput = captureAndForwardChildOutput(server);
   const serverStatus = captureServerStatus(server);
-  const client = spawn(process.execPath, [viteBin, '--host', '127.0.0.1', '--port', String(vitePort), '--strictPort'], {
+  const client = useStaticUi ? null : spawn(process.execPath, [
+    resolveViteBin({ packageRoot: PACKAGE_ROOT, requireLike: requireFromCli }),
+    '--host', '127.0.0.1', '--port', String(vitePort), '--strictPort'
+  ], {
     cwd: launchCwd,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
   });
-  const clientOutput = captureAndForwardChildOutput(client);
+  if (client) captureAndForwardChildOutput(client);
+  const children = [server, client];
+  const childrenDone = waitForChildren(children);
   let apiPort = requestedApiPort;
-  let uiPort = vitePort;
+  let uiPort = useStaticUi ? requestedApiPort : vitePort;
   try {
-    if (requestedApiPort === 0) {
-      apiPort = await waitForServerPort(server, serverStatus, serverOutput);
-    }
-    const uiUrl = `http://127.0.0.1:${uiPort}${route}`;
-    await Promise.all([
-      waitForHttp(`http://127.0.0.1:${apiPort}/api/data`, { label: 'API' }),
-      waitForHttp(`http://127.0.0.1:${uiPort}/`, { label: 'UI' })
+    await Promise.race([
+      waitForStartup(),
+      childrenDone.then(() => {
+        throw new Error('Local UI stopped before startup completed.');
+      })
     ]);
+    const uiUrl = `http://127.0.0.1:${uiPort}${route}`;
     console.log(`[token-work] UI  ${uiUrl}${demo ? '  (Demo Mode)' : ''}`);
     console.log(`[token-work] API http://127.0.0.1:${apiPort}`);
     if (process.send) process.send({ type: 'ready', apiPort, uiPort });
@@ -248,10 +217,26 @@ async function startCommand({ demo = false, dbPath = null, route = '/', openBrow
       setTimeout(() => openUrl(uiUrl), 900).unref?.();
     }
   } catch (error) {
-    await stopCliChildren([server, client]);
+    await stopCliChildren(children);
     throw error;
   }
-  await waitForChildren([server, client]);
+  await childrenDone;
+
+  async function waitForStartup() {
+    if (requestedApiPort === 0) {
+      apiPort = await waitForServerPort(server, serverStatus, serverOutput);
+      if (useStaticUi) uiPort = apiPort;
+    }
+    await Promise.all([
+      waitForHttp(`http://127.0.0.1:${apiPort}/api/data`, { label: 'API' }),
+      waitForHttp(`http://127.0.0.1:${uiPort}/`, { label: 'UI' })
+    ]);
+  }
+}
+
+function hasStaticUi(packageRoot) {
+  return existsSync(resolve(packageRoot, 'dist-runtime', 'cli.mjs'))
+    && existsSync(resolve(packageRoot, 'dist', 'index.html'));
 }
 
 function validPort(port) {
@@ -263,7 +248,7 @@ async function stopCliChildren(children) {
 }
 
 function stopCliChild(child) {
-  if (!child || child.exitCode != null) return Promise.resolve();
+  if (!child || child.exitCode != null || child.signalCode != null) return Promise.resolve();
   return new Promise<void>(resolve => {
     const done = () => {
       clearTimeout(killTimer);
@@ -271,14 +256,26 @@ function stopCliChild(child) {
       resolve();
     };
     const killTimer = setTimeout(() => {
-      if (child.exitCode == null) child.kill('SIGKILL');
+      if (child.exitCode == null && child.signalCode == null) killCliChild(child, 'SIGKILL');
     }, 2500);
     const resolveTimer = setTimeout(done, 5000);
     killTimer.unref?.();
     resolveTimer.unref?.();
     child.once('close', done);
-    child.kill('SIGTERM');
+    killCliChild(child, 'SIGTERM');
   });
+}
+
+function killCliChild(child, signal) {
+  if (!child || child.exitCode != null || child.signalCode != null) return;
+  if (process.platform === 'win32' && child.pid) {
+    const result = spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    if (result.status === 0) return;
+  }
+  child.kill(signal);
 }
 
 function captureServerStatus(child) {
@@ -325,12 +322,12 @@ function parseServerPort(stdout) {
   return validPort(port) ? port : null;
 }
 
-function liveCollectEnv({ enabled = false, runOnStart = false } = {}) {
+function liveCollectEnv({ enabled = false } = {}) {
   if (!enabled) return {};
   const intervalSeconds = envLiveCollectIntervalSeconds();
   return {
     SCHEDULED_COLLECT_ENABLED: '1',
-    SCHEDULED_COLLECT_RUN_ON_START: runOnStart ? '1' : '0',
+    SCHEDULED_COLLECT_RUN_ON_START: '0',
     SCHEDULED_COLLECT_INTERVAL_SECONDS: String(intervalSeconds),
     TOKEN_WORK_LIVE_COLLECT_INTERVAL_SECONDS: String(intervalSeconds)
   };
@@ -491,7 +488,9 @@ async function importUsageCommand() {
     const dbPath = cliDbPath();
     const db = openDb(dbPath);
     try {
-      summary.backup = createSqliteBackup(db, dbPath, { reason: format === 'ccusage-cli' ? 'ccusage-cli-import' : 'ccusage-json-import' });
+      summary.backup = ccusageImportWouldChange(db, plan)
+        ? createSqliteBackup(db, dbPath, { reason: format === 'ccusage-cli' ? 'ccusage-cli-import' : 'ccusage-json-import' })
+        : null;
       summary.applied = applyCcusageImport(db, plan);
     } finally {
       db.close();
@@ -763,25 +762,27 @@ function canListen(port) {
 }
 
 function waitForChildren(children) {
+  const activeChildren = children.filter(Boolean);
   return new Promise<number>(resolveRun => {
     let done = false;
-    const stop = (code = 0) => {
+    const stop = async (code = 0) => {
       if (done) return;
       done = true;
-      for (const child of children) {
-        if (!child.killed) child.kill();
-      }
+      await stopCliChildren(activeChildren);
       resolveRun(code);
     };
-    for (const child of children) {
-      child.on('exit', code => stop(code ?? 0));
+    for (const child of activeChildren) {
+      child.on('exit', code => { void stop(code ?? 0); });
       child.on('error', error => {
         console.error(error.message);
-        stop(1);
+        void stop(1);
       });
     }
-    process.on('SIGINT', () => stop(0));
-    process.on('SIGTERM', () => stop(0));
+    process.once('SIGINT', () => { void stop(0); });
+    process.once('SIGTERM', () => { void stop(0); });
+    if (process.platform !== 'win32') {
+      process.once('SIGHUP', () => { void stop(0); });
+    }
   });
 }
 
@@ -852,46 +853,6 @@ function runCollectDryRun({ sources, dbPath }: { sources?: string; dbPath?: stri
       } catch (error) {
         rejectRun(new Error(`coverage dry-run returned invalid JSON: ${error.message}`));
       }
-    });
-  });
-}
-
-function runCollectApply({ sources, dbPath }: { sources?: string; dbPath?: string } = {}): Promise<CollectProcessResult> {
-  const collectArgs = [
-    resolve(SOURCE_DIR, 'collect.ts'),
-    '--apply',
-    '--yes',
-    '--sources',
-    sources || 'claude,codex',
-    '--json'
-  ];
-  if (dbPath) collectArgs.push('--db', dbPath);
-  return new Promise(resolveRun => {
-    const child = spawn(process.execPath, collectArgs, {
-      cwd: PACKAGE_ROOT,
-      env: {
-        ...process.env,
-        TOKEN_WORK_COLLECTORS: sources || 'claude,codex',
-        TOKEN_WORK_COLLECT_CONFIRMED: '1'
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', chunk => { stdout += chunk; });
-    child.stderr.on('data', chunk => { stderr += chunk; });
-    child.on('error', error => resolveRun({ code: 1, stdout, stderr: `${stderr}${error.message}`, parsed: null }));
-    child.on('close', code => {
-      let parsed = null;
-      try {
-        parsed = stdout.trim() ? JSON.parse(stdout) : null;
-      } catch {
-        parsed = null;
-      }
-      resolveRun({ code: code ?? 0, stdout, stderr, parsed });
     });
   });
 }
@@ -975,28 +936,6 @@ function positiveNumber(value) {
 function diffPctNumber(left, right) {
   const max = Math.max(Number(left || 0), Number(right || 0), 1);
   return Math.abs(Number(left || 0) - Number(right || 0)) / max;
-}
-
-function shouldAutoApplyCoverage(summary, applySources) {
-  if (Number(summary?.totals?.fatalCoverageErrors || 0) > 0) return false;
-  const wanted = new Set(String(applySources || 'claude,codex').split(',').map(value => value.trim()).filter(Boolean));
-  return (summary.sources || []).some(source =>
-    wanted.has(source.id)
-    && source.coverageRisk === 'trusted-event-level'
-    && Number(source.tokenEvents || 0) > 0
-  );
-}
-
-function printApplySummary(summary) {
-  const before = summary.before || {};
-  const after = summary.after || {};
-  const deltaSessions = Number(after.sessionRows || 0) - Number(before.sessionRows || 0);
-  const deltaEvents = Number(after.tokenEvents || 0) - Number(before.tokenEvents || 0);
-  console.log(`[token-work] collect applied: sessions +${deltaSessions}, token_events +${deltaEvents}`);
-  if (summary.backup?.fileName) console.log(`[token-work] backup ${summary.backup.fileName}`);
-  for (const source of summary.sources || []) {
-    console.log(`[token-work] ${source.id}: ${source.coverageRisk}, events=${source.tokenEvents}, sessions=${source.sessionRows}`);
-  }
 }
 
 function openUrl(url) {
@@ -1119,7 +1058,7 @@ function printHelp() {
     '',
     'Commands:',
     '  token-work [--db data/usage.sqlite] [--no-collect|--dry-run-only]',
-    '    Default real entry: coverage -> trusted Claude/Codex apply -> UI -> 60s live refresh.',
+    '    Default real entry: UI starts first; trusted Claude/Codex collection runs in the background every 60s.',
     '  token-work demo [--seed-only] [--db data/demo.sqlite]',
     '  token-work start [--db data/usage.sqlite] [--api-port 4173|0] [--ui-port 5173|0] [--no-collect|--dry-run-only]',
     '  token-work open [--db data/usage.sqlite] [--api-port 4173|0] [--ui-port 5173|0] [--no-collect|--dry-run-only]',

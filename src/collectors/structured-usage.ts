@@ -24,6 +24,27 @@ export async function collectStructuredUsage({
   return buildOutput(clientKey, events, pricingData);
 }
 
+export async function collectStructuredUsageWithAudit({
+  clientKey,
+  roots,
+  pricingData = null
+}) {
+  const files = await listUsageFiles(roots);
+  const events = [];
+  const audit = emptyAuditSummary(files.length);
+
+  for (const filePath of files) {
+    const file = await readUsageFile(filePath);
+    events.push(...parseUsageFileContent(file).map(event => ({ ...event, client: clientKey })));
+    addAuditSummary(audit, auditUsageFileContent(file));
+  }
+
+  return {
+    output: buildOutput(clientKey, events, pricingData),
+    audit
+  };
+}
+
 export async function listUsageFiles(roots) {
   const files = [];
   for (const root of roots.filter(Boolean)) {
@@ -34,22 +55,11 @@ export async function listUsageFiles(roots) {
 
 export async function auditStructuredUsage({ roots }) {
   const files = await listUsageFiles(roots);
-  const summary = {
-    candidateFiles: files.length,
-    usableTokenRecords: 0,
-    skippedNoTokenRecords: 0,
-    skippedConversationLikeRecords: 0,
-    skippedOversizedFiles: 0,
-    parseErrors: 0
-  };
+  const summary = emptyAuditSummary(files.length);
 
   for (const filePath of files) {
     const result = await auditUsageFile(filePath);
-    summary.usableTokenRecords += result.usableTokenRecords;
-    summary.skippedNoTokenRecords += result.skippedNoTokenRecords;
-    summary.skippedConversationLikeRecords += result.skippedConversationLikeRecords;
-    summary.skippedOversizedFiles += result.skippedOversizedFiles;
-    summary.parseErrors += result.parseErrors;
+    addAuditSummary(summary, result);
   }
 
   return summary;
@@ -78,26 +88,33 @@ async function walk(dir, depth, files) {
 }
 
 async function parseUsageFile(filePath) {
+  return parseUsageFileContent(await readUsageFile(filePath));
+}
+
+async function readUsageFile(filePath) {
   let info;
   try {
     info = await stat(filePath);
   } catch {
-    return [];
+    return { error: 'stat' };
   }
-  if (info.size > MAX_FILE_BYTES) return [];
+  if (info.size > MAX_FILE_BYTES) return { oversized: true };
 
-  let text;
   try {
-    text = await readFile(filePath, 'utf8');
+    return { filePath, info, text: await readFile(filePath, 'utf8') };
   } catch {
-    return [];
+    return { error: 'read' };
   }
+}
 
+function parseUsageFileContent(file) {
+  if (!file?.info || typeof file.text !== 'string') return [];
+  const { info, text } = file;
   const fallback = {
-    sessionId: basename(filePath, extname(filePath)),
+    sessionId: basename(file.filePath || '', extname(file.filePath || '')),
     timestamp: new Date(info.mtimeMs).toISOString()
   };
-  if (extname(filePath).toLowerCase() === '.jsonl') {
+  if (extname(file.filePath || '').toLowerCase() === '.jsonl') {
     return text.split(/\r?\n/)
       .map(line => line.trim())
       .filter(Boolean)
@@ -119,35 +136,23 @@ async function parseUsageFile(filePath) {
 }
 
 async function auditUsageFile(filePath) {
-  const summary = {
-    usableTokenRecords: 0,
-    skippedNoTokenRecords: 0,
-    skippedConversationLikeRecords: 0,
-    skippedOversizedFiles: 0,
-    parseErrors: 0
-  };
+  return auditUsageFileContent(await readUsageFile(filePath));
+}
 
-  let info;
-  try {
-    info = await stat(filePath);
-  } catch {
-    summary.parseErrors += 1;
-    return summary;
-  }
-  if (info.size > MAX_FILE_BYTES) {
+function auditUsageFileContent(file) {
+  const summary = emptyAuditSummary();
+  if (file?.oversized) {
     summary.skippedOversizedFiles += 1;
     return summary;
   }
-
-  let text;
-  try {
-    text = await readFile(filePath, 'utf8');
-  } catch {
+  if (!file?.info || typeof file.text !== 'string') {
     summary.parseErrors += 1;
     return summary;
   }
 
-  if (extname(filePath).toLowerCase() === '.jsonl') {
+  const { text } = file;
+
+  if (extname(file.filePath || '').toLowerCase() === '.jsonl') {
     for (const line of text.split(/\r?\n/).map(item => item.trim()).filter(Boolean)) {
       auditJsonLine(line, summary);
     }
@@ -175,6 +180,25 @@ async function auditUsageFile(filePath) {
   }
 
   return summary;
+}
+
+function emptyAuditSummary(candidateFiles = 0) {
+  return {
+    candidateFiles,
+    usableTokenRecords: 0,
+    skippedNoTokenRecords: 0,
+    skippedConversationLikeRecords: 0,
+    skippedOversizedFiles: 0,
+    parseErrors: 0
+  };
+}
+
+function addAuditSummary(target, source) {
+  target.usableTokenRecords += source.usableTokenRecords;
+  target.skippedNoTokenRecords += source.skippedNoTokenRecords;
+  target.skippedConversationLikeRecords += source.skippedConversationLikeRecords;
+  target.skippedOversizedFiles += source.skippedOversizedFiles;
+  target.parseErrors += source.parseErrors;
 }
 
 function auditJsonLine(line, summary) {

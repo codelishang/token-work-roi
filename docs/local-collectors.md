@@ -59,7 +59,7 @@ v2 源码入口使用 TypeScript 文件。旧的 `.mjs` 源码直跑路径不再
 
 | 命令 | 作用 |
 |---|---|
-| `node src/cli.ts` | 默认入口，先检查来源，再写入可信 Claude/Codex 事件级记录，最后打开浏览器 |
+| `node src/cli.ts` | 默认入口，先打开浏览器，再在后台采集可信 Claude/Codex 事件级记录 |
 | `--no-collect` | 只打开当前 SQLite，不扫描本机日志 |
 | `--dry-run-only` | 只预检，不写入数据库 |
 | `coverage` | 查看每个来源是否有可靠词元字段，以及 daily/session/event 是否能对上 |

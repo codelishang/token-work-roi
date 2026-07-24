@@ -254,6 +254,18 @@ function addInto(target, tokens) {
  * @returns {{ graphJson: object, modelsJson: object }}
  */
 export async function collect(pricingData = null) {
+  return collectFromFiles(await scanSessionFiles(), pricingData);
+}
+
+export async function collectWithAudit(pricingData = null) {
+  const files = await scanSessionFiles();
+  return {
+    ...collectFromFiles(files, pricingData),
+    audit: auditFromFiles(files)
+  };
+}
+
+function collectFromFiles(files, pricingData) {
   // dailyKey ("YYYY-MM-DD::model") -> aggregated token counts
   const dailyMap = new Map();
   // sessionId -> true session-file aggregate
@@ -261,38 +273,34 @@ export async function collect(pricingData = null) {
   const tokenEvents = [];
   const managedEventSessionPrefixes = new Set();
 
-  for (const root of await getScanRoots()) {
-    const filePaths = await collectJsonlFiles(root.path);
-    for (const filePath of filePaths) {
-      const workspaceKey = workspaceKeyFromPath(root, filePath);
-      const workspaceLabel = decodeWorkspaceLabel(workspaceKey);
-      const records = await parseSessionFile(filePath);
-      if (!records.length) continue;
-      const sessionFileId = basename(filePath).replace(/\.jsonl$/i, '');
-      const sessionPrefix = `local:${CLIENT_KEY}:${hashableSessionPart(sessionFileId)}`;
-      const modelSessionIds = new Map(
-        [...new Set(records.map(record => normalizeModelForGrouping(record.model)))]
-          .map(model => [model, `${sessionPrefix}:${model}`])
-      );
-      const legacySessionIds = [...modelSessionIds.values()];
-      managedEventSessionPrefixes.add(`${sessionPrefix}:`);
+  for (const { root, filePath, records } of files) {
+    const workspaceKey = workspaceKeyFromPath(root, filePath);
+    const workspaceLabel = decodeWorkspaceLabel(workspaceKey);
+    if (!records.length) continue;
+    const sessionFileId = basename(filePath).replace(/\.jsonl$/i, '');
+    const sessionPrefix = `local:${CLIENT_KEY}:${hashableSessionPart(sessionFileId)}`;
+    const modelSessionIds = new Map(
+      [...new Set(records.map(record => normalizeModelForGrouping(record.model)))]
+        .map(model => [model, `${sessionPrefix}:${model}`])
+    );
+    const legacySessionIds = [...modelSessionIds.values()];
+    managedEventSessionPrefixes.add(`${sessionPrefix}:`);
 
-      for (let index = 0; index < records.length; index += 1) {
-        const record = records[index];
-        const tokens = extractTokens(record.usage);
-        const model = normalizeModelForGrouping(record.model);
-        const normalized = {
-          ...record,
-          model,
-          tokens,
-          sessionId: modelSessionIds.get(model),
-          legacySessionIds,
-          workspaceKey,
-          workspaceLabel,
-        };
-        aggregateRecord(normalized, dailyMap, sessionMap, pricingData);
-        tokenEvents.push(tokenEventFor(normalized));
-      }
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      const tokens = extractTokens(record.usage);
+      const model = normalizeModelForGrouping(record.model);
+      const normalized = {
+        ...record,
+        model,
+        tokens,
+        sessionId: modelSessionIds.get(model),
+        legacySessionIds,
+        workspaceKey,
+        workspaceLabel,
+      };
+      aggregateRecord(normalized, dailyMap, sessionMap, pricingData);
+      tokenEvents.push(tokenEventFor(normalized));
     }
   }
 
@@ -357,25 +365,35 @@ export async function collect(pricingData = null) {
 }
 
 export async function audit() {
+  return auditFromFiles(await scanSessionFiles());
+}
+
+async function scanSessionFiles() {
+  const files = [];
+  for (const root of await getScanRoots()) {
+    for (const filePath of await collectJsonlFiles(root.path)) {
+      files.push({ root, filePath, records: await parseSessionFile(filePath) });
+    }
+  }
+  return files;
+}
+
+function auditFromFiles(files) {
   const summary = emptyAuditSummary();
   const sessions = new Set();
-  for (const root of await getScanRoots()) {
-    const filePaths = await collectJsonlFiles(root.path);
-    summary.candidateFiles += filePaths.length;
-    for (const filePath of filePaths) {
-      const records = await parseSessionFile(filePath);
-      if (records.length) {
-        summary.usableTokenRecords += records.length;
-        sessions.add(basename(filePath).replace(/\.jsonl$/i, ''));
-        for (const record of records) {
-          const tokens = extractTokens(record.usage);
-          summary.totalTokens += tokenTotal(tokens);
-          summary.firstTimestamp = earlierTimestamp(summary.firstTimestamp, record.timestamp);
-          summary.lastTimestamp = laterTimestamp(summary.lastTimestamp, record.timestamp);
-        }
-      } else {
-        summary.skippedNoTokenRecords += 1;
+  summary.candidateFiles = files.length;
+  for (const { filePath, records } of files) {
+    if (records.length) {
+      summary.usableTokenRecords += records.length;
+      sessions.add(basename(filePath).replace(/\.jsonl$/i, ''));
+      for (const record of records) {
+        const tokens = extractTokens(record.usage);
+        summary.totalTokens += tokenTotal(tokens);
+        summary.firstTimestamp = earlierTimestamp(summary.firstTimestamp, record.timestamp);
+        summary.lastTimestamp = laterTimestamp(summary.lastTimestamp, record.timestamp);
       }
+    } else {
+      summary.skippedNoTokenRecords += 1;
     }
   }
   summary.sessionRows = sessions.size;

@@ -1,8 +1,9 @@
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { hostname } from 'node:os';
-import { resolve } from 'node:path';
-import { createSqliteBackup, openDb, recordRun, repairUsageTotals, upsertDaily, upsertSession, upsertTokenEvent, usageTotalsNeedRepair } from './db.ts';
+import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { createSqliteBackup, defaultDbPath, openDb, recordRun, repairUsageTotals, upsertDaily, upsertSession, upsertTokenEvent, usageTotalsNeedRepair } from './db.ts';
 import { calculateCost, loadPricing } from './pricing.ts';
 import { collectableCollectors, collectorLabel, enabledCollectorIds } from './collector-registry.ts';
 
@@ -93,21 +94,27 @@ async function main() {
     sources: []
   };
 
-  if (mode === 'apply') {
-    db = openDb(args.db);
-    summary.before = countRows(db);
-  }
+  let collectionLock = null;
 
   try {
+    if (mode === 'apply') {
+      collectionLock = acquireCollectionLock(args.db);
+      db = openDb(args.db);
+      summary.before = countRows(db);
+    }
     await collectLocal({ collectors, mode, db, dbPath: args.db, pricingData, device, collectedAt, exportPayload, summary, scheduled });
     if (args.push) {
       if (mode !== 'apply') throw new Error('--push is only available with --apply.');
       await pushPayload(args.push, exportPayload, args.token);
     }
   } finally {
-    if (db) {
-      summary.after = countRows(db);
-      db.close();
+    try {
+      if (db) {
+        summary.after = countRows(db);
+        db.close();
+      }
+    } finally {
+      releaseCollectionLock(collectionLock);
     }
   }
 
@@ -119,6 +126,76 @@ async function main() {
 
   if (summary.sources.some(source => source.status === 'error')) {
     process.exitCode = 1;
+  }
+}
+
+function acquireCollectionLock(dbPath) {
+  const resolvedDbPath = resolve(dbPath || defaultDbPath);
+  const lockPath = `${resolvedDbPath}.collect.lock`;
+  mkdirSync(dirname(resolvedDbPath), { recursive: true });
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const fd = openSync(lockPath, 'wx', 0o600);
+      try {
+        writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+      } finally {
+        closeSync(fd);
+      }
+      return lockPath;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      const owner = readCollectionLock(lockPath);
+      if (owner?.pid && owner.pid !== process.pid && processExists(owner.pid)) {
+        throw new Error(`A collection is already running for this SQLite database (PID ${owner.pid}).`);
+      }
+      if (!owner && collectionLockIsNew(lockPath)) {
+        throw new Error('A collection is starting for this SQLite database. Please try again shortly.');
+      }
+      try {
+        unlinkSync(lockPath);
+      } catch (unlinkError) {
+        if (unlinkError?.code !== 'ENOENT') throw unlinkError;
+      }
+    }
+  }
+
+  throw new Error('Unable to acquire the collection lock. Please try again.');
+}
+
+function collectionLockIsNew(lockPath) {
+  try {
+    return Date.now() - statSync(lockPath).mtimeMs < 5_000;
+  } catch (error) {
+    return error?.code !== 'ENOENT';
+  }
+}
+
+function readCollectionLock(lockPath) {
+  try {
+    const parsed = JSON.parse(readFileSync(lockPath, 'utf8'));
+    const pid = Number(parsed?.pid);
+    return Number.isInteger(pid) && pid > 0 ? { pid } : null;
+  } catch {
+    return null;
+  }
+}
+
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+function releaseCollectionLock(lockPath) {
+  if (!lockPath) return;
+  try {
+    unlinkSync(lockPath);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
   }
 }
 
@@ -161,13 +238,18 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
 
     try {
       const collectorModule = await import(module);
-      if (typeof collectorModule.audit === 'function') {
-        audit = normalizeAuditSummary(await collectorModule.audit());
-      }
-      if (typeof collectorModule.collect !== 'function') {
+      if (typeof collectorModule.collectWithAudit === 'function') {
+        const result = await collectorModule.collectWithAudit(pricingData);
+        audit = normalizeAuditSummary(result.audit);
+        ({ graphJson = {}, modelsJson = {}, tokenEvents = [], reconciliation = null } = result);
+      } else if (typeof collectorModule.collect === 'function') {
+        if (typeof collectorModule.audit === 'function') {
+          audit = normalizeAuditSummary(await collectorModule.audit());
+        }
+        ({ graphJson = {}, modelsJson = {}, tokenEvents = [], reconciliation = null } = await collectorModule.collect(pricingData));
+      } else {
         throw new Error(`Collector ${id} does not export collect()`);
       }
-      ({ graphJson = {}, modelsJson = {}, tokenEvents = [], reconciliation = null } = await collectorModule.collect(pricingData));
     } catch (error) {
       sourceSummary.status = 'error';
       sourceSummary.message = error.message;
@@ -215,13 +297,11 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
 
   const needsStoredUsageRepair = mode === 'apply' && db && usageTotalsNeedRepair(db);
   if (mode === 'apply' && db) {
-    const shouldBackup = !scheduled || needsStoredUsageRepair || tokenUsageWouldChange(db, payloads);
+    const shouldBackup = needsStoredUsageRepair || tokenUsageWouldChange(db, payloads);
     summary.backup = shouldBackup
       ? createSqliteBackup(db, dbPath, scheduled
           ? {
-              reason: 'scheduled-collect',
-              minimumIntervalMs: 60 * 60 * 1000,
-              maxBackups: 24
+              reason: 'scheduled-collect'
             }
           : { reason: 'collect' })
       : null;
@@ -284,24 +364,27 @@ function tokenUsageWouldChange(db, payloads) {
       AND input_tokens = ? AND output_tokens = ?
       AND cache_creation_tokens = ? AND cache_read_tokens = ?
       AND cached_input_tokens = ?
-      AND reasoning_output_tokens = ? AND total_tokens = ?
+      AND reasoning_output_tokens = ? AND total_tokens = ? AND cost_usd = ?
   `);
   const matchingSession = db.prepare(`
     SELECT 1
     FROM session_usage
     WHERE device = ? AND source = ? AND session_id = ?
-      AND model = ?
+      AND last_activity IS COALESCE(?, last_activity)
+      AND project_path IS COALESCE(?, project_path)
+      AND model = CASE WHEN ? != '' THEN ? ELSE model END
       AND input_tokens = ? AND output_tokens = ?
       AND cache_creation_tokens = ? AND cache_read_tokens = ?
       AND cached_input_tokens = ?
-      AND reasoning_output_tokens = ? AND total_tokens = ?
+      AND reasoning_output_tokens = ? AND total_tokens = ? AND cost_usd = ?
   `);
   const matchingEvent = db.prepare(`
     SELECT 1
     FROM token_events
-    WHERE device = ? AND source = ? AND session_id = ? AND timestamp = ? AND model = ?
+    WHERE event_id = ? AND device = ? AND source = ? AND session_id = ? AND timestamp = ? AND model = ?
       AND input_tokens = ? AND output_tokens = ?
       AND cache_read_tokens = ? AND cache_creation_tokens = ? AND reasoning_tokens = ?
+      AND tool_category IS ? AND file_extension IS ? AND repo_path_hash IS ? AND privacy_level = ?
     LIMIT 1
   `);
   const legacyEvent = db.prepare(`
@@ -320,23 +403,23 @@ function tokenUsageWouldChange(db, payloads) {
       if (!matchingDaily.get(
         row.device, row.source, row.usageDate, row.model,
         row.inputTokens, row.outputTokens, row.cacheCreationTokens,
-        row.cacheReadTokens, row.cachedInputTokens || 0, row.reasoningOutputTokens, row.totalTokens
+        row.cacheReadTokens, row.cachedInputTokens || 0, row.reasoningOutputTokens, row.totalTokens, row.costUSD
       )) return true;
     }
     for (const row of payload.sessionRows) {
       if (!matchingSession.get(
-        row.device, row.source, row.sessionId,
-        row.model,
+        row.device, row.source, row.sessionId, row.lastActivity, row.projectPath, row.model, row.model,
         row.inputTokens, row.outputTokens, row.cacheCreationTokens,
-        row.cacheReadTokens, row.cachedInputTokens || 0, row.reasoningOutputTokens, row.totalTokens
+        row.cacheReadTokens, row.cachedInputTokens || 0, row.reasoningOutputTokens, row.totalTokens, row.costUSD
       )) return true;
     }
     for (const row of payload.eventRows) {
       if (row.legacyEventIds.some(eventId => legacyEvent.get(eventId, row.device, row.source))) return true;
       if (!matchingEvent.get(
-        row.device, row.source, row.sessionId, row.timestamp, row.model,
+        row.eventId, row.device, row.source, row.sessionId, row.timestamp, row.model,
         row.inputTokens, row.outputTokens, row.cacheReadTokens,
-        row.cacheCreationTokens, row.reasoningTokens
+        row.cacheCreationTokens, row.reasoningTokens,
+        row.toolCategory || null, row.fileExtension || null, row.repoPathHash || null, row.privacyLevel || 'safe'
       )) return true;
     }
   }

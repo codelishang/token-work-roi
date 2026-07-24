@@ -27,7 +27,7 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { existsSync }              from 'node:fs';
-import { join, basename, extname } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join } from 'node:path';
 import { configuredPaths } from '../collector-config.ts';
 import { calculateCost } from '../pricing.ts';
 import { canonicalProvider, localDateFromTimestamp, normalizeModelForGrouping } from './utils.ts';
@@ -123,7 +123,7 @@ async function parseIndexFile(indexPath) {
   let obj;
   try { obj = JSON.parse(text); } catch { return []; }
 
-  const indexDir = indexPath.slice(0, indexPath.lastIndexOf('/'));
+  const indexDir = dirname(indexPath);
   const results  = [];
 
   for (const value of Object.values(obj)) {
@@ -135,7 +135,7 @@ async function parseIndexFile(indexPath) {
     let filePath;
     const sf = typeof entry.sessionFile === 'string' ? entry.sessionFile.trim() : '';
     if (sf) {
-      filePath = sf.startsWith('/') ? sf : join(indexDir, sf);
+      filePath = isAbsolute(sf) ? sf : join(indexDir, sf);
     } else {
       filePath = join(indexDir, `${sessionId}.jsonl`);
     }

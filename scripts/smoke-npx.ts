@@ -30,11 +30,9 @@ try {
   if (!existsSync(cliPath)) throw new Error(`Installed CLI not found: ${cliPath}`);
 
   const apiPort = await freePort(4180);
-  const uiPort = await freePort(apiPort + 1000);
-  const child = spawnInstalledCli(cliPath, [
+  const child = spawnNpxCli([
     '--db', dbPath,
     '--api-port', String(apiPort),
-    '--ui-port', String(uiPort),
     '--no-open'
   ], {
     cwd: runDir,
@@ -57,9 +55,9 @@ try {
   });
 
   try {
-    const data = await waitForJson(`http://127.0.0.1:${apiPort}/api/data`, { childState: () => ({ closed, stdout, stderr }) });
-    const html = await waitForText(`http://127.0.0.1:${uiPort}/`, { childState: () => ({ closed, stdout, stderr }) });
-    const apply = await fetch(`http://127.0.0.1:${uiPort}/api/auto-attribution/apply`, {
+    const data = await waitForCollectedData(`http://127.0.0.1:${apiPort}/api/data`, { childState: () => ({ closed, stdout, stderr }) });
+    const html = await waitForText(`http://127.0.0.1:${apiPort}/`, { childState: () => ({ closed, stdout, stderr }) });
+    const apply = await fetch(`http://127.0.0.1:${apiPort}/api/auto-attribution/apply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -90,6 +88,9 @@ try {
     }, null, 2));
   } finally {
     await stopChild(child);
+  }
+  if (!await canListen(apiPort)) {
+    throw new Error(`installed CLI did not release API port ${apiPort}`);
   }
 
   if (!process.env.TOKEN_WORK_KEEP_SMOKE_DIR) {
@@ -171,19 +172,20 @@ function spawnNpm(args, { cwd }) {
   });
 }
 
-function spawnInstalledCli(command, args, { cwd, env }) {
+function spawnNpxCli(args, { cwd, env }) {
   if (process.platform === 'win32') {
-    return spawn('cmd.exe', ['/d', '/s', '/c', [command, ...args].map(quoteWindowsArg).join(' ')], {
+    return spawn('cmd.exe', ['/d', '/s', '/c', ['npx', '--no-install', 'token-work', ...args].map(quoteWindowsArg).join(' ')], {
       cwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true
     });
   }
-  return spawn(command, args, {
+  return spawn('npx', ['--no-install', 'token-work', ...args], {
     cwd,
     env,
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true
   });
 }
 
@@ -200,9 +202,28 @@ function safeEnv(extra = {}) {
   };
 }
 
-async function waitForJson(url, { childState }: WaitOptions) {
-  const response = await waitForResponse(url, { childState });
-  return response.json();
+async function waitForCollectedData(url, { childState, timeoutMs = 90000, intervalMs = 500 }: WaitOptions = {}) {
+  const started = Date.now();
+  let last = '';
+  while (Date.now() - started < timeoutMs) {
+    const state = childState?.() || {};
+    if (state.closed) {
+      throw new Error(`child exited before ${url}\nstdout=${state.stdout || ''}\nstderr=${state.stderr || ''}`);
+    }
+    try {
+      const response = await fetch(url);
+      last = String(response.status);
+      if (response.ok) {
+        const data = await response.json();
+        if (Number(data.meta?.runtime?.counts?.tokenEventRows || 0) > 0) return data;
+      }
+    } catch (error) {
+      last = error.message;
+    }
+    await sleep(intervalMs);
+  }
+  const state = childState?.() || {};
+  throw new Error(`Timed out waiting for collected data at ${url}: ${last}\nstdout=${state.stdout || ''}\nstderr=${state.stderr || ''}`);
 }
 
 async function waitForText(url, { childState }: WaitOptions) {
@@ -263,7 +284,11 @@ function stopChild(child) {
     if (process.platform === 'win32' && child.pid) {
       spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
     } else {
-      child.kill();
+      try {
+        process.kill(-child.pid, 'SIGINT');
+      } catch {
+        child.kill('SIGINT');
+      }
     }
   });
 }

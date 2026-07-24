@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { U } from '../shared/utils.ts';
 import './styles.css';
 
-const REFRESH_MS = 7000;
+const REFRESH_MS = 15000;
 const PULSE_WINDOW_MINUTES = 1440;
 
 export function LiveApp() {
@@ -25,12 +25,15 @@ export function LiveApp() {
 
   useEffect(() => {
     let alive = true;
+    let loading = false;
     const stopExchangeRateRefresh = U.startExchangeRateRefresh(() => {
       if (alive) {
         setExchangeRateVersion(version => version + 1);
       }
     });
     async function load() {
+      if (loading) return;
+      loading = true;
       try {
         const data = await fetchLiveSnapshot(PULSE_WINDOW_MINUTES);
         if (alive) {
@@ -39,6 +42,8 @@ export function LiveApp() {
         }
       } catch (err) {
         if (alive) setError(err.message);
+      } finally {
+        loading = false;
       }
     }
     load();
@@ -118,7 +123,7 @@ export function LiveApp() {
           <span className="pulse-time">{generated}</span>
           <button type="button" onClick={copyStatuslineCommand}>{copied ? '已复制' : '复制 statusline'}</button>
           <button type="button" onClick={triggerCollect} disabled={!canManualRefresh}>
-            {collectionRunning || refreshing ? '刷新中' : '刷新'}
+            {refreshing ? '提交中' : collectionRunning ? '采集中' : '刷新'}
           </button>
           <a href="/review">打开复盘</a>
         </div>
@@ -520,7 +525,7 @@ function sourceColor(index) {
 
 function freshnessLabel(value) {
   if (value === 'fresh') return '在线';
-  if (value === 'collecting') return '刷新中';
+  if (value === 'collecting') return '采集中';
   if (value === 'stale') return '可能过期';
   if (value === 'error') return '异常';
   if (value === 'empty') return '空数据';

@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { realpathSync } from 'node:fs';
+import { realpathSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,7 +18,15 @@ const fsAllow = uniqueExistingPaths([
 ]);
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'omit-desktop-icon-from-web-build',
+      closeBundle() {
+        rmSync(resolve(packageRoot, 'dist', 'token-work-icon.icns'), { force: true });
+      }
+    }
+  ],
   build: {
     rollupOptions: {
       output: {

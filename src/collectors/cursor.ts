@@ -5,7 +5,7 @@ import { basename, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { configuredPaths, expandPath } from '../collector-config.ts';
 import { calculateCost } from '../pricing.ts';
-import { auditStructuredUsage, collectStructuredUsage } from './structured-usage.ts';
+import { auditStructuredUsage, collectStructuredUsage, collectStructuredUsageWithAudit } from './structured-usage.ts';
 import { localDateFromTimestamp, normalizeModelForGrouping } from './utils.ts';
 
 export const CLIENT_KEY = 'cursor';
@@ -36,6 +36,35 @@ export async function collect(pricingData = null) {
   return mergeOutputs(buildOutput(dbEvents, pricingData), structured);
 }
 
+export async function collectWithAudit(pricingData = null) {
+  const summary = emptyAuditSummary();
+  const dbEvents = [];
+  const dbPaths = cursorDbPaths();
+  summary.candidateFiles = dbPaths.length;
+
+  for (const dbPath of dbPaths) {
+    const rows = readCursorStateRows(dbPath);
+    if (!rows) {
+      summary.parseErrors += 1;
+      continue;
+    }
+    dbEvents.push(...rows.flatMap(row => normalizeCursorRow(row)));
+    addAudit(summary, auditCursorStateRows(rows));
+  }
+
+  const structured = await collectStructuredUsageWithAudit({
+    clientKey: CLIENT_KEY,
+    roots: roots(),
+    pricingData
+  });
+  addAudit(summary, structured.audit);
+
+  return {
+    ...mergeOutputs(buildOutput(dbEvents, pricingData), structured.output),
+    audit: summary
+  };
+}
+
 export async function audit() {
   const summary = emptyAuditSummary();
   const dbPaths = cursorDbPaths();
@@ -63,6 +92,11 @@ function cursorDbPaths() {
 }
 
 function collectCursorStateEvents(dbPath) {
+  const rows = readCursorStateRows(dbPath);
+  return rows ? rows.flatMap(row => normalizeCursorRow(row)) : [];
+}
+
+function readCursorStateRows(dbPath) {
   let db;
   try {
     db = new DatabaseSync(dbPath, { readOnly: true, timeout: 5000 });
@@ -83,9 +117,9 @@ function collectCursorStateEvents(dbPath) {
       FROM cursorDiskKV
       WHERE key LIKE 'bubbleId:%'
     `).all();
-    return rows.flatMap(row => normalizeCursorRow(row));
+    return rows;
   } catch {
-    return [];
+    return null;
   } finally {
     db?.close();
   }
@@ -93,32 +127,23 @@ function collectCursorStateEvents(dbPath) {
 
 function auditCursorStateDb(dbPath) {
   const summary = emptyAuditSummary();
-  let db;
-  try {
-    db = new DatabaseSync(dbPath, { readOnly: true, timeout: 5000 });
-    const rows = db.prepare(`
-      SELECT
-        key AS rowKey,
-        json_extract(value, '$.tokenCount.inputTokens') AS inputTokens,
-        json_extract(value, '$.tokenCount.outputTokens') AS outputTokens,
-        json_extract(value, '$.tokenCount.cacheReadTokens') AS cacheReadTokens,
-        json_extract(value, '$.tokenCount.cacheCreationTokens') AS cacheCreationTokens,
-        json_extract(value, '$.tokenCount.reasoningTokens') AS reasoningTokens
-      FROM cursorDiskKV
-      WHERE key LIKE 'bubbleId:%'
-    `).all();
-    for (const row of rows) {
-      const tokens = cursorTokens(row);
-      if (tokenTotal(tokens) > 0) {
-        summary.usableTokenRecords += 1;
-      } else {
-        summary.skippedNoTokenRecords += 1;
-      }
-    }
-  } catch {
+  const rows = readCursorStateRows(dbPath);
+  if (!rows) {
     summary.parseErrors += 1;
-  } finally {
-    db?.close();
+    return summary;
+  }
+  return auditCursorStateRows(rows);
+}
+
+function auditCursorStateRows(rows) {
+  const summary = emptyAuditSummary();
+  for (const row of rows) {
+    const tokens = cursorTokens(row);
+    if (tokenTotal(tokens) > 0) {
+      summary.usableTokenRecords += 1;
+    } else {
+      summary.skippedNoTokenRecords += 1;
+    }
   }
   return summary;
 }

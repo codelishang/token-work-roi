@@ -178,6 +178,58 @@ export function applyCcusageImport(db, plan) {
   };
 }
 
+export function ccusageImportWouldChange(db, plan) {
+  const daily = db.prepare(`
+    SELECT 1 FROM daily_usage
+    WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
+      AND input_tokens = ? AND output_tokens = ?
+      AND cache_creation_tokens = ? AND cache_read_tokens = ?
+      AND cached_input_tokens = ? AND reasoning_output_tokens = ?
+      AND total_tokens = ? AND cost_usd = ?
+  `);
+  const sessions = db.prepare(`
+    SELECT 1 FROM session_usage
+    WHERE device = ? AND source = ? AND session_id = ?
+      AND last_activity IS COALESCE(?, last_activity)
+      AND project_path IS COALESCE(?, project_path)
+      AND model = CASE WHEN ? != '' THEN ? ELSE model END
+      AND input_tokens = ? AND output_tokens = ?
+      AND cache_creation_tokens = ? AND cache_read_tokens = ?
+      AND cached_input_tokens = ? AND reasoning_output_tokens = ?
+      AND total_tokens = ? AND cost_usd = ?
+  `);
+  const events = db.prepare(`
+    SELECT 1 FROM token_events
+    WHERE event_id = ? AND device = ? AND source = ? AND session_id = ? AND timestamp = ? AND model = ?
+      AND input_tokens = ? AND output_tokens = ?
+      AND cache_read_tokens = ? AND cache_creation_tokens = ? AND reasoning_tokens = ?
+      AND tool_category IS ? AND file_extension IS ? AND repo_path_hash IS ? AND privacy_level = ?
+  `);
+
+  for (const row of plan.daily) {
+    if (!daily.get(
+      row.device, row.source, row.usageDate, row.model,
+      row.inputTokens, row.outputTokens, row.cacheCreationTokens, row.cacheReadTokens,
+      row.cachedInputTokens || 0, row.reasoningOutputTokens, row.totalTokens, row.costUSD
+    )) return true;
+  }
+  for (const row of plan.sessions) {
+    if (!sessions.get(
+      row.device, row.source, row.sessionId, row.lastActivity, row.projectPath, row.model, row.model,
+      row.inputTokens, row.outputTokens, row.cacheCreationTokens, row.cacheReadTokens,
+      row.cachedInputTokens || 0, row.reasoningOutputTokens, row.totalTokens, row.costUSD
+    )) return true;
+  }
+  for (const row of plan.tokenEvents) {
+    if (!events.get(
+      row.eventId, row.device, row.source, row.sessionId, row.timestamp, row.model,
+      row.inputTokens, row.outputTokens, row.cacheReadTokens, row.cacheCreationTokens, row.reasoningTokens,
+      row.toolCategory || null, row.fileExtension || null, row.repoPathHash || null, row.privacyLevel || 'safe'
+    )) return true;
+  }
+  return false;
+}
+
 function detectShape(payload) {
   if (Array.isArray(payload?.daily)) return 'daily';
   if (payload?.projects && typeof payload.projects === 'object' && !Array.isArray(payload.projects)) return 'project-daily';
