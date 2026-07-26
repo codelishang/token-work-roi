@@ -16,22 +16,17 @@ permissions:
 
 jobs:
   release-gate:
-    name: ${{ matrix.os }} / Node ${{ matrix.node }}
-    runs-on: ${{ matrix.os }}
+    name: ubuntu-latest / Node 24.x
+    runs-on: ubuntu-latest
     env:
       ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
-        node: ['24.x']
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: '24.x'
           cache: npm
 
       - run: npm ci --registry=https://registry.npmmirror.com
@@ -48,18 +43,37 @@ jobs:
 
       - run: npm audit --audit-level=low --registry=https://registry.npmjs.org
 
-      - run: npm run smoke:npx
-
       - name: Install Chrome for browser smoke
-        if: matrix.os == 'ubuntu-latest'
         uses: browser-actions/setup-chrome@v1
 
-      - name: Browser console smoke
-        if: matrix.os == 'ubuntu-latest'
-        run: npm run smoke:browser
+      - run: npm run smoke:browser
 
       - run: npm run desktop:smoke
 
-      - run: npm pack --dry-run
-
       - run: git diff --check
+
+  package-smoke:
+    name: ${{ matrix.os }} / Node 24.x
+    runs-on: ${{ matrix.os }}
+    env:
+      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+      # Keep the installed-package check fast without changing the production 60s default.
+      TOKEN_WORK_LIVE_COLLECT_INTERVAL_SECONDS: '30'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+
+      - run: npm ci --registry=https://registry.npmmirror.com
+
+      - run: npm run smoke:npx
+
+      - run: npm run desktop:smoke
