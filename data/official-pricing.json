@@ -327,6 +327,26 @@
     },
     {
       "provider": "anthropic",
+      "model": "claude-mythos-5",
+      "aliases": [
+        "claude-mythos-5"
+      ],
+      "priced": true,
+      "unavailableReason": null,
+      "ratesPerMTok": {
+        "input": 10,
+        "cachedInput": 10,
+        "cacheWrite5m": 10,
+        "cacheWrite1h": 10,
+        "output": 50
+      },
+      "officialRatesPerMTok": null,
+      "sourceProvider": "anthropic-mythos",
+      "pricingFetchStatus": "fallback-table",
+      "note": "Claude Mythos 5 is limited to vetted trusted-access partners. Official public pricing starts at USD 10/50 per MTok; separate prompt-cache rates are not published, so cached tokens use the input rate."
+    },
+    {
+      "provider": "anthropic",
       "model": "claude-fable-5",
       "aliases": [
         "claude-fable-5"

@@ -72,3 +72,18 @@ test('advisor action measurements can scope low-value waste work', () => {
   assert.equal(rows[0].beforeSessions, 1);
   assert.equal(rows[0].afterSessions, 1);
 });
+
+test('advisor action measurements scope Mythos actions to heavy models', () => {
+  const [row] = buildAdvisorActionMeasurements({
+    period: { start: '2026-06-01', end: '2026-06-30' },
+    actions: [{ title: 'Mythos 模型成本复盘', createdAt: '2026-06-15' }],
+    sessions: [
+      { lastActivity: '2026-06-10', model: 'claude-mythos-5', totalTokens: 100 },
+      { lastActivity: '2026-06-20', model: 'claude-sonnet-5', totalTokens: 50 }
+    ]
+  });
+
+  assert.equal(row.scopeLabel, '重模型 session');
+  assert.equal(row.beforeTokens, 100);
+  assert.equal(row.afterTokens, 0);
+});

@@ -340,6 +340,7 @@ function discoverAssetUrls(source, body) {
 function parseSourceModels(source, body, exchangeRate) {
   if (isOpenAiGpt56Source(source)) return parseOpenAiGpt56Models(body);
   if (source.provider === 'xai') return parseXaiModels(body);
+  if (source.provider === 'anthropic-mythos') return parseAnthropicMythosModels(body);
   if (source.provider === 'anthropic') return parseAnthropicModels(body);
   if (source.provider === 'deepseek') return parseDeepSeekModels(body);
   if (source.provider === 'xiaomi') return parseColumnPricingTable(body, {
@@ -425,6 +426,22 @@ function parseAnthropicModels(body) {
     rateModel('anthropic', 'claude-sonnet-4-6', sonnet, 'anthropic'),
     rateModel('anthropic', 'claude-haiku-4-5', haiku, 'anthropic')
   ].filter(Boolean);
+}
+
+function parseAnthropicMythosModels(body) {
+  const text = tableText(body).replace(/\|/g, ' ').replace(/\s+/g, ' ');
+  const match = text.match(
+    /Pricing for Claude Mythos 5 starts at \s*\$\s*([0-9.]+) per million input tokens and \s*\$\s*([0-9.]+) per million output tokens/i
+  );
+  if (!match) return [];
+  const input = Number(match[1]);
+  return [rateModel('anthropic', 'claude-mythos-5', {
+    input,
+    cachedInput: input,
+    cacheWrite5m: input,
+    cacheWrite1h: input,
+    output: Number(match[2])
+  }, 'anthropic-mythos', 'official-page', null, 'Claude Mythos 5 is limited to vetted trusted-access partners; separate prompt-cache rates are not published.')];
 }
 
 function parseXaiModels(body) {

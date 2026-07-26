@@ -137,7 +137,7 @@ npm run desktop
 npm run pricing:update
 ```
 
-仓库工作流每周一 03:15（Asia/Shanghai）尝试更新价格和汇率。
+仓库工作流每周一 01:15（Asia/Shanghai）尝试更新价格和汇率。
 
 ## 隐私
 

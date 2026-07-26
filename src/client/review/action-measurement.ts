@@ -84,7 +84,7 @@ function scopeMatcher(action: UsageRow = {}) {
     return matcher;
   }
 
-  if (/重模型|heavy|fable|opus|gpt-5\.6-sol|gpt-5\.5/u.test(text)) {
+  if (/重模型|heavy|mythos|fable|opus|gpt-5\.6-sol|gpt-5\.5/u.test(text)) {
     const matcher = session => modelTierLabel(session) === 'heavy';
     matcher.scopeLabel = '重模型 session';
     return matcher;
@@ -109,7 +109,7 @@ function scopeMatcher(action: UsageRow = {}) {
 
 function modelTierLabel(session: UsageRow = {}) {
   const model = String(session.model || session.pricingModel || '').toLowerCase();
-  if (/fable|opus|gpt-5\.6-sol|gpt-5\.5|gemini-2\.5-pro-long-context/.test(model)) return 'heavy';
+  if (/mythos|fable|opus|gpt-5\.6-sol|gpt-5\.5|gemini-2\.5-pro-long-context/.test(model)) return 'heavy';
   if (/gpt-5\.6-terra|grok-4[.-]5|sonnet|codex|pro|kimi-k2[.-][67]/.test(model)) return 'mid';
   if (/gpt-5\.6-luna|haiku|flash|deepseek|mimo|kimi-k2[.-]5/.test(model)) return 'light';
   return 'unknown';
