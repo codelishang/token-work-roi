@@ -211,6 +211,22 @@ test('calculates Grok 4.5 and Claude Fable 5 official prices', () => {
   assert.ok(fableHour.ratesPerMTok.cacheWrite >= fable.ratesPerMTok.cacheWrite);
 });
 
+test('calculates Claude Mythos 5 official price', () => {
+  const cost = calculateOfficialCost('anthropic/claude-mythos-5', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    output: 1_000_000
+  });
+
+  assert.equal(cost.priced, true);
+  assert.equal(cost.resolvedModel, 'claude-mythos-5');
+  assert.equal(cost.provider, 'anthropic');
+  assert.ok(cost.totalUSD > 0);
+  assert.equal(cost.totalUSD,
+    cost.ratesPerMTok.input + cost.ratesPerMTok.cachedInput + cost.ratesPerMTok.output);
+  assert.equal(cost.source.url, 'https://www.anthropic.com/claude/mythos');
+});
+
 test('supports official DeepSeek and Xiaomi cache-hit pricing', () => {
   const deepseek = calculateOfficialCost('deepseek-v4-pro', {
     input: 1_000_000,

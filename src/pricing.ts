@@ -7,7 +7,7 @@
  */
 
 const MTOK = 1_000_000;
-const VERIFIED_AT = '2026-07-21';
+const VERIFIED_AT = '2026-07-26';
 const DEFAULT_ANTHROPIC_CACHE_WRITE_TTL = '5m';
 
 type InputRecord = Record<string, unknown>;
@@ -156,6 +156,12 @@ export const OFFICIAL_PRICING_SOURCES = [
     note: 'First-party Claude API global standard pricing; cache write defaults to 5-minute prompt caching.'
   },
   {
+    provider: 'anthropic-mythos',
+    label: 'Claude Mythos 5 pricing',
+    url: 'https://www.anthropic.com/claude/mythos',
+    note: 'First-party Mythos 5 starting price; separate prompt-cache rates are not published.'
+  },
+  {
     provider: 'deepseek',
     label: 'DeepSeek Models & Pricing',
     url: 'https://api-docs.deepseek.com/quick_start/pricing',
@@ -293,6 +299,18 @@ export const OFFICIAL_PRICE_TABLE = [
     output: 6,
     source: "xai",
     note: "xAI Grok 4.5 public model page lists input and output rates; no separate cached-input rate is applied by default."
+  }),
+  officialRate({
+    provider: "anthropic",
+    model: "claude-mythos-5",
+    aliases: ["claude-mythos-5"],
+    input: 10,
+    cachedInput: 10,
+    cacheWrite5m: 10,
+    cacheWrite1h: 10,
+    output: 50,
+    source: "anthropic-mythos",
+    note: "Claude Mythos 5 is limited to vetted trusted-access partners. Official public pricing starts at USD 10/50 per MTok; separate prompt-cache rates are not published, so cached tokens use the input rate."
   }),
   officialRate({
     provider: "anthropic",

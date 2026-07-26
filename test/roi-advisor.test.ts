@@ -9,6 +9,7 @@ import {
 test('modelTier classifies heavy, mid, light and unpriced models', () => {
   assert.equal(modelTier('gpt-5.5', 'priced'), 'heavy');
   assert.equal(modelTier('claude-fable-5', 'priced'), 'heavy');
+  assert.equal(modelTier('claude-mythos-5', 'priced'), 'heavy');
   assert.equal(modelTier('claude-opus-4-7', 'priced'), 'heavy');
   assert.equal(modelTier('grok-4.5', 'priced'), 'mid');
   assert.equal(modelTier('gpt-5.3-codex', 'priced'), 'mid');
