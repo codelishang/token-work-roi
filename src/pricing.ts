@@ -9,6 +9,7 @@
 const MTOK = 1_000_000;
 const VERIFIED_AT = '2026-07-26';
 const DEFAULT_ANTHROPIC_CACHE_WRITE_TTL = '5m';
+const PRICING_RATE_FIELDS = ['input', 'cachedInput', 'cacheWrite5m', 'cacheWrite1h', 'output'] as const;
 
 type InputRecord = Record<string, unknown>;
 
@@ -1021,6 +1022,77 @@ export function serializeOfficialPricingModels(models: OfficialRate[] = OFFICIAL
     pricingFetchStatus: row.pricingFetchStatus || null,
     note: row.note || null
   }));
+}
+
+export function validateOfficialPricingRefresh(models: CachedRateInput[], baselineModels: OfficialRate[] = OFFICIAL_PRICE_TABLE) {
+  const baselineByKey = new Map<string, OfficialRate>();
+  for (const model of baselineModels) {
+    const key = pricingKey(model);
+    if (baselineByKey.has(key)) throw new Error(`Duplicate baseline pricing model: ${key}`);
+    baselineByKey.set(key, model);
+  }
+
+  if (models.length !== baselineByKey.size) {
+    throw new Error(`Pricing refresh model count changed: expected ${baselineByKey.size}, received ${models.length}`);
+  }
+
+  const received = new Set<string>();
+  for (const model of models) {
+    const key = pricingKey(model);
+    const baseline = baselineByKey.get(key);
+    if (!baseline) throw new Error(`Pricing refresh contains an unknown model: ${key}`);
+    if (received.has(key)) throw new Error(`Pricing refresh contains a duplicate model: ${key}`);
+    received.add(key);
+
+    if (typeof model.priced !== 'boolean' || (baseline.priced && !model.priced)) {
+      throw new Error(`Pricing refresh removed official pricing for ${key}`);
+    }
+
+    const aliases = model.aliases || [];
+    const normalizedAliases = aliases.map(normalizeModelId).filter(Boolean);
+    if (!normalizedAliases.length || normalizedAliases.length !== new Set(normalizedAliases).size) {
+      throw new Error(`Pricing refresh has invalid aliases for ${key}`);
+    }
+
+    if (!model.priced) continue;
+    validateUsdRates(model.ratesPerMTok, key);
+    validateOfficialCurrencyRates(model, key);
+  }
+
+  for (const key of baselineByKey.keys()) {
+    if (!received.has(key)) throw new Error(`Pricing refresh is missing model: ${key}`);
+  }
+}
+
+function validateUsdRates(rates: Partial<PricingRates> | null | undefined, key: string) {
+  if (!rates) throw new Error(`Pricing refresh has no rates for ${key}`);
+  for (const field of PRICING_RATE_FIELDS) {
+    const rate = Number(rates[field]);
+    if (!Number.isFinite(rate) || rate < 0) {
+      throw new Error(`Pricing refresh has an invalid ${field} rate for ${key}`);
+    }
+  }
+}
+
+function validateOfficialCurrencyRates(model: CachedRateInput, key: string) {
+  const official = model.officialRatesPerMTok;
+  if (!official || String(official.currency).toUpperCase() !== 'CNY') return;
+
+  const exchangeRate = Number(official.exchangeRate);
+  if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+    throw new Error(`Pricing refresh has an invalid CNY exchange rate for ${key}`);
+  }
+
+  const usdRates = model.ratesPerMTok || {};
+  for (const field of PRICING_RATE_FIELDS) {
+    const cnyRate = Number(official.ratesPerMTok[field]);
+    const usdRate = Number(usdRates[field]);
+    const expected = cnyRate / exchangeRate;
+    const tolerance = Math.max(1e-12, Math.abs(expected) * 1e-12);
+    if (!Number.isFinite(cnyRate) || cnyRate < 0 || !Number.isFinite(usdRate) || Math.abs(usdRate - expected) > tolerance) {
+      throw new Error(`Pricing refresh has inconsistent CNY conversion for ${key} (${field})`);
+    }
+  }
 }
 
 function pricingTableFrom(pricingData: PricingData | null = null) {

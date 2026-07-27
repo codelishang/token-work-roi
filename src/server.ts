@@ -97,7 +97,8 @@ const staticDir = existsSync(resolve(process.cwd(), 'dist'))
   ? resolve(process.cwd(), 'dist')
   : resolve(process.cwd(), 'public');
 const dbPath = process.env.DB_PATH || defaultDbPath;
-const pricingCachePath = resolve(process.cwd(), 'data', 'official-pricing.json');
+const pricingCachePath = process.env.TOKEN_WORK_PRICING_CACHE
+  || resolve(process.cwd(), 'data', 'official-pricing.json');
 const packageVersion = readPackageVersion();
 const SPA_ROUTES = new Set(['/', '/review', '/live', '/trust']);
 const MAX_INGEST_ROWS = 50_000;
