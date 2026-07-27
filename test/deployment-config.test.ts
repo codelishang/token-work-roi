@@ -87,6 +87,7 @@ test('docker compose remote bind is explicit and keeps collector home read-only'
 
 test('scheduled pricing refresh reuses the main pricing files on test', () => {
   const workflow = readFileSync(resolve(root, '.github', 'workflows', 'update-pricing.yml'), 'utf8');
+  assert.match(workflow, /- cron: '15 17 \* \* 1'/);
   assert.match(workflow, /update-pricing-test:[\s\S]+needs: update-pricing-main/);
   assert.match(workflow, /git fetch origin main --depth=1/);
   assert.match(workflow, /git checkout FETCH_HEAD -- src\/pricing\.ts data\/official-pricing\.json/);

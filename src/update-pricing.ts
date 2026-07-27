@@ -3,7 +3,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import {
   OFFICIAL_PRICING_SOURCES,
   OFFICIAL_PRICE_TABLE,
-  serializeOfficialPricingModels
+  serializeOfficialPricingModels,
+  validateOfficialPricingRefresh
 } from './pricing.ts';
 import { getUsdCnyExchangeRate } from './exchange-rate.ts';
 
@@ -21,6 +22,15 @@ interface ParsedRates {
   cachedInput?: number;
   cacheWrite5m?: number;
   cacheWrite1h?: number;
+}
+
+interface PricingAsset {
+  url: string;
+  fetchStatus: string;
+  fetchError?: string;
+  httpStatus?: number;
+  contentLength?: number;
+  body?: string;
 }
 const STABLE_ALIASES = new Map([
   ['openai::gpt-5-6-sol', ['gpt-5.6-sol', 'gpt-5-6-sol']],
@@ -46,12 +56,14 @@ const exchangeRate = await getUsdCnyExchangeRate();
 const sources = await Promise.all(OFFICIAL_PRICING_SOURCES.map(source => fetchSourceStatus(source, exchangeRate)));
 const ok = sources.filter(source => source.fetchStatus === 'ok').length;
 const exchangeOk = !exchangeRate.isFallback;
-const fetchedRates = new Map(
-  sources
-    .flatMap(source => source.models || [])
-    .map(model => [pricingKey(model), model])
-);
-  const pricing = {
+const sourceStatuses = new Map(sources.map(source => [providerKey(source.provider), source.fetchStatus]));
+const fetchedRates = new Map();
+for (const model of sources.flatMap(source => source.models || [])) {
+  const key = pricingKey(model);
+  if (fetchedRates.has(key)) throw new Error(`Duplicate fetched pricing model: ${key}`);
+  fetchedRates.set(key, model);
+}
+const pricing = {
   mode: 'official-cache',
   verifiedAt: fetchedAt.slice(0, 10),
   fetchedAt,
@@ -76,7 +88,7 @@ const fetchedRates = new Map(
           },
           pricingFetchStatus: fetched.pricingFetchStatus || 'official-page'
         }
-      : fallbackPricingModel(model, previous, exchangeRate);
+      : fallbackPricingModel(model, previous, exchangeRate, sourceStatuses.get(providerKey(model.sourceProvider || model.provider)));
   })
 };
 
@@ -90,11 +102,14 @@ if (ok === 0 || !exchangeOk) {
   }
   process.exitCode = 1;
 } else {
+  validateOfficialPricingRefresh(pricing.models);
   await mkdir(resolve(process.cwd(), 'data'), { recursive: true });
   await writeFile(pricingCachePath, `${JSON.stringify(pricing, null, 2)}\n`, 'utf8');
   await updateBuiltinPricingTable(pricingSourcePath, pricing);
 
-  const parsed = pricing.models.filter(model => model.pricingFetchStatus?.startsWith('official-page')).length;
+  const parsed = pricing.models.filter(model => (
+    model.pricingFetchStatus?.startsWith('official-page') || model.pricingFetchStatus === 'official-api'
+  )).length;
   console.log(`[pricing] wrote ${pricingCachePath}`);
   console.log(`[pricing] updated built-in table ${pricingSourcePath}`);
   console.log(`[pricing] official sources reachable=${ok}/${sources.length} parsedModels=${parsed}/${pricing.models.length}`);
@@ -136,18 +151,19 @@ async function readPreviousPricingModels(filePath) {
   }
 }
 
-function fallbackPricingModel(model, previous, exchangeRate) {
+function fallbackPricingModel(model, previous, exchangeRate, sourceStatus = null) {
   const normalizedModel = {
     ...model,
     aliases: uniqueModelAliases(model.aliases || [model.model])
   };
+  const fallbackStatus = sourceStatus === 'parse-error' ? 'fallback-parse-error' : 'fallback-table';
   const officialRates = model.officialRatesPerMTok || previous?.officialRatesPerMTok || null;
   if (officialRates?.currency !== 'CNY' || !officialRates.ratesPerMTok) {
-    return { ...normalizedModel, pricingFetchStatus: 'fallback-table' };
+    return { ...normalizedModel, pricingFetchStatus: fallbackStatus };
   }
   const ratesPerMTok = cnyToUsdRates(officialRates.ratesPerMTok, exchangeRate);
   if (!ratesPerMTok || !isFiniteRate(ratesPerMTok.input) || !isFiniteRate(ratesPerMTok.output)) {
-    return { ...normalizedModel, pricingFetchStatus: 'fallback-table' };
+    return { ...normalizedModel, pricingFetchStatus: fallbackStatus };
   }
 
   return {
@@ -157,7 +173,7 @@ function fallbackPricingModel(model, previous, exchangeRate) {
       ...officialRates,
       exchangeRate: exchangeRate.rate
     },
-    pricingFetchStatus: 'cached-official-cny',
+    pricingFetchStatus: sourceStatus === 'parse-error' ? 'cached-official-cny-parse-error' : 'cached-official-cny',
     note: model.note || previous?.note
   };
 }
@@ -224,12 +240,15 @@ async function fetchSourceStatus(source, exchangeRate) {
     });
     const text = await readResponseText(response, MAX_PRICING_PAGE_BYTES);
     const assets = response.ok ? await fetchSourceAssets(source, text) : [];
+    if (response.ok && isDoubaoSource(source)) assets.push(await fetchDoubaoPricingTables());
     const parseBody = [text, ...assets.map(asset => asset.body || '')].join('\n');
     const models = response.ok ? parseSourceModels(source, parseBody, exchangeRate) : [];
+    const parseError = response.ok && sourceHasPricingParser(source) && models.length === 0;
     return {
       ...source,
       fetchedAt,
-      fetchStatus: response.ok ? 'ok' : 'http-error',
+      fetchStatus: response.ok ? (parseError ? 'parse-error' : 'ok') : 'http-error',
+      fetchError: parseError ? 'no supported pricing rows found' : null,
       httpStatus: response.status,
       contentLength: Buffer.byteLength(text, 'utf8'),
       assets: assets.map(({ body, ...asset }) => asset),
@@ -247,7 +266,7 @@ async function fetchSourceStatus(source, exchangeRate) {
   }
 }
 
-async function fetchSourceAssets(source, body) {
+async function fetchSourceAssets(source, body): Promise<PricingAsset[]> {
   const urls = [...new Set((source.assetUrls?.length ? source.assetUrls : discoverAssetUrls(source, body))
     .map(url => sameOriginHttpsAssetUrl(url, source.url))
     .filter(Boolean))]
@@ -270,14 +289,21 @@ function sameOriginHttpsAssetUrl(value, sourceUrl) {
   try {
     const asset = new URL(value);
     const source = new URL(sourceUrl);
-    if (asset.protocol !== 'https:' || asset.origin !== source.origin) return null;
+    if (asset.protocol !== 'https:') return null;
+    if (asset.origin !== source.origin && !isTrustedPricingAssetUrl(asset, source)) return null;
     return asset.toString();
   } catch {
     return null;
   }
 }
 
-async function fetchAsset(url) {
+function isTrustedPricingAssetUrl(asset, source) {
+  return source.hostname === 'open.bigmodel.cn'
+    && asset.hostname === 'static.bigmodel.cn'
+    && /^\/wd-paas-front\/js\/app\.[a-z0-9]+\.js$/i.test(asset.pathname);
+}
+
+async function fetchAsset(url): Promise<PricingAsset> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15_000);
   try {
@@ -301,6 +327,69 @@ async function fetchAsset(url) {
       url,
       fetchStatus: 'error',
       fetchError: error?.name === 'AbortError' ? 'timeout' : error?.message || String(error)
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchDoubaoPricingTables(): Promise<PricingAsset> {
+  const navigation = await fetchDoubaoPricingApi('GetNavigationV2', { Product: 'ark_subscription' });
+  if (!navigation.body) return navigation;
+
+  let templateCode = '';
+  try {
+    const navigationTree = JSON.parse(navigation.body)?.Result?.Navigation;
+    const entries = walkPricingValues(typeof navigationTree === 'string' ? JSON.parse(navigationTree) : navigationTree);
+    const product = entries.find(value => value?.Product === 'ark_subscription');
+    templateCode = product?.TemplateInfoList?.find(item => item?.Type === 1)?.TemplateCode || '';
+  } catch {
+    return { ...navigation, fetchStatus: 'error', fetchError: 'invalid pricing navigation response', body: '' };
+  }
+  if (!templateCode) {
+    return { ...navigation, fetchStatus: 'error', fetchError: 'Ark pricing template not found', body: '' };
+  }
+
+  return fetchDoubaoPricingApi('GetTable', { TemplateCode: templateCode });
+}
+
+function walkPricingValues(value) {
+  if (Array.isArray(value)) return value.flatMap(walkPricingValues);
+  if (!value || typeof value !== 'object') return [];
+  return [value, ...Object.values(value).flatMap(walkPricingValues)];
+}
+
+async function fetchDoubaoPricingApi(action, payload): Promise<PricingAsset> {
+  const url = new URL('https://www.volcengine.com/anonymous-api/trade/price');
+  url.searchParams.set('Action', action);
+  url.searchParams.set('Version', '2020-01-01');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'user-agent': 'token-work-roi-pricing-cache/1.0'
+      },
+      body: JSON.stringify(payload)
+    });
+    const body = await readResponseText(response, MAX_PRICING_ASSET_BYTES);
+    return {
+      url: url.toString(),
+      fetchStatus: response.ok ? 'ok' : 'http-error',
+      httpStatus: response.status,
+      contentLength: Buffer.byteLength(body, 'utf8'),
+      body: response.ok ? body : ''
+    };
+  } catch (error) {
+    return {
+      url: url.toString(),
+      fetchStatus: 'error',
+      fetchError: error?.name === 'AbortError' ? 'timeout' : error?.message || String(error),
+      body: ''
     };
   } finally {
     clearTimeout(timer);
@@ -355,6 +444,20 @@ function parseSourceModels(source, body, exchangeRate) {
   if (source.provider === 'Kimi') return parseKimiModels(body, exchangeRate);
   if (isQwenSource(source)) return parseQwenModels(body, exchangeRate);
   return [];
+}
+
+function sourceHasPricingParser(source) {
+  return isOpenAiGpt56Source(source)
+    || source.provider === 'xai'
+    || source.provider === 'anthropic-mythos'
+    || source.provider === 'anthropic'
+    || source.provider === 'deepseek'
+    || source.provider === 'xiaomi'
+    || isZhipuSource(source)
+    || isDoubaoSource(source)
+    || source.provider === 'Gemini'
+    || source.provider === 'Kimi'
+    || isQwenSource(source);
 }
 
 function parseOpenAiGpt56Models(body) {
@@ -523,31 +626,70 @@ function parseZaiModels(body, exchangeRate) {
 function parseVolcengineModels(body, exchangeRate) {
   const normalized = body.replace(/\\u002F/g, '/').replace(/\\"/g, '"');
   const pairs = [
-    ['doubao-pro-32k', 'Doubao-pro-32k'],
-    ['doubao-lite-32k', 'Doubao-lite-32k'],
-    ['doubao-pro-256k', 'Doubao-pro-256k']
+    ['doubao-seed-evolving', 'Doubao_Seed_Evolving'],
+    ['doubao-seed-2.1-pro', 'Doubao_Seed_2.1_pro'],
+    ['doubao-seed-2.1-turbo', 'Doubao_Seed_2.1_turbo']
   ];
   return pairs.map(([model, label]) => {
-    const rates = volcengineInferenceRates(normalized, label);
+    const apiRates = volcengineApiInferenceRates(normalized, label);
+    const rates = apiRates || volcengineInferenceRates(normalized, label);
     if (!rates) return null;
+    const cacheWriteRate = apiRates ? 0 : rates.input;
     return rateModel('DoubaoSeed', model, cnyToUsdRates({
       ...rates,
       cachedInput: rates.cachedInput ?? rates.input,
-      cacheWrite5m: rates.input,
-      cacheWrite1h: rates.input
-    }, exchangeRate), 'DoubaoSeed', 'official-page-asset', {
+      cacheWrite5m: cacheWriteRate,
+      cacheWrite1h: cacheWriteRate
+    }, exchangeRate), 'DoubaoSeed', apiRates ? 'official-api' : 'official-page-asset', {
       currency: 'CNY',
       unit: '1M tokens',
       ratesPerMTok: {
         ...rates,
         cachedInput: rates.cachedInput ?? rates.input,
-        cacheWrite5m: rates.input,
-        cacheWrite1h: rates.input
+        cacheWrite5m: cacheWriteRate,
+        cacheWrite1h: cacheWriteRate
       },
       exchangeRate: exchangeRate.rate,
       sourceUnit: '元 / 1M tokens'
     });
   }).filter(Boolean);
+}
+
+function volcengineApiInferenceRates(body, configurationCode): ParsedRates | null {
+  try {
+    const rows = parseVolcenginePricingResponse(body)?.Result?.TableList
+      ?.flatMap(table => table?.Rows || [])
+      .filter(row => String(row?.ConfigurationCode || '').toLowerCase() === configurationCode.toLowerCase()) || [];
+    const input = volcengineApiPrice(rows, 'infer_input_');
+    const output = volcengineApiPrice(rows, 'infer_output_');
+    const cachedInput = volcengineApiPrice(rows, 'infer_kvcache_hit_');
+    if (input == null || output == null) return null;
+    return {
+      input: input * 1000,
+      output: output * 1000,
+      ...(cachedInput == null ? {} : { cachedInput: cachedInput * 1000 })
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseVolcenginePricingResponse(body) {
+  try {
+    return JSON.parse(body);
+  } catch {
+    const start = body.lastIndexOf('\n{"ResponseMetadata"');
+    return start < 0 ? null : JSON.parse(body.slice(start + 1));
+  }
+}
+
+function volcengineApiPrice(rows, chargeKind) {
+  const row = rows.find(item => {
+    const code = String(item?.ChargeItemCode || '').toLowerCase();
+    return code.includes(chargeKind) && !code.includes('(batch)');
+  });
+  const amount = Number(row?.PriceInfoList?.[0]?.OriginalAmount ?? row?.PriceInfoList?.[0]?.Price);
+  return Number.isFinite(amount) ? amount : null;
 }
 
 function parseGeminiModels(body) {
@@ -665,12 +807,10 @@ function parseQwenModels(body, exchangeRate) {
 }
 
 function qwenRates(body, label): ParsedRates | null {
-  const start = body.indexOf(label);
+  const start = body.indexOf(`>${label}<`);
   if (start < 0) return null;
   const segment = body.slice(start, start + 5000);
-  const region = segment.indexOf('中国内地');
-  if (region < 0) return null;
-  const text = tableText(segment.slice(region));
+  const text = tableText(segment);
   const prices = Array.from(text.matchAll(/([0-9]+(?:\.[0-9]+)?)\|+\s*元/g), match => Number(match[1]));
   if (prices.length < 2) return null;
   return {

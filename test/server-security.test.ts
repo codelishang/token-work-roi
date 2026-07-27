@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { request, type IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -221,12 +221,31 @@ test('ingest rejects non-local browser origins and non-json bodies', async () =>
 
 async function startServer(extraEnv: NodeJS.ProcessEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-security-'));
+  const pricingCachePath = join(dir, 'official-pricing.json');
+  writeFileSync(pricingCachePath, JSON.stringify({
+    mode: 'official-cache',
+    models: [{
+      provider: 'openai',
+      model: 'gpt-5.5',
+      aliases: ['gpt-5.5'],
+      priced: true,
+      ratesPerMTok: {
+        input: 10,
+        cachedInput: 1,
+        cacheWrite5m: 10,
+        cacheWrite1h: 10,
+        output: 20
+      },
+      sourceProvider: 'openai'
+    }]
+  }), 'utf8');
   const server = startTestServer({
     dbPath: join(dir, 'usage.sqlite'),
     env: {
       HOST: extraEnv.HOST || '127.0.0.1',
       TOKEN_WORK_ALLOW_REMOTE: '',
       INGEST_TOKEN: '',
+      TOKEN_WORK_PRICING_CACHE: pricingCachePath,
       ...extraEnv
     }
   });

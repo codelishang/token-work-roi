@@ -12,8 +12,8 @@ on:
           - main
           - test
   schedule:
-    # GitHub cron uses UTC; this is Monday 01:15 in Asia/Shanghai.
-    - cron: '15 17 * * 0'
+    # GitHub cron uses UTC; this is Tuesday 01:15 in Asia/Shanghai.
+    - cron: '15 17 * * 1'
 
 permissions:
   contents: write
@@ -34,11 +34,10 @@ jobs:
           cache: npm
 
       - run: npm ci --registry=https://registry.npmmirror.com
-      - run: npm run typecheck:tools
-
       - name: Refresh official pricing
         run: npm run pricing:update
 
+      - run: npm run typecheck:tools
       - run: npm test
 
       - run: npm run build
@@ -78,12 +77,11 @@ jobs:
         run: git checkout FETCH_HEAD -- src/pricing.ts data/official-pricing.json
 
       - run: npm ci --registry=https://registry.npmmirror.com
-      - run: npm run typecheck:tools
-
       - name: Refresh official pricing
         if: github.event_name == 'workflow_dispatch'
         run: npm run pricing:update
 
+      - run: npm run typecheck:tools
       - run: npm test
 
       - run: npm run build
