@@ -327,6 +327,18 @@ export const OFFICIAL_PRICE_TABLE = [
   }),
   officialRate({
     provider: "anthropic",
+    model: "claude-opus-5",
+    aliases: ["claude-opus-5"],
+    input: 5,
+    cachedInput: 0.5,
+    cacheWrite5m: 6.25,
+    cacheWrite1h: 10,
+    output: 25,
+    source: "anthropic",
+    note: "First-party Claude API global standard pricing; cache write defaults to 5-minute prompt caching."
+  }),
+  officialRate({
+    provider: "anthropic",
     model: "claude-opus-4-8",
     aliases: ["claude-opus-4-8"],
     input: 5,

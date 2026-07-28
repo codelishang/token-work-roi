@@ -518,12 +518,14 @@ function parseAnthropicModels(body) {
   }).filter(Boolean);
 
   const opus = rates.find(rate => rate.label.includes('opus 4.8'));
+  const opus5 = rates.find(rate => /opus\s+5(?![.-]\d)/.test(rate.label));
   const fable = rates.find(rate => rate.label.includes('fable 5'));
   const sonnet5 = rates.find(rate => rate.label.includes('sonnet 5'));
   const sonnet = rates.find(rate => rate.label.includes('sonnet 4.6'));
   const haiku = rates.find(rate => rate.label.includes('haiku 4.5'));
   return [
     rateModel('anthropic', 'claude-fable-5', fable, 'anthropic', 'official-page', null, 'First-party Claude Fable 5 pricing; cache write defaults to 5-minute prompt caching.'),
+    rateModel('anthropic', 'claude-opus-5', opus5, 'anthropic'),
     ...['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6'].map(model => rateModel('anthropic', model, opus, 'anthropic')),
     rateModel('anthropic', 'claude-sonnet-5', sonnet5, 'anthropic', 'official-page', null, 'Claude Sonnet 5 introductory pricing through August 31, 2026; standard pricing is USD 3/15 per MTok afterward.'),
     rateModel('anthropic', 'claude-sonnet-4-6', sonnet, 'anthropic'),
