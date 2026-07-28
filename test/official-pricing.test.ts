@@ -235,7 +235,7 @@ test('calculates Qwen API USD price from official RMB rates', () => {
 });
 
 test('calculates Claude prompt-cache costs', () => {
-  for (const model of ['claude-opus-4-7', 'anthropic/claude-sonnet-5']) {
+  for (const model of ['anthropic/claude-opus-5-20260728', 'claude-opus-4-7', 'anthropic/claude-sonnet-5']) {
     const cost = calculateOfficialCost(model, {
       input: 1_000_000,
       cacheWrite: 1_000_000,
@@ -245,6 +245,14 @@ test('calculates Claude prompt-cache costs', () => {
     assert.equal(cost.priced, true, model);
     assert.equal(cost.provider, 'anthropic', model);
   }
+  const opus5 = calculateOfficialCost('anthropic/claude-opus-5-20260728', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    cacheWrite: 1_000_000,
+    output: 1_000_000
+  });
+  assert.equal(opus5.resolvedModel, 'claude-opus-5');
+  assert.equal(opus5.totalUSD, 36.75);
 });
 
 test('recognizes refreshed Grok 4.5 and Claude Fable 5 models', () => {
