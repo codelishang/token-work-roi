@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -132,6 +132,117 @@ test('collect does not recount token history copied into a forked Codex session'
   }
 });
 
+test('collect reclassifies legacy Codex records when session metadata identifies the desktop client', async () => {
+  const fixture = createCollectorFixture();
+  const sessionPath = join(fixture.codexHome, 'sessions', '2026', '06', '17', 'codex-session.jsonl');
+  try {
+    const first = await runNode([
+      'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], fixture.env);
+    assert.equal(first.code, 0, first.stderr);
+
+    const lines = readFileSync(sessionPath, 'utf8').trim().split('\n');
+    const metadata = JSON.parse(lines[0]);
+    metadata.payload.originator = 'Codex Desktop';
+    lines[0] = JSON.stringify(metadata);
+    writeFileSync(sessionPath, `${lines.join('\n')}\n`, 'utf8');
+
+    const second = await runNode([
+      'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], fixture.env);
+    assert.equal(second.code, 0, second.stderr);
+
+    const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.deepEqual(db.prepare(`
+        SELECT source, COUNT(*) AS count
+        FROM token_events
+        WHERE session_id LIKE 'local:codex:%'
+        GROUP BY source
+      `).all().map(row => ({ ...row })), [{ source: 'Codex Desktop', count: 2 }]);
+      assert.deepEqual(db.prepare(`
+        SELECT source, COALESCE(SUM(total_tokens), 0) AS totalTokens
+        FROM daily_usage
+        WHERE source LIKE 'Codex%'
+        GROUP BY source
+      `).all().map(row => ({ ...row })), [{ source: 'Codex Desktop', totalTokens: 155 }]);
+    } finally {
+      db.close();
+    }
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('collect reclassifies zero-token Codex sessions from session metadata', async () => {
+  const fixture = createCollectorFixture();
+  const emptySessionPath = join(fixture.codexHome, 'sessions', '2026', '06', '17', 'desktop-empty.jsonl');
+  try {
+    writeFileSync(emptySessionPath, JSON.stringify({
+      type: 'session_meta',
+      payload: { id: 'desktop-empty', originator: 'Codex Desktop' }
+    }) + '\n', 'utf8');
+
+    const first = await runNode([
+      'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], fixture.env);
+    assert.equal(first.code, 0, first.stderr);
+
+    const db = new DatabaseSync(fixture.dbPath);
+    try {
+      db.prepare(`
+        INSERT INTO session_usage (device, source, session_id, model, total_tokens)
+        VALUES (?, ?, ?, ?, 0)
+      `).run(hostname(), 'Codex (unidentified client)', 'local:codex:desktop-empty:gpt-5.4-mini', 'gpt-5.4-mini');
+    } finally {
+      db.close();
+    }
+
+    const second = await runNode([
+      'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], fixture.env);
+    assert.equal(second.code, 0, second.stderr);
+
+    const repaired = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.equal(repaired.prepare(`
+        SELECT COUNT(*) AS count
+        FROM session_usage
+        WHERE device = ? AND source = 'Codex Desktop' AND session_id = 'local:codex:desktop-empty:gpt-5.4-mini'
+      `).get(hostname()).count, 1);
+      assert.equal(repaired.prepare(`
+        SELECT COUNT(*) AS count
+        FROM session_usage
+        WHERE device = ? AND source = 'Codex (unidentified client)' AND session_id = 'local:codex:desktop-empty:gpt-5.4-mini'
+      `).get(hostname()).count, 0);
+    } finally {
+      repaired.close();
+    }
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('collect removes local Codex daily rows without matching events or sessions', async () => {
+  const fixture = createCollectorFixture();
+  try {
+    const first = await runNode(['src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'], fixture.env);
+    assert.equal(first.code, 0, first.stderr);
+    const db = new DatabaseSync(fixture.dbPath);
+    try {
+      db.prepare(`INSERT INTO daily_usage (device, source, usage_date, model, total_tokens) VALUES (?, ?, '2026-01-01', 'gpt-5.5', 777)`).run(
+        hostname(), 'Codex (unidentified client)'
+      );
+    } finally { db.close(); }
+    const second = await runNode(['src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'], fixture.env);
+    assert.equal(second.code, 0, second.stderr);
+    const repaired = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.equal(repaired.prepare(`SELECT COUNT(*) AS count FROM daily_usage WHERE source = 'Codex (unidentified client)'`).get().count, 0);
+    } finally { repaired.close(); }
+  } finally { cleanupFixture(fixture); }
+});
+
 test('collect reconciles current Codex events while preserving historical usage', async () => {
   const fixture = createForkedCodexFixture();
   try {
@@ -245,7 +356,7 @@ test('collect reconciles current Codex events while preserving historical usage'
       `).get().count, 1);
       assert.equal(repaired.prepare(`
         SELECT total_tokens AS totalTokens FROM session_usage
-        WHERE source = 'Codex CLI' AND session_id = 'local:codex:unscanned-session:gpt-5.4-mini'
+        WHERE source = 'Codex (unidentified client)' AND session_id = 'local:codex:unscanned-session:gpt-5.4-mini'
       `).get().totalTokens, 777);
       assert.equal(repaired.prepare(`
         SELECT COUNT(*) AS count FROM daily_usage
@@ -254,7 +365,7 @@ test('collect reconciles current Codex events while preserving historical usage'
       assert.equal(repaired.prepare(`
         SELECT total_tokens AS totalTokens FROM daily_usage
         WHERE source = 'Codex CLI' AND usage_date = '2026-06-17' AND model = 'gpt-5.4-mini'
-      `).get().totalTokens, 947);
+      `).get().totalTokens, 170);
     } finally {
       repaired.close();
     }
@@ -275,7 +386,7 @@ test('collect reconciles current Codex events while preserving historical usage'
       assert.equal(stableDb.prepare(`
         SELECT total_tokens AS totalTokens FROM daily_usage
         WHERE source = 'Codex CLI' AND usage_date = '2026-06-17' AND model = 'gpt-5.4-mini'
-      `).get().totalTokens, 947);
+      `).get().totalTokens, 170);
     } finally {
       stableDb.close();
     }
@@ -308,7 +419,7 @@ test('collect keeps distinct Codex and Claude events without relying on file pos
       })
     ].join('\n'), 'utf8');
     writeFileSync(join(fixture.codexHome, 'sessions', '2026', '06', '17', 'same-timestamp.jsonl'), [
-      JSON.stringify({ type: 'session_meta', payload: { id: 'same-timestamp' } }),
+      JSON.stringify({ type: 'session_meta', payload: { id: 'same-timestamp', originator: 'codex-tui' } }),
       JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
       JSON.stringify({
         type: 'event_msg',
@@ -684,7 +795,7 @@ function createCollectorFixture() {
   ].join('\n'), 'utf8');
 
   writeFileSync(join(codexHome, 'sessions', '2026', '06', '17', 'codex-session.jsonl'), [
-    JSON.stringify({ type: 'session_meta', payload: { id: 'codex-session', cwd: join(dir, 'repo') } }),
+    JSON.stringify({ type: 'session_meta', payload: { id: 'codex-session', cwd: join(dir, 'repo'), originator: 'codex-tui' } }),
     JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.3-codex' } }),
     JSON.stringify({
       type: 'event_msg',
@@ -768,7 +879,7 @@ function createForkedCodexFixture() {
     }
   });
   writeFileSync(join(sessionDir, 'parent.jsonl'), [
-    JSON.stringify({ type: 'session_meta', payload: { id: 'parent', timestamp: '2026-06-17T02:00:00.000Z' } }),
+    JSON.stringify({ type: 'session_meta', payload: { id: 'parent', timestamp: '2026-06-17T02:00:00.000Z', originator: 'codex-tui' } }),
     JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
     tokenCount('2026-06-17T02:00:00.000Z', 100),
     tokenCount('2026-06-17T02:04:00.000Z', 150)
@@ -780,7 +891,8 @@ function createForkedCodexFixture() {
         id: 'child_1',
         parent_thread_id: 'parent',
         forked_from_id: 'parent',
-        timestamp: '2026-06-17T02:05:00.000Z'
+        timestamp: '2026-06-17T02:05:00.000Z',
+        originator: 'codex-tui'
       }
     }),
     JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
@@ -816,7 +928,7 @@ function createResettingCodexFixture() {
     }
   });
   writeFileSync(join(sessionDir, 'reset.jsonl'), [
-    JSON.stringify({ type: 'session_meta', payload: { id: 'reset' } }),
+    JSON.stringify({ type: 'session_meta', payload: { id: 'reset', originator: 'codex-tui' } }),
     JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
     tokenCount('2026-06-17T02:00:00.000Z', 100, 100),
     tokenCount('2026-06-17T02:01:00.000Z', 150, 50),
@@ -845,7 +957,8 @@ function createUnresolvedForkedCodexFixture() {
         id: 'child',
         parent_thread_id: 'missing-parent',
         forked_from_id: 'missing-parent',
-        timestamp: '2026-06-17T02:00:00.000Z'
+        timestamp: '2026-06-17T02:00:00.000Z',
+        originator: 'codex-tui'
       }
     }),
     JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),

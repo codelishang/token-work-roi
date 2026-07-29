@@ -1089,7 +1089,7 @@ function printBudgetHelp() {
     '',
     'Examples:',
     '  token-work budget list',
-    '  token-work budget set --source "Codex CLI" --label "Codex 15m" --window-minutes 15 --token-budget 50000',
+    '  token-work budget set --source "Codex" --label "Codex 15m" --window-minutes 15 --token-budget 50000',
     '  token-work budget set --model-group heavy --label "Heavy model daily cap" --window-minutes 1440 --token-budget 200000 --hard-threshold 1',
     '  token-work budget set --source "Claude Code" --label "Claude 5h" --window-type fixed --window-minutes 300 --reset-anchor 2026-06-17T09:00:00Z --warning-threshold 0.75 --token-budget 500000',
     '  token-work budget delete --id 1',

@@ -1833,7 +1833,7 @@ function CollectConfirmModal({ busy, onClose, onConfirm }) {
         </div>
         <div className="annotation-modal-body">
           <div className="notice-list">
-            <div>本次写入只使用 P0 可信来源：本机 Claude Code 和 Codex CLI 的结构化 token 日志。</div>
+            <div>本次写入只使用 P0 可信来源：本机 Claude Code 和 Codex 的结构化 token 日志。</div>
             <div>采集器只统计 token、模型、时间、项目路径等用量字段，不读取或展示对话正文。</div>
             <div>Cursor 当前只有明确 token 字段才会进入 coverage；不会用文本长度估算，也不会把 detected-only 写入 usage。</div>
             <div>服务端会在写入前自动复制当前 SQLite 到 `data/backups/`。</div>
@@ -1870,7 +1870,7 @@ function ImportBudgetModal({
   const [budgetBusy, setBudgetBusy] = useState(false);
   const [budgetError, setBudgetError] = useState(null);
   const [budgetForm, setBudgetForm] = useState<BudgetForm>(() => ({
-    source: sources[0] || 'Codex CLI',
+    source: sources[0] || 'Codex',
     modelGroup: '',
     label: '',
     windowType: 'rolling',
@@ -2115,6 +2115,7 @@ function ImportBudgetModal({
                   onChange={(event) => setBudgetForm({ ...budgetForm, source: event.target.value })}
                 />
                 <datalist id="budget-source-options">
+                  {sources.some(source => /^Codex(?:\s|\()/i.test(source)) && <option value="Codex"/>}
                   {sources.map(source => <option key={source} value={source}/>)}
                 </datalist>
               </label>

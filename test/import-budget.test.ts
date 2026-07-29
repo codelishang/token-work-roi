@@ -39,10 +39,10 @@ test('budget templates fill editable fixed-window guardrail fields', () => {
 
   const next = applyBudgetTemplate(
     { tokenBudget: '500000' },
-    { label: 'Codex 5h', source: 'Codex CLI', windowType: 'fixed', windowMinutes: 300, warningThreshold: 0.7 },
+    { label: 'Codex 5h', source: 'Codex', windowType: 'fixed', windowMinutes: 300, warningThreshold: 0.7 },
     new Date('2026-06-17T02:13:45Z')
   );
-  assert.equal(next.source, 'Codex CLI');
+  assert.equal(next.source, 'Codex');
   assert.equal(next.label, 'Codex 5h');
   assert.equal(next.windowType, 'fixed');
   assert.equal(next.windowMinutes, 300);

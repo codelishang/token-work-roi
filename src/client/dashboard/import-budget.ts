@@ -3,7 +3,7 @@ export const CCUSAGE_BRIDGE_REPORTS = ['daily', 'weekly', 'monthly', 'session', 
 export const BUDGET_TEMPLATES = [
   { id: 'claude-5h', label: 'Claude 5h', source: 'Claude Code', modelGroup: '', windowType: 'fixed', windowMinutes: 300, warningThreshold: 0.75, hardThreshold: 1 },
   { id: 'claude-weekly', label: 'Claude weekly', source: 'Claude Code', modelGroup: '', windowType: 'fixed', windowMinutes: 10080, warningThreshold: 0.75, hardThreshold: 1 },
-  { id: 'codex-5h', label: 'Codex 5h', source: 'Codex CLI', modelGroup: '', windowType: 'fixed', windowMinutes: 300, warningThreshold: 0.75, hardThreshold: 1 },
+  { id: 'codex-5h', label: 'Codex 5h', source: 'Codex', modelGroup: '', windowType: 'fixed', windowMinutes: 300, warningThreshold: 0.75, hardThreshold: 1 },
   { id: 'heavy-daily', label: 'Heavy model daily cap', source: '', modelGroup: 'heavy', windowType: 'rolling', windowMinutes: 1440, warningThreshold: 0.7, hardThreshold: 1 },
   { id: 'explore-light-cap', label: 'Exploration light cap', source: '', modelGroup: 'light', windowType: 'rolling', windowMinutes: 1440, warningThreshold: 0.8, hardThreshold: 1 }
 ];

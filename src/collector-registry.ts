@@ -44,7 +44,7 @@ export const COLLECTOR_REGISTRY = [
     privacyLevel: 'metadata-only',
     roots: () => configuredPaths('claude', 'roots', ['~/.config/claude', '~/.claude'])
   }),
-  stableCollector('codex', 'Codex CLI', './collectors/codex.ts', {
+  stableCollector('codex', 'Codex', './collectors/codex.ts', {
     privacyLevel: 'metadata-only',
     roots: () => configuredPaths('codex', 'homes', ['~/.codex'])
   }),
