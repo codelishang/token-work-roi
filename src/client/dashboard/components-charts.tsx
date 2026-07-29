@@ -271,6 +271,7 @@ function SourceDonut({ rows, sources, total, onFocusSource, focused }) {
 
   const option = {
     backgroundColor: 'transparent',
+    animation: false,
     tooltip: {
       trigger: 'item',
       backgroundColor: '#fff',
@@ -292,7 +293,7 @@ function SourceDonut({ rows, sources, total, onFocusSource, focused }) {
         borderColor: '#fff',
         borderWidth: 3
       },
-      emphasis: { scaleSize: 4, itemStyle: { shadowBlur: 10, shadowColor: 'oklch(0 0 0 / 0.06)' } },
+      emphasis: { disabled: true },
       data: data.map(d => ({
         name: d.name,
         value: d.value,

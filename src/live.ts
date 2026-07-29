@@ -370,7 +370,7 @@ export function buildBudgetWindows({ rows = [], budgetProfiles = [], nowMs = Dat
         const timestampMs = row.timestampMs ?? row.lastActivityMs ?? 0;
         return timestampMs >= frame.startMs
           && timestampMs <= nowMs
-          && (!source || row.source === source)
+          && (!source || budgetSourceMatches(row.source, source))
           && modelMatchesGroup(row.model, modelGroup);
       });
       const totals = sumRows(matching);
@@ -424,6 +424,11 @@ export function buildBudgetWindows({ rows = [], budgetProfiles = [], nowMs = Dat
         status
       };
     });
+}
+
+function budgetSourceMatches(source, budgetSource) {
+  if (budgetSource === 'Codex') return /^Codex(?:\s|\()/i.test(String(source || ''));
+  return source === budgetSource;
 }
 
 function budgetWindowFrame(profile, nowMs, windowMinutes) {

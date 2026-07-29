@@ -104,7 +104,7 @@ Ok to proceed? (y)
   assert.equal(plan.sessions.length, 1);
   assert.equal(plan.tokenEvents.length, 1);
   assert.equal(plan.daily[0].device, 'other-device');
-  assert.equal(plan.daily[0].source, 'codex');
+  assert.equal(plan.daily[0].source, 'Codex');
   assert.equal(plan.daily[0].usageDate, '2026-06-01');
   assert.equal(plan.sessions[0].sessionId, '2026/05/22/rollout-test');
   assert.equal(plan.tokenEvents[0].reasoningTokens, 5);
@@ -128,6 +128,50 @@ test('ccusage apply is idempotent and dry-run plans do not write', () => {
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM token_events').get().count, 1);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM collection_runs WHERE source = ?').get('import:ccusage-json').count, 2);
   db.close();
+});
+
+test('ccusage migrates legacy generic Codex rows without duplicating imported usage', () => {
+  const db = tempDb();
+  const payload = {
+    type: 'session',
+    data: [{
+      agent: 'codex',
+      session: 'legacy-session',
+      models: ['gpt-5.5'],
+      inputTokens: 100,
+      outputTokens: 20,
+      lastActivity: '2026-06-17T02:00:00Z'
+    }]
+  };
+  const plan = planCcusageImport(payload, { device: 'other-device' });
+  const daily = plan.daily[0];
+  const session = plan.sessions[0];
+  const event = plan.tokenEvents[0];
+  const legacyEventId = event.eventId.replace(/^(ccusage:[^:]+:)[^:]+:/, '$1codex:');
+  try {
+    db.prepare(`
+      INSERT INTO daily_usage (device, source, usage_date, model, input_tokens, output_tokens, total_tokens, cost_usd)
+      VALUES (?, 'codex', ?, ?, ?, ?, ?, ?)
+    `).run(daily.device, daily.usageDate, daily.model, daily.inputTokens, daily.outputTokens, daily.totalTokens, daily.costUSD);
+    db.prepare(`
+      INSERT INTO session_usage (device, source, session_id, last_activity, model, input_tokens, output_tokens, total_tokens, cost_usd)
+      VALUES (?, 'codex', ?, ?, ?, ?, ?, ?, ?)
+    `).run(session.device, session.sessionId, session.lastActivity, session.model, session.inputTokens, session.outputTokens, session.totalTokens, session.costUSD);
+    db.prepare(`
+      INSERT INTO token_events (event_id, device, source, session_id, timestamp, model, input_tokens, output_tokens)
+      VALUES (?, ?, 'codex', ?, ?, ?, ?, ?)
+    `).run(legacyEventId, event.device, event.sessionId, event.timestamp, event.model, event.inputTokens, event.outputTokens);
+
+    applyCcusageImport(db, plan);
+    applyCcusageImport(db, plan);
+
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE source = 'codex'`).get().count, 0);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE source = 'Codex'`).get().count, 1);
+    assert.equal(db.prepare(`SELECT total_tokens AS totalTokens FROM daily_usage WHERE source = 'Codex'`).get().totalTokens, 120);
+    assert.equal(db.prepare(`SELECT total_tokens AS totalTokens FROM session_usage WHERE source = 'Codex'`).get().totalTokens, 120);
+  } finally {
+    db.close();
+  }
 });
 
 test('ccusage parser rejects conversation-like fields', () => {

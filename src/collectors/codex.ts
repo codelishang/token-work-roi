@@ -1,5 +1,5 @@
 /**
- * Codex CLI data collector.
+ * Codex local-session collector.
  *
  * Scans two roots:
  *   ~/.codex/sessions/          — active sessions (recursive JSONL)
@@ -46,7 +46,11 @@ async function collectJsonlFiles(dir) {
 }
 
 export const CLIENT_KEY = 'codex';
-export const SOURCE_LABEL = 'Codex CLI';
+export const SOURCE_LABEL = 'Codex';
+
+const CODEX_DESKTOP_SOURCE = 'Codex Desktop';
+const CODEX_CLI_SOURCE = 'Codex CLI';
+const CODEX_UNKNOWN_SOURCE = 'Codex (unidentified client)';
 
 const sessionTextCache = new Map();
 const usageTimelineCache = new Map();
@@ -162,7 +166,7 @@ function summaryAtLeast(current, baseline) {
 
 /**
  * Parse a single Codex JSONL session file.
- * Returns an array of { timestamp, date, model, workspace, tokens }.
+ * Returns an array of { timestamp, date, model, workspace, source, tokens }.
  */
 async function parseSessionFile(filePath, sessionId, inheritedTotal = null, minimumTimestamp = null) {
   const text = await readSessionText(filePath);
@@ -174,6 +178,7 @@ async function parseSessionFile(filePath, sessionId, inheritedTotal = null, mini
   let awaitingForkBase = Boolean(inheritedTotal);
   let workspace        = null;
   let metaSessionId    = sessionId;
+  let source           = CODEX_UNKNOWN_SOURCE;
 
   const events = [];
   const recordOccurrences = new Map();
@@ -195,6 +200,7 @@ async function parseSessionFile(filePath, sessionId, inheritedTotal = null, mini
       if (payload.cwd) {
         workspace = payload.cwd;
       }
+      source = codexSource(payload.originator, payload.source);
       continue;
     }
 
@@ -265,6 +271,7 @@ async function parseSessionFile(filePath, sessionId, inheritedTotal = null, mini
         date,
         model,
         workspace,
+        source,
         tokens,
         sessionId: metaSessionId,
         identityKey: `${recordHash}:${occurrence}`
@@ -273,6 +280,14 @@ async function parseSessionFile(filePath, sessionId, inheritedTotal = null, mini
   }
 
   return events;
+}
+
+function codexSource(originator, source) {
+  const client = String(originator || '').trim().toLowerCase();
+  const transport = String(source || '').trim().toLowerCase();
+  if (client === 'codex desktop') return CODEX_DESKTOP_SOURCE;
+  if (client === 'codex-tui' || transport === 'cli') return CODEX_CLI_SOURCE;
+  return CODEX_UNKNOWN_SOURCE;
 }
 
 function extractModel(obj) {
@@ -308,14 +323,26 @@ export async function collectWithAudit(pricingData = null) {
 }
 
 function collectFromSessionFiles(sessionFiles, pricingData) {
-  const dailyMap = new Map();   // "date::model" → aggregated
+  const dailyMap = new Map();   // "date::source::model" → aggregated
   const sessionMap = new Map(); // true rollout session aggregate
   const seenEventKeys = new Set();
   const tokenEvents = [];
   const forkedSessionPrefixes = new Set();
   const managedEventSessionPrefixes = new Set();
+  const sessionSourcePrefixes = new Map();
+  const conflictingSessionSourcePrefixes = new Set();
 
   for (const { filePath, fileSessionId, lineage, events } of sessionFiles) {
+    const metadataSessionPrefix = `local:${CLIENT_KEY}:${hashableSessionPart(lineage.sessionId)}:`;
+    if (lineage.source !== CODEX_UNKNOWN_SOURCE && !conflictingSessionSourcePrefixes.has(metadataSessionPrefix)) {
+      const previousSource = sessionSourcePrefixes.get(metadataSessionPrefix);
+      if (previousSource && previousSource !== lineage.source) {
+        sessionSourcePrefixes.delete(metadataSessionPrefix);
+        conflictingSessionSourcePrefixes.add(metadataSessionPrefix);
+      } else {
+        sessionSourcePrefixes.set(metadataSessionPrefix, lineage.source);
+      }
+    }
     if (lineage.parentSessionId) {
       forkedSessionPrefixes.add(`local:${CLIENT_KEY}:${hashableSessionPart(lineage.sessionId)}:`);
     }
@@ -330,23 +357,25 @@ function collectFromSessionFiles(sessionFiles, pricingData) {
     managedEventSessionPrefixes.add(`${sessionPrefix}:`);
 
     for (let index = 0; index < events.length; index += 1) {
-      const { timestamp, date, model, workspace, tokens, identityKey } = events[index];
+      const { timestamp, date, model, workspace, source, tokens, identityKey } = events[index];
       const sessionId = modelSessionIds.get(model);
-      const eventKey = codexEventDedupKey({ sessionId, identityKey });
+      const eventKey = codexEventDedupKey({ source, sessionId, identityKey });
       if (eventKey && seenEventKeys.has(eventKey)) continue;
       if (eventKey) seenEventKeys.add(eventKey);
 
       const workspaceKey = workspace || rawSessionId;
 
       // Daily
-      const dk = `${date}::${model}`;
-      if (!dailyMap.has(dk)) dailyMap.set(dk, { date, model, ...zero(), cost: 0 });
+      const dk = `${date}::${source}::${model}`;
+      if (!dailyMap.has(dk)) dailyMap.set(dk, { date, source, model, ...zero(), cost: 0 });
       addInto(dailyMap.get(dk), tokens);
 
       // True rollout session
-      if (!sessionMap.has(sessionId)) {
-        sessionMap.set(sessionId, {
+      const sessionKey = `${source}::${sessionId}`;
+      if (!sessionMap.has(sessionKey)) {
+        sessionMap.set(sessionKey, {
           sessionId,
+          source,
           workspace: workspaceKey,
           workspaceLabel: decodeWorkspace(workspaceKey),
           model,
@@ -355,13 +384,13 @@ function collectFromSessionFiles(sessionFiles, pricingData) {
           lastActivity: timestamp || null
         });
       }
-      const sessionAgg = sessionMap.get(sessionId);
+      const sessionAgg = sessionMap.get(sessionKey);
       addInto(sessionAgg, tokens);
       sessionAgg.cost += calculateCost(model, tokens, pricingData);
       if (timestamp && (!sessionAgg.lastActivity || timestamp > sessionAgg.lastActivity)) {
         sessionAgg.lastActivity = timestamp;
       }
-      tokenEvents.push(tokenEventFor({ sessionId, legacySessionIds, timestamp, model, tokens, identityKey }));
+      tokenEvents.push(tokenEventFor({ source, sessionId, legacySessionIds, timestamp, model, tokens, identityKey }));
     }
   }
 
@@ -370,7 +399,8 @@ function collectFromSessionFiles(sessionFiles, pricingData) {
     reconciliation: {
       eventSessionPrefixes: [...forkedSessionPrefixes],
       managedEventIdPrefix: 'codex:',
-      managedEventSessionPrefixes: [...managedEventSessionPrefixes]
+      managedEventSessionPrefixes: [...managedEventSessionPrefixes],
+      sessionSourcePrefixes: [...sessionSourcePrefixes].map(([prefix, source]) => ({ prefix, source }))
     }
   };
 }
@@ -452,7 +482,14 @@ async function parseSessionFiles() {
 
 async function readSessionLineage(filePath, fallbackSessionId) {
   const text = await readSessionText(filePath);
-  if (text == null) return { sessionId: fallbackSessionId, parentSessionId: null, forkedAt: null };
+  if (text == null) {
+    return {
+      sessionId: fallbackSessionId,
+      parentSessionId: null,
+      forkedAt: null,
+      source: CODEX_UNKNOWN_SOURCE
+    };
+  }
   for (const raw of text.split('\n')) {
     let entry;
     try { entry = JSON.parse(raw); } catch { continue; }
@@ -461,10 +498,16 @@ async function readSessionLineage(filePath, fallbackSessionId) {
     return {
       sessionId: extractSessionId(payload) || fallbackSessionId,
       parentSessionId: normalizeSessionId(payload.parent_thread_id || payload.forked_from_id),
-      forkedAt: validTimestamp(payload.timestamp || entry.timestamp)
+      forkedAt: validTimestamp(payload.timestamp || entry.timestamp),
+      source: codexSource(payload.originator, payload.source)
     };
   }
-  return { sessionId: fallbackSessionId, parentSessionId: null, forkedAt: null };
+  return {
+    sessionId: fallbackSessionId,
+    parentSessionId: null,
+    forkedAt: null,
+    source: CODEX_UNKNOWN_SOURCE
+  };
 }
 
 async function totalUsageAt(filePath, timestamp) {
@@ -535,8 +578,8 @@ async function collectSessionFiles() {
   return [...new Set(nestedPaths.flat())];
 }
 
-function codexEventDedupKey({ sessionId, identityKey }) {
-  return identityKey ? `${sessionId}:${identityKey}` : null;
+function codexEventDedupKey({ source, sessionId, identityKey }) {
+  return identityKey ? `${source}:${sessionId}:${identityKey}` : null;
 }
 
 /**
@@ -571,7 +614,7 @@ function buildOutput(dailyMap, sessionMap, tokenEvents, pricingData) {
           reasoning:  row.reasoning,
         };
         return {
-          client:  CLIENT_KEY,
+          client:  row.source,
           modelId: row.model,
           tokens,
           cost: calculateCost(row.model, tokens, pricingData),
@@ -588,7 +631,7 @@ function buildOutput(dailyMap, sessionMap, tokenEvents, pricingData) {
       reasoning:  wm.reasoning,
     };
     return {
-      client:         CLIENT_KEY,
+      client:         wm.source,
       workspaceKey:   wm.workspace,
       workspaceLabel: wm.workspaceLabel,
       sessionId:       wm.sessionId,
@@ -618,14 +661,14 @@ function emptyAuditSummary() {
   };
 }
 
-function tokenEventFor({ sessionId, legacySessionIds = [], timestamp, model, tokens, identityKey }) {
+function tokenEventFor({ source, sessionId, legacySessionIds = [], timestamp, model, tokens, identityKey }) {
   const eventId = codexEventId({ sessionId, identityKey });
   return {
     eventId,
     legacyEventIds: legacySessionIds
       .map(candidate => codexEventId({ sessionId: candidate, identityKey }))
       .filter(candidate => candidate !== eventId),
-    source: CLIENT_KEY,
+    source,
     sessionId,
     timestamp: timestamp || new Date().toISOString(),
     model,

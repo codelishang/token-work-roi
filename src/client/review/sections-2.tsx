@@ -343,18 +343,27 @@ function EvidenceStat({ label, value, note }) {
 // ───────────────────────────────────────────────────────────────
 // Tools donut + per-tool list
 // ───────────────────────────────────────────────────────────────
+function toolSourceName(source) {
+  const normalized = String(source || '').trim().toLowerCase();
+  if (normalized === 'codex') return 'Codex';
+  if (normalized === 'claude') return 'Claude Code';
+  return source;
+}
+
 function ToolsSection({ daily, totalTokens }) {
   const tools = useMemo(() => {
-    const list = RU.aggregateBy(daily, 'source').sort((a, b) => b.totalTokens - a.totalTokens);
+    const toolRows = daily.map(row => ({ ...row, source: toolSourceName(row.source) }));
+    const list = RU.aggregateBy(toolRows, 'source').sort((a, b) => b.totalTokens - a.totalTokens);
     return list.map(t => ({
       ...t,
-      topModel: RU.topModelFor(daily, r => r.source === t.key),
+      topModel: RU.topModelFor(toolRows, r => r.source === t.key),
       share: (t.totalTokens / (totalTokens || 1)) * 100
     }));
   }, [daily, totalTokens]);
 
   const donutRef = useRef(null);
   const donutChart = useRef(null);
+  const [toolTooltip, setToolTooltip] = useState(null);
 
   useEffect(() => {
     if (!donutRef.current) return;
@@ -363,16 +372,8 @@ function ToolsSection({ daily, totalTokens }) {
     }
     donutChart.current.setOption({
       backgroundColor: 'transparent',
-      animation: true,
-      tooltip: {
-        trigger: 'item',
-        backgroundColor: 'oklch(0.16 0.010 60)',
-        borderColor: 'transparent',
-        textStyle: { color: 'oklch(0.91 0.018 145)', fontSize: 12 },
-        extraCssText: 'border-radius: 8px; box-shadow: 0 8px 24px -8px rgb(0 0 0 / 0.3);',
-        formatter: p => `<div style="font-weight:600">${p.name}</div>
-          <div style="font-size:13px;margin-top:4px;font-feature-settings:'tnum'">${U.compactCN(p.value)} tokens · ${(p.percent || 0).toFixed(1)}%</div>`
-      },
+      animation: false,
+      tooltip: { show: false },
       series: [{
         type: 'pie',
         radius: ['60%', '92%'],
@@ -380,6 +381,7 @@ function ToolsSection({ daily, totalTokens }) {
         avoidLabelOverlap: true,
         label: { show: false },
         labelLine: { show: false },
+        emphasis: { disabled: true },
         itemStyle: { borderColor: 'oklch(0.91 0.018 145)', borderWidth: 4 },
         data: tools.map(t => ({
           name: t.key,
@@ -388,13 +390,32 @@ function ToolsSection({ daily, totalTokens }) {
         }))
       }]
     }, true);
+    const onMouseOver = params => {
+      if (params.componentType === 'series') {
+        const event = params.event || {};
+        const x = Number.isFinite(event.offsetX) ? event.offsetX : 140;
+        const y = Number.isFinite(event.offsetY) ? event.offsetY : 140;
+        const next = {
+          name: params.name,
+          x: x > 140 ? x - 12 : x + 12,
+          y: Math.min(Math.max(y + 12, 8), 224),
+          alignRight: x > 140
+        };
+        setToolTooltip(current => current?.name === next.name && current?.x === next.x && current?.y === next.y ? current : next);
+      }
+    };
+    donutChart.current.on('mouseover', onMouseOver);
     const onResize = () => donutChart.current?.resize();
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => {
+      donutChart.current?.off('mouseover', onMouseOver);
+      window.removeEventListener('resize', onResize);
+    };
   }, [tools]);
 
   if (!tools.length) return null;
   const top = tools[0];
+  const hoveredTool = toolTooltip && tools.find(t => t.key === toolTooltip.name);
 
   return (
     <section className="story">
@@ -404,8 +425,18 @@ function ToolsSection({ daily, totalTokens }) {
 
       <div className="tools-split">
         <div style={{display: 'flex', justifyContent: 'center'}}>
-          <div className="donut-wrap">
+          <div className="donut-wrap" onMouseLeave={() => setToolTooltip(null)}>
             <div ref={donutRef} style={{width: 280, height: 280}}/>
+            {hoveredTool && (
+              <div
+                className="donut-tooltip"
+                role="status"
+                style={{ left: toolTooltip.x, top: toolTooltip.y, transform: toolTooltip.alignRight ? 'translateX(-100%)' : undefined }}
+              >
+                <strong>{hoveredTool.key}</strong>
+                <span>{U.compactCN(hoveredTool.totalTokens)} tokens · {hoveredTool.share.toFixed(1)}%</span>
+              </div>
+            )}
             <div className="donut-center">
               <div>
                 <div className="l">主导工具</div>

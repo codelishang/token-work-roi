@@ -9,6 +9,9 @@ import { collectableCollectors, collectorLabel, enabledCollectorIds } from './co
 
 type InputRecord = Record<string, unknown>;
 
+const LEGACY_CODEX_SOURCE = 'Codex CLI';
+const UNKNOWN_CODEX_SOURCE = 'Codex (unidentified client)';
+
 interface CollectArgs {
   [key: string]: string | boolean | undefined;
   apply?: boolean;
@@ -289,15 +292,12 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
     throw new Error(`Coverage gate blocked collection apply: ${fatal.map(source => `${source.id}:${source.coverageRisk}`).join(', ')}`);
   }
 
-  if (mode === 'apply' && db) {
-    for (const payload of payloads) {
-      if (payload.type !== 'error') mergeHistoricalEventUsage(db, payload, pricingData);
-    }
-  }
-
   const needsStoredUsageRepair = mode === 'apply' && db && usageTotalsNeedRepair(db);
   if (mode === 'apply' && db) {
-    const shouldBackup = needsStoredUsageRepair || tokenUsageWouldChange(db, payloads);
+    const shouldBackup = needsStoredUsageRepair || tokenUsageWouldChange(db, payloads)
+      || payloads.some(payload => payload.type === 'data'
+        && payload.sourceSummary.id === 'codex'
+        && codexSourceMigrationWouldChange(db, payload));
     summary.backup = shouldBackup
       ? createSqliteBackup(db, dbPath, scheduled
           ? {
@@ -305,6 +305,18 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
             }
           : { reason: 'collect' })
       : null;
+  }
+
+  if (mode === 'apply' && db) {
+    for (const payload of payloads) {
+      if (payload.type === 'data' && payload.sourceSummary.id === 'codex') {
+        migrateLegacyCodexClientSources(db, payload);
+        removeOrphanedCodexDailyUsage(db, payload.device);
+      }
+    }
+    for (const payload of payloads) {
+      if (payload.type !== 'error') mergeHistoricalEventUsage(db, payload, pricingData);
+    }
   }
 
   if (needsStoredUsageRepair) {
@@ -394,11 +406,13 @@ function tokenUsageWouldChange(db, payloads) {
 
   for (const payload of payloads) {
     if (payload.type === 'error') continue;
-    const reconciliationPlan = eventReconciliationPlan(db, payload);
-    if (
-      reconciliationPlan.prefixes.length > 0 ||
-      reconciliationPlan.replaceManagedEvents
-    ) return true;
+    for (const source of payloadSources(payload)) {
+      const reconciliationPlan = eventReconciliationPlan(db, payload, source);
+      if (
+        reconciliationPlan.prefixes.length > 0 ||
+        reconciliationPlan.replaceManagedEvents
+      ) return true;
+    }
     for (const row of payload.dailyRows) {
       if (!matchingDaily.get(
         row.device, row.source, row.usageDate, row.model,
@@ -426,14 +440,309 @@ function tokenUsageWouldChange(db, payloads) {
   return false;
 }
 
+function migrateLegacyCodexClientSources(db, payload) {
+  const eventSources = new Map(payload.eventRows
+    .filter(row => row.sessionId.startsWith('local:codex:'))
+    .map(row => [row.eventId, row.source]));
+  const sessionSources = new Map();
+  for (const row of payload.sessionRows) {
+    if (row.sessionId.startsWith('local:codex:')) sessionSources.set(row.sessionId, row.source);
+  }
+  const metadataSourcePrefixes = new Map((payload.reconciliation?.sessionSourcePrefixes || [])
+    .filter(item => item && item.prefix && item.source && item.source !== UNKNOWN_CODEX_SOURCE)
+    .map(item => [item.prefix, item.source]));
+
+  for (const oldSource of [LEGACY_CODEX_SOURCE, UNKNOWN_CODEX_SOURCE]) {
+    migrateCodexSource(db, payload, oldSource, eventSources, sessionSources, metadataSourcePrefixes);
+  }
+  db.prepare(`
+    UPDATE collection_runs
+    SET source = 'Codex'
+    WHERE device = ? AND source = ?
+  `).run(payload.device, LEGACY_CODEX_SOURCE);
+  db.prepare(`
+    UPDATE budget_profiles
+    SET source = 'Codex'
+    WHERE source = ?
+  `).run(LEGACY_CODEX_SOURCE);
+}
+
+function codexSourceMigrationWouldChange(db, payload) {
+  const eventSources = new Map(payload.eventRows
+    .filter(row => row.sessionId.startsWith('local:codex:'))
+    .map(row => [row.eventId, row.source]));
+  const sessionSources = new Map(payload.sessionRows
+    .filter(row => row.sessionId.startsWith('local:codex:'))
+    .map(row => [row.sessionId, row.source]));
+  const prefixes = (payload.reconciliation?.sessionSourcePrefixes || [])
+    .filter(item => item && item.prefix && item.source && item.source !== UNKNOWN_CODEX_SOURCE);
+  const metadataSourcePrefixes = new Map(prefixes.map(item => [item.prefix, item.source]));
+  const events = db.prepare(`
+    SELECT event_id AS eventId, session_id AS sessionId, source
+    FROM token_events
+    WHERE device = ? AND source IN (?, ?) AND session_id LIKE 'local:codex:%'
+  `).all(payload.device, LEGACY_CODEX_SOURCE, UNKNOWN_CODEX_SOURCE);
+  if (events.some((row) => {
+    const fallback = row.source === LEGACY_CODEX_SOURCE ? UNKNOWN_CODEX_SOURCE : row.source;
+    return codexSourceForSession(row.sessionId, eventSources.get(row.eventId), metadataSourcePrefixes, fallback) !== row.source;
+  })) return true;
+
+  const sessions = db.prepare(`
+    SELECT session_id AS sessionId, source
+    FROM session_usage
+    WHERE device = ? AND source IN (?, ?) AND session_id LIKE 'local:codex:%'
+  `).all(payload.device, LEGACY_CODEX_SOURCE, UNKNOWN_CODEX_SOURCE);
+  if (sessions.some((row) => {
+    const fallback = row.source === LEGACY_CODEX_SOURCE ? UNKNOWN_CODEX_SOURCE : row.source;
+    return codexSourceForSession(row.sessionId, sessionSources.get(row.sessionId), metadataSourcePrefixes, fallback) !== row.source;
+  })) return true;
+
+  const currentLegacyDaily = new Set(payload.dailyRows
+    .filter(row => row.source === LEGACY_CODEX_SOURCE)
+    .map(row => dailyUsageKey(LEGACY_CODEX_SOURCE, row.usageDate, row.model)));
+  return db.prepare(`
+    SELECT usage_date AS usageDate, model
+    FROM daily_usage
+    WHERE device = ? AND source = ?
+  `).all(payload.device, LEGACY_CODEX_SOURCE)
+    .some(row => !currentLegacyDaily.has(dailyUsageKey(LEGACY_CODEX_SOURCE, row.usageDate, row.model)))
+    || hasOrphanedCodexDailyUsage(db, payload.device);
+}
+
+function hasOrphanedCodexDailyUsage(db, device) {
+  return Boolean(db.prepare(`
+    SELECT 1
+    FROM daily_usage
+    WHERE device = ? AND source = ?
+      AND NOT EXISTS (SELECT 1 FROM token_events WHERE device = ? AND source = ?)
+      AND NOT EXISTS (SELECT 1 FROM session_usage WHERE device = ? AND source = ?)
+    LIMIT 1
+  `).get(device, UNKNOWN_CODEX_SOURCE, device, UNKNOWN_CODEX_SOURCE, device, UNKNOWN_CODEX_SOURCE));
+}
+
+function removeOrphanedCodexDailyUsage(db, device) {
+  if (!hasOrphanedCodexDailyUsage(db, device)) return;
+  db.prepare(`
+    DELETE FROM daily_usage
+    WHERE device = ? AND source = ?
+      AND NOT EXISTS (SELECT 1 FROM token_events WHERE device = ? AND source = ?)
+      AND NOT EXISTS (SELECT 1 FROM session_usage WHERE device = ? AND source = ?)
+  `).run(device, UNKNOWN_CODEX_SOURCE, device, UNKNOWN_CODEX_SOURCE, device, UNKNOWN_CODEX_SOURCE);
+}
+
+function migrateCodexSource(db, payload, oldSource, eventSources, sessionSources, metadataSourcePrefixes) {
+  const fallbackSource = oldSource === LEGACY_CODEX_SOURCE ? UNKNOWN_CODEX_SOURCE : oldSource;
+  const legacyEvents = db.prepare(`
+    SELECT event_id AS eventId, session_id AS sessionId,
+      date(timestamp, '+8 hours') AS usageDate, model,
+      input_tokens AS inputTokens, output_tokens AS outputTokens,
+      cache_creation_tokens AS cacheCreationTokens,
+      cache_read_tokens AS cacheReadTokens,
+      reasoning_tokens AS reasoningOutputTokens
+    FROM token_events
+    WHERE device = ? AND source = ? AND session_id LIKE 'local:codex:%'
+  `).all(payload.device, oldSource);
+
+  const classifiedDaily = new Map();
+  for (const event of legacyEvents) {
+    const source = codexSourceForSession(event.sessionId, eventSources.get(event.eventId), metadataSourcePrefixes, fallbackSource);
+    if (source === oldSource) continue;
+    const key = dailyUsageKey(oldSource, event.usageDate, event.model);
+    const totals = classifiedDaily.get(key) || emptyUsage();
+    addUsage(totals, eventTokens(event), 0);
+    classifiedDaily.set(key, totals);
+  }
+
+  if (oldSource === LEGACY_CODEX_SOURCE || classifiedDaily.size) {
+    migrateLegacyCodexDailyUsage(db, payload, oldSource, classifiedDaily);
+  }
+  for (const row of db.prepare(`
+    SELECT session_id AS sessionId
+    FROM session_usage
+    WHERE device = ? AND source = ? AND session_id LIKE 'local:codex:%'
+  `).all(payload.device, oldSource)) {
+    const source = codexSourceForSession(row.sessionId, sessionSources.get(row.sessionId), metadataSourcePrefixes, fallbackSource);
+    moveSessionSource(db, payload.device, oldSource, row.sessionId, source);
+  }
+
+  const updateEventSource = db.prepare(`
+    UPDATE token_events
+    SET source = ?
+    WHERE event_id = ? AND device = ? AND source = ?
+  `);
+  for (const event of legacyEvents) {
+    const source = codexSourceForSession(event.sessionId, eventSources.get(event.eventId), metadataSourcePrefixes, fallbackSource);
+    if (source !== oldSource) updateEventSource.run(source, event.eventId, payload.device, oldSource);
+  }
+}
+
+function codexSourceForSession(sessionId, eventSource, metadataSourcePrefixes, fallbackSource) {
+  if (eventSource) return eventSource;
+  for (const [prefix, source] of metadataSourcePrefixes) {
+    if (sessionId.startsWith(prefix)) return source;
+  }
+  return fallbackSource;
+}
+
+function migrateLegacyCodexDailyUsage(db, payload, oldSource, classifiedDaily) {
+  const rows = db.prepare(`
+    SELECT usage_date AS usageDate, model,
+      input_tokens AS inputTokens, output_tokens AS outputTokens,
+      cache_creation_tokens AS cacheCreationTokens,
+      cache_read_tokens AS cacheReadTokens,
+      cached_input_tokens AS cachedInputTokens,
+      reasoning_output_tokens AS reasoningOutputTokens,
+      total_tokens AS totalTokens, cost_usd AS costUSD
+    FROM daily_usage
+    WHERE device = ? AND source = ?
+  `).all(payload.device, oldSource);
+  const deleteDaily = db.prepare(`
+    DELETE FROM daily_usage
+    WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
+  `);
+  const currentDaily = new Map();
+  const currentCosts = new Map();
+  for (const row of payload.dailyRows) {
+    const key = dailyUsageKey(oldSource, row.usageDate, row.model);
+    const cost = currentCosts.get(key) || 0;
+    currentCosts.set(key, cost + Number(row.costUSD || 0));
+    if (row.source === oldSource) {
+      const totals = currentDaily.get(key) || emptyUsage();
+      addUsage(totals, eventTokens(row), row.costUSD);
+      currentDaily.set(key, totals);
+    }
+  }
+  for (const row of rows) {
+    const key = dailyUsageKey(oldSource, row.usageDate, row.model);
+    const classified = classifiedDaily.get(key) || emptyUsage();
+    const current = currentDaily.get(key) || emptyUsage();
+    if (!hasUsage(classified) && hasUsage(current)) continue;
+    const remaining = subtractUsage(row, classified, currentCosts.get(key) || 0);
+    deleteDaily.run(payload.device, oldSource, row.usageDate, row.model);
+    if (hasUsage(remaining)) {
+      appendDailyUsage(payload.dailyRows, {
+        device: payload.device,
+        source: oldSource === LEGACY_CODEX_SOURCE ? UNKNOWN_CODEX_SOURCE : oldSource,
+        usageDate: row.usageDate,
+        model: row.model,
+        ...remaining
+      });
+    }
+  }
+}
+
+function moveSessionSource(db, device, oldSource, sessionId, source) {
+  if (source === oldSource) return;
+  db.prepare(`
+    INSERT OR IGNORE INTO session_usage (
+      device, source, session_id, last_activity, project_path, model,
+      input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+      cached_input_tokens, reasoning_output_tokens, total_tokens, cost_usd, updated_at
+    )
+    SELECT device, ?, session_id, last_activity, project_path, model,
+      input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+      cached_input_tokens, reasoning_output_tokens, total_tokens, cost_usd, updated_at
+    FROM session_usage
+    WHERE device = ? AND source = ? AND session_id = ?
+  `).run(source, device, oldSource, sessionId);
+  for (const table of ['session_annotations', 'session_outputs']) {
+    db.prepare(`
+      DELETE FROM ${table}
+      WHERE device = ? AND source = ? AND session_id = ?
+        AND EXISTS (SELECT 1 FROM ${table} AS current WHERE current.device = ? AND current.source = ? AND current.session_id = ?)
+    `).run(device, oldSource, sessionId, device, source, sessionId);
+    db.prepare(`
+      UPDATE ${table}
+      SET source = ?
+      WHERE device = ? AND source = ? AND session_id = ?
+    `).run(source, device, oldSource, sessionId);
+  }
+  db.prepare(`
+    DELETE FROM work_item_sessions
+    WHERE device = ? AND source = ? AND session_id = ?
+      AND EXISTS (
+        SELECT 1 FROM work_item_sessions AS current
+        WHERE current.work_item_id = work_item_sessions.work_item_id
+          AND current.device = ? AND current.source = ? AND current.session_id = ?
+      )
+  `).run(device, oldSource, sessionId, device, source, sessionId);
+  db.prepare(`
+    UPDATE work_item_sessions
+    SET source = ?
+    WHERE device = ? AND source = ? AND session_id = ?
+  `).run(source, device, oldSource, sessionId);
+  db.prepare(`
+    DELETE FROM session_usage
+    WHERE device = ? AND source = ? AND session_id = ?
+  `).run(device, oldSource, sessionId);
+}
+
+function emptyUsage() {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    cachedInputTokens: 0,
+    reasoningOutputTokens: 0,
+    totalTokens: 0,
+    costUSD: 0
+  };
+}
+
+function subtractUsage(row, classified, currentCostUSD) {
+  const remaining = emptyUsage();
+  for (const field of [
+    'inputTokens', 'outputTokens', 'cacheCreationTokens', 'cacheReadTokens',
+    'cachedInputTokens', 'reasoningOutputTokens', 'totalTokens'
+  ]) {
+    remaining[field] = Math.max(0, Number(row[field] || 0) - Number(classified[field] || 0));
+  }
+  remaining.costUSD = Math.max(0, Number(row.costUSD || 0) - Number(currentCostUSD || 0));
+  return remaining;
+}
+
+function hasUsage(row) {
+  return row.inputTokens || row.outputTokens || row.cacheCreationTokens || row.cacheReadTokens
+    || row.cachedInputTokens || row.reasoningOutputTokens || row.totalTokens || row.costUSD;
+}
+
+function appendDailyUsage(rows, addition) {
+  const existing = rows.find(row =>
+    row.source === addition.source
+    && row.usageDate === addition.usageDate
+    && row.model === addition.model
+  );
+  if (!existing) {
+    rows.push(addition);
+    return;
+  }
+  for (const field of [
+    'inputTokens', 'outputTokens', 'cacheCreationTokens', 'cacheReadTokens',
+    'cachedInputTokens', 'reasoningOutputTokens', 'totalTokens', 'costUSD'
+  ]) {
+    existing[field] = Number(existing[field] || 0) + Number(addition[field] || 0);
+  }
+}
+
 function applyEventReconciliation(db, payload) {
-  const plan = eventReconciliationPlan(db, payload);
+  const plans = payloadSources(payload)
+    .map(source => ({ source, plan: eventReconciliationPlan(db, payload, source) }))
+    .filter(({ plan }) => plan.prefixes.length || plan.replaceManagedEvents);
+  if (!plans.length) return null;
+
+  for (const { source, plan } of plans) {
+    applyEventReconciliationPlan(db, payload, source, plan);
+  }
+  return plans;
+}
+
+function applyEventReconciliationPlan(db, payload, source, plan) {
   if (
     !plan.prefixes.length &&
     !plan.replaceManagedEvents
   ) return plan;
 
-  const source = reconciliationSource(payload);
   const deleteEvents = db.prepare(`
     DELETE FROM token_events
     WHERE device = ? AND source = ? AND session_id LIKE ? ESCAPE '\\'
@@ -474,7 +783,7 @@ function applyEventReconciliation(db, payload) {
   return plan;
 }
 
-function eventReconciliationPlan(db, payload) {
+function eventReconciliationPlan(db, payload, source) {
   const prefixes = normalizedEventSessionPrefixes(payload.reconciliation);
   const managedEventIdPrefix = normalizedReconciliationPrefix(payload.reconciliation?.managedEventIdPrefix);
   const managedEventSessionPrefixes = normalizedEventSessionPrefixes({
@@ -488,7 +797,7 @@ function eventReconciliationPlan(db, payload) {
     };
   }
 
-  const source = reconciliationSource(payload);
+  const eventRows = payload.eventRows.filter(row => row.source === source);
   const device = payload.device;
   const selectEvents = db.prepare(`
     SELECT event_id AS eventId, date(timestamp, '+8 hours') AS usageDate
@@ -501,7 +810,7 @@ function eventReconciliationPlan(db, payload) {
   let replaceManagedEvents = false;
   const managedSessionPrefixes = [];
   for (const prefix of managedEventSessionPrefixes) {
-    const expectedIds = new Set(payload.eventRows
+    const expectedIds = new Set(eventRows
       .filter(row => row.eventId.startsWith(managedEventIdPrefix) && row.sessionId.startsWith(prefix))
       .map(row => row.eventId));
     const managedRows = db.prepare(`
@@ -526,7 +835,7 @@ function eventReconciliationPlan(db, payload) {
   }
 
   for (const prefix of prefixes) {
-    const expectedIds = new Set(payload.eventRows
+    const expectedIds = new Set(eventRows
       .filter(row => row.sessionId.startsWith(prefix))
       .map(row => row.eventId));
     const existing = selectEvents.all(device, source, sqlLikePrefix(prefix));
@@ -546,7 +855,15 @@ function eventReconciliationPlan(db, payload) {
 }
 
 function mergeHistoricalEventUsage(db, payload, pricingData) {
-  const source = reconciliationSource(payload);
+  const sources = payload.sourceSummary.id === 'codex'
+    ? [...new Set([...payloadSources(payload), UNKNOWN_CODEX_SOURCE])]
+    : payloadSources(payload);
+  for (const source of sources) {
+    mergeHistoricalEventUsageForSource(db, payload, source, pricingData);
+  }
+}
+
+function mergeHistoricalEventUsageForSource(db, payload, source, pricingData) {
   const eventIdPrefix = normalizedReconciliationPrefix(payload.reconciliation?.managedEventIdPrefix);
   if (!eventIdPrefix) return;
   const currentPrefixes = normalizedEventSessionPrefixes({
@@ -579,7 +896,7 @@ function mergeHistoricalEventUsage(db, payload, pricingData) {
     if (row.lastActivity > session.lastActivity) session.lastActivity = row.lastActivity;
     sessions.set(row.sessionId, session);
 
-    const dayKey = dailyUsageKey(row.usageDate, row.model);
+    const dayKey = dailyUsageKey(source, row.usageDate, row.model);
     const day = days.get(dayKey) || usageRow({
       device: payload.device, source, usageDate: row.usageDate, model: row.model || ''
     });
@@ -588,7 +905,7 @@ function mergeHistoricalEventUsage(db, payload, pricingData) {
   }
   payload.sessionRows.push(...sessions.values());
 
-  const dailyByKey = new Map(payload.dailyRows.map(row => [dailyUsageKey(row.usageDate, row.model), row]));
+  const dailyByKey = new Map(payload.dailyRows.map(row => [dailyUsageKey(row.source, row.usageDate, row.model), row]));
   for (const [key, historical] of days) {
     const current = dailyByKey.get(key);
     if (!current) {
@@ -669,12 +986,16 @@ function resetSessionsByPrefix(db, payload, source, prefix) {
   `).run(payload.device, source, sqlLikePrefix(prefix));
 }
 
-function dailyUsageKey(usageDate, model) {
-  return JSON.stringify([usageDate, model]);
+function dailyUsageKey(source, usageDate, model) {
+  return JSON.stringify([source, usageDate, model]);
 }
 
-function reconciliationSource(payload) {
-  return payload.eventRows[0]?.source || payload.sessionRows[0]?.source || payload.dailyRows[0]?.source || payload.source || '';
+function payloadSources(payload) {
+  return [...new Set([
+    ...payload.dailyRows.map(row => row.source),
+    ...payload.sessionRows.map(row => row.source),
+    ...payload.eventRows.map(row => row.source)
+  ].filter(Boolean))];
 }
 
 function sqlLikePrefix(value) {

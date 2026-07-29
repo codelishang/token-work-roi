@@ -1760,6 +1760,20 @@ section.story:last-of-type  { padding-bottom: 0; }
   width: 280px;
   height: 280px;
 }
+.donut-tooltip {
+  position: absolute;
+  z-index: 2;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: oklch(0.16 0.010 60);
+  box-shadow: 0 8px 24px -8px rgb(0 0 0 / 0.3);
+  color: oklch(0.91 0.018 145);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.donut-tooltip strong { display: block; font-size: 12px; font-weight: 600; }
+.donut-tooltip span { display: block; margin-top: 4px; font-size: 13px; }
 .donut-center {
   position: absolute;
   inset: 0;

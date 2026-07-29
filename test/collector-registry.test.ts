@@ -11,7 +11,7 @@ import {
 test('collector registry exposes six stable sources', () => {
   const stable = stableCollectors().map(item => item.id).sort();
   assert.deepEqual(stable, ['claude', 'codex', 'gemini', 'hermes', 'openclaw', 'opencode']);
-  assert.equal(collectorLabel('codex'), 'Codex CLI');
+  assert.equal(collectorLabel('codex'), 'Codex');
 });
 
 test('collector detection includes experimental source metadata', () => {
