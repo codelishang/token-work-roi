@@ -92,6 +92,17 @@ test('scheduled pricing refresh reuses the main pricing files on test', () => {
   assert.match(workflow, /git fetch origin main --depth=1/);
   assert.match(workflow, /git checkout FETCH_HEAD -- src\/pricing\.ts data\/official-pricing\.json/);
   assert.match(workflow, /if: github\.event_name == 'workflow_dispatch'[\s\S]+run: npm run pricing:update/);
+  assert.match(workflow, /concurrency:[\s\S]+group: update-pricing[\s\S]+cancel-in-progress: false/);
+  assert.match(workflow, /run: npm run test:pricing/);
+  assert.doesNotMatch(workflow, /run: npm test/);
+});
+
+test('release gate only skips the exact automated pricing commit', () => {
+  const workflow = readFileSync(resolve(root, '.github', 'workflows', 'release-gate.yml'), 'utf8');
+  assert.match(workflow, /concurrency:[\s\S]+cancel-in-progress: true/);
+  assert.match(workflow, /github\.actor != 'github-actions\[bot\]'/);
+  assert.match(workflow, /github\.event\.head_commit\.message != 'chore: refresh official model pricing'/);
+  assert.doesNotMatch(workflow, /paths-ignore:/);
 });
 
 test('.dockerignore excludes private runtime data from build context', () => {

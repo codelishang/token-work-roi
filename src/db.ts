@@ -1035,7 +1035,7 @@ function runTokenEventUpsert(statement, event) {
   );
 }
 
-function scopedTokenEventId(event) {
+export function scopedTokenEventId(event) {
   const suffix = createHash('sha256')
     .update(`${event.eventId}\0${event.device}\0${event.source}`)
     .digest('hex')

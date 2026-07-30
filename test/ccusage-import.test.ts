@@ -174,6 +174,132 @@ test('ccusage migrates legacy generic Codex rows without duplicating imported us
   }
 });
 
+test('ccusage migration does not rewrite unrelated legacy Codex imports on the same device', () => {
+  const db = tempDb();
+  const plan = planCcusageImport({
+    type: 'session',
+    data: [{ agent: 'codex', session: 'selected', models: ['gpt-5.5'], inputTokens: 10, lastActivity: '2026-06-17T02:00:00Z' }]
+  }, { device: 'shared-device' });
+  try {
+    db.prepare(`
+      INSERT INTO token_events (event_id, device, source, session_id, timestamp, model, input_tokens)
+      VALUES ('ccusage:session:codex-unidentified-client:2026-06-18:unrelated:gpt-5.5:2026-06-18T02:00:00.000Z', ?, 'Codex (unidentified client)', 'unrelated', '2026-06-18T02:00:00.000Z', 'gpt-5.5', 99)
+    `).run('shared-device');
+
+    applyCcusageImport(db, plan);
+
+    assert.equal(db.prepare(`
+      SELECT COUNT(*) AS count FROM token_events
+      WHERE device = 'shared-device' AND source = 'Codex (unidentified client)' AND session_id = 'unrelated'
+    `).get().count, 1);
+  } finally {
+    db.close();
+  }
+});
+
+test('ccusage migration preserves labels attached to legacy unidentified sessions', () => {
+  const db = tempDb();
+  const plan = planCcusageImport({
+    type: 'session',
+    data: [{ agent: 'codex', session: 'selected', models: ['gpt-5.5'], inputTokens: 10, lastActivity: '2026-06-17T02:00:00Z' }]
+  }, { device: 'shared-device' });
+  const daily = plan.daily[0];
+  const session = plan.sessions[0];
+  const event = plan.tokenEvents[0];
+  const legacyEventId = event.eventId.replace(':codex:', ':codex-unidentified-client:');
+  try {
+    db.prepare(`INSERT INTO daily_usage (device, source, usage_date, model, total_tokens) VALUES (?, 'codex', ?, ?, ?)`)
+      .run(daily.device, daily.usageDate, daily.model, daily.totalTokens);
+    db.prepare(`INSERT INTO daily_usage (device, source, usage_date, model, total_tokens) VALUES (?, ?, ?, ?, ?)`)
+      .run(daily.device, 'Codex (unidentified client)', daily.usageDate, daily.model, daily.totalTokens);
+    db.prepare(`INSERT INTO session_usage (device, source, session_id, model, total_tokens) VALUES (?, 'codex', ?, ?, ?)`)
+      .run(session.device, session.sessionId, session.model, session.totalTokens);
+    db.prepare(`INSERT INTO session_usage (device, source, session_id, model, total_tokens) VALUES (?, ?, ?, ?, ?)`)
+      .run(session.device, 'Codex (unidentified client)', session.sessionId, session.model, session.totalTokens);
+    db.prepare(`INSERT INTO session_annotations (device, source, session_id, note, updated_at) VALUES (?, 'codex', ?, 'newest', '2026-06-17 03:00:00')`)
+      .run(session.device, session.sessionId);
+    db.prepare(`INSERT INTO session_annotations (device, source, session_id, note, updated_at) VALUES (?, ?, ?, ?, '2026-06-17T02:00:00Z')`)
+      .run(session.device, 'Codex (unidentified client)', session.sessionId, 'keep');
+    db.prepare(`
+      INSERT INTO token_events (event_id, device, source, session_id, timestamp, model, input_tokens)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(legacyEventId, event.device, 'Codex (unidentified client)', event.sessionId, event.timestamp, event.model, event.inputTokens);
+
+    assert.equal(ccusageImportWouldChange(db, plan), true);
+    applyCcusageImport(db, plan);
+
+    assert.equal(db.prepare(`SELECT note FROM session_annotations WHERE device = ? AND source = 'Codex' AND session_id = ?`)
+      .get(session.device, session.sessionId).note, 'newest');
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM daily_usage WHERE device = ? AND source = 'Codex' AND usage_date = ? AND model = ?`)
+      .get(daily.device, daily.usageDate, daily.model).count, 1);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE event_id = ? AND source = 'Codex'`)
+      .get(event.eventId).count, 1);
+  } finally {
+    db.close();
+  }
+});
+
+test('ccusage migration ignores non-Codex rows in mixed-source reports', () => {
+  const db = tempDb();
+  const plan = planCcusageImport({
+    type: 'session',
+    data: [
+      { agent: 'codex', session: 'codex-session', models: ['gpt-5.5'], inputTokens: 10, lastActivity: '2026-06-17T01:00:00Z' },
+      { agent: 'claude', session: 'claude-session', models: ['claude-sonnet-4'], inputTokens: 20, lastActivity: '2026-06-18T01:00:00Z' }
+    ]
+  }, { device: 'mixed-device' });
+  const claudeDaily = plan.daily.find(row => row.source === 'claude');
+  const claudeSession = plan.sessions.find(row => row.source === 'claude');
+  try {
+    db.prepare(`INSERT INTO daily_usage (device, source, usage_date, model, total_tokens) VALUES (?, 'codex', ?, ?, 20)`)
+      .run('mixed-device', claudeDaily.usageDate, claudeDaily.model);
+    db.prepare(`INSERT INTO session_usage (device, source, session_id, model, total_tokens) VALUES (?, 'codex', ?, ?, 20)`)
+      .run('mixed-device', claudeSession.sessionId, claudeSession.model);
+
+    applyCcusageImport(db, plan);
+
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM daily_usage WHERE device = 'mixed-device' AND source = 'codex' AND model = ?`)
+      .get(claudeDaily.model).count, 1);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM session_usage WHERE device = 'mixed-device' AND source = 'codex' AND session_id = ?`)
+      .get(claudeSession.sessionId).count, 1);
+  } finally {
+    db.close();
+  }
+});
+
+test('ccusage migration preserves another device when canonical event ids collide', () => {
+  const db = tempDb();
+  const plan = planCcusageImport({
+    type: 'session',
+    data: [{ agent: 'codex', session: 'shared-session', models: ['gpt-5.5'], inputTokens: 10, lastActivity: '2026-06-17T01:00:00Z' }]
+  }, { device: 'new-device' });
+  const event = plan.tokenEvents[0];
+  const legacyEventId = event.eventId.replace(':codex:', ':codex-unidentified-client:');
+  try {
+    db.prepare(`
+      INSERT INTO token_events (event_id, device, source, session_id, timestamp, model, input_tokens)
+      VALUES (?, 'existing-device', 'Codex', 'shared-session', ?, 'gpt-5.5', 30)
+    `).run(event.eventId, event.timestamp);
+    db.prepare(`
+      INSERT INTO token_events (event_id, device, source, session_id, timestamp, model, input_tokens)
+      VALUES (?, 'new-device', 'Codex (unidentified client)', 'shared-session', ?, 'gpt-5.5', 10)
+    `).run(legacyEventId, event.timestamp);
+
+    applyCcusageImport(db, plan);
+    applyCcusageImport(db, plan);
+
+    assert.equal(db.prepare(`SELECT input_tokens AS inputTokens FROM token_events WHERE event_id = ? AND device = 'existing-device'`)
+      .get(event.eventId).inputTokens, 30);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE device = 'new-device' AND source = 'Codex'`)
+      .get().count, 1);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE device = 'new-device' AND source = 'Codex (unidentified client)'`)
+      .get().count, 0);
+    assert.equal(ccusageImportWouldChange(db, plan), false);
+  } finally {
+    db.close();
+  }
+});
+
 test('ccusage parser rejects conversation-like fields', () => {
   assert.throws(() => parseCcusageJsonText(JSON.stringify({
     type: 'session',
