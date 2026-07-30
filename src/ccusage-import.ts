@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { calculateOfficialCost } from './pricing.ts';
 import { providerFromSource } from './provider.ts';
-import { recordRun, upsertDaily, upsertSession, upsertTokenEvent } from './db.ts';
+import { recordRun, scopedTokenEventId, upsertDaily, upsertSession, upsertTokenEvent } from './db.ts';
 
 const UNSAFE_KEYS = new Set([
   'prompt',
@@ -166,7 +166,12 @@ export function applyCcusageImport(db, plan) {
     migrateLegacyGenericCodexImport(db, plan);
     for (const row of plan.daily) upsertDaily(db, row);
     for (const row of plan.sessions) upsertSession(db, row);
-    for (const row of plan.tokenEvents) upsertTokenEvent(db, row);
+    for (const row of plan.tokenEvents) {
+      const applied = upsertTokenEvent(db, row);
+      if (row.source === GENERIC_CODEX_SOURCE) {
+        removeAppliedLegacyCodexEvent(db, row, applied.eventId);
+      }
+    }
     recordRun(db, plan.run);
     db.exec('COMMIT');
   } catch (error) {
@@ -182,6 +187,7 @@ export function applyCcusageImport(db, plan) {
 }
 
 export function ccusageImportWouldChange(db, plan) {
+  if (legacyGenericCodexImportWouldChange(db, plan)) return true;
   const daily = db.prepare(`
     SELECT 1 FROM daily_usage
     WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
@@ -224,13 +230,44 @@ export function ccusageImportWouldChange(db, plan) {
     )) return true;
   }
   for (const row of plan.tokenEvents) {
-    if (!events.get(
-      row.eventId, row.device, row.source, row.sessionId, row.timestamp, row.model,
+    const matches = eventId => events.get(
+      eventId, row.device, row.source, row.sessionId, row.timestamp, row.model,
       row.inputTokens, row.outputTokens, row.cacheReadTokens, row.cacheCreationTokens, row.reasoningTokens,
       row.toolCategory || null, row.fileExtension || null, row.repoPathHash || null, row.privacyLevel || 'safe'
-    )) return true;
+    );
+    if (!matches(row.eventId) && !matches(scopedTokenEventId(row))) return true;
   }
   return false;
+}
+
+function legacyGenericCodexImportWouldChange(db, plan) {
+  if (!plan.tokenEvents.some(row => row.source === GENERIC_CODEX_SOURCE)) return false;
+  const legacyEvent = db.prepare(`
+    SELECT 1 FROM token_events
+    WHERE device = ? AND source IN ('codex', ?)
+      AND event_id IN (?, ?)
+    LIMIT 1
+  `);
+  for (const row of plan.tokenEvents.filter(row => row.source === GENERIC_CODEX_SOURCE)) {
+    const unidentifiedEventId = row.eventId.replace(/^(ccusage:[^:]+:)[^:]+:/, '$1codex-unidentified-client:');
+    if (legacyEvent.get(row.device, LEGACY_UNKNOWN_CODEX_SOURCE, row.eventId, unidentifiedEventId)) return true;
+  }
+  const legacyDaily = db.prepare(`
+    SELECT 1 FROM daily_usage
+    WHERE device = ? AND source IN ('codex', ?) AND usage_date = ? AND model = ?
+    LIMIT 1
+  `);
+  if (plan.daily.filter(row => row.source === GENERIC_CODEX_SOURCE).some(row => legacyDaily.get(
+    row.device, LEGACY_UNKNOWN_CODEX_SOURCE, row.usageDate, row.model
+  ))) return true;
+  const legacySession = db.prepare(`
+    SELECT 1 FROM session_usage
+    WHERE device = ? AND source IN ('codex', ?) AND session_id = ?
+    LIMIT 1
+  `);
+  return plan.sessions.filter(row => row.source === GENERIC_CODEX_SOURCE).some(row => legacySession.get(
+    row.device, LEGACY_UNKNOWN_CODEX_SOURCE, row.sessionId
+  ));
 }
 
 function detectShape(payload) {
@@ -360,7 +397,9 @@ function sourceFromRow(row) {
 
 function migrateLegacyGenericCodexImport(db, plan) {
   if (!plan.tokenEvents.some(row => row.source === GENERIC_CODEX_SOURCE)) return;
-  const legacyEvents = new Map(plan.tokenEvents.map((row) => [
+  const legacyEvents = new Map(plan.tokenEvents
+    .filter(row => row.source === GENERIC_CODEX_SOURCE)
+    .map((row) => [
     row.eventId,
     row.eventId
   ]));
@@ -378,11 +417,12 @@ function migrateLegacyGenericCodexImport(db, plan) {
       db.prepare(`UPDATE token_events SET source = ? WHERE event_id = ?`).run(GENERIC_CODEX_SOURCE, eventId);
       continue;
     }
-    const current = db.prepare('SELECT 1 FROM token_events WHERE event_id = ?').get(canonicalEventId);
-    if (current) {
+    const current = db.prepare('SELECT device, source FROM token_events WHERE event_id = ?').get(canonicalEventId);
+    if (current?.device === plan.device && current?.source === GENERIC_CODEX_SOURCE) {
       db.prepare('DELETE FROM token_events WHERE event_id = ?').run(eventId);
       continue;
     }
+    if (current) continue;
     db.prepare(`
       UPDATE token_events
       SET event_id = ?, source = ?
@@ -390,58 +430,85 @@ function migrateLegacyGenericCodexImport(db, plan) {
     `).run(canonicalEventId, GENERIC_CODEX_SOURCE, eventId, plan.device, LEGACY_UNKNOWN_CODEX_SOURCE);
   }
 
-  for (const row of plan.daily) {
-    const target = db.prepare(`
-      SELECT 1 FROM daily_usage
-      WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
-    `).get(row.device, GENERIC_CODEX_SOURCE, row.usageDate, row.model);
-    if (target) {
-      db.prepare(`
-        DELETE FROM daily_usage
-        WHERE device = ? AND source IN ('codex', ?) AND usage_date = ? AND model = ?
-      `).run(row.device, LEGACY_UNKNOWN_CODEX_SOURCE, row.usageDate, row.model);
-      continue;
+  for (const row of plan.daily.filter(row => row.source === GENERIC_CODEX_SOURCE)) {
+    for (const source of ['codex', LEGACY_UNKNOWN_CODEX_SOURCE]) {
+      moveImportedDailySource(db, row.device, source, row.usageDate, row.model);
     }
-    db.prepare(`
-      UPDATE daily_usage
-      SET source = ?
-      WHERE device = ? AND source IN ('codex', ?) AND usage_date = ? AND model = ?
-    `).run(GENERIC_CODEX_SOURCE, row.device, LEGACY_UNKNOWN_CODEX_SOURCE, row.usageDate, row.model);
   }
-  for (const row of plan.sessions) {
-    const target = db.prepare(`
-      SELECT 1 FROM session_usage
-      WHERE device = ? AND source = ? AND session_id = ?
-    `).get(row.device, GENERIC_CODEX_SOURCE, row.sessionId);
-    if (target) {
-      db.prepare(`
-        DELETE FROM session_usage
-        WHERE device = ? AND source IN ('codex', ?) AND session_id = ?
-      `).run(row.device, LEGACY_UNKNOWN_CODEX_SOURCE, row.sessionId);
-      continue;
+  for (const row of plan.sessions.filter(row => row.source === GENERIC_CODEX_SOURCE)) {
+    for (const source of ['codex', LEGACY_UNKNOWN_CODEX_SOURCE]) {
+      moveImportedSessionSource(db, row.device, source, row.sessionId);
     }
-    db.prepare(`
-      UPDATE session_usage
-      SET source = ?
-      WHERE device = ? AND source IN ('codex', ?) AND session_id = ?
-    `).run(GENERIC_CODEX_SOURCE, row.device, LEGACY_UNKNOWN_CODEX_SOURCE, row.sessionId);
   }
 
-  // Earlier versions used a different event-id source segment for generic Codex imports.
+}
+
+function moveImportedDailySource(db, device, source, usageDate, model) {
+  const target = db.prepare(`
+    SELECT 1 FROM daily_usage
+    WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
+  `).get(device, GENERIC_CODEX_SOURCE, usageDate, model);
+  if (target) {
+    db.prepare(`DELETE FROM daily_usage WHERE device = ? AND source = ? AND usage_date = ? AND model = ?`)
+      .run(device, source, usageDate, model);
+    return;
+  }
+  db.prepare(`UPDATE daily_usage SET source = ? WHERE device = ? AND source = ? AND usage_date = ? AND model = ?`)
+    .run(GENERIC_CODEX_SOURCE, device, source, usageDate, model);
+}
+
+function removeAppliedLegacyCodexEvent(db, row, appliedEventId) {
+  const unidentifiedEventId = row.eventId.replace(/^(ccusage:[^:]+:)[^:]+:/, '$1codex-unidentified-client:');
   db.prepare(`
     DELETE FROM token_events
-    WHERE device = ? AND source = ?
-      AND event_id LIKE 'ccusage:%:codex-unidentified-client:%'
-      AND EXISTS (
-        SELECT 1 FROM token_events AS current
-        WHERE current.event_id = REPLACE(token_events.event_id, ':codex-unidentified-client:', ':codex:')
-      )
-  `).run(plan.device, LEGACY_UNKNOWN_CODEX_SOURCE);
+    WHERE device = ? AND source IN ('codex', ?)
+      AND event_id IN (?, ?)
+      AND event_id != ?
+  `).run(
+    row.device,
+    LEGACY_UNKNOWN_CODEX_SOURCE,
+    row.eventId,
+    unidentifiedEventId,
+    appliedEventId
+  );
+}
+
+function moveImportedSessionSource(db, device, source, sessionId) {
+  if (source === GENERIC_CODEX_SOURCE) return;
   db.prepare(`
-    UPDATE token_events
-    SET event_id = REPLACE(event_id, ':codex-unidentified-client:', ':codex:'), source = ?
-    WHERE device = ? AND source = ? AND event_id LIKE 'ccusage:%:codex-unidentified-client:%'
-  `).run(GENERIC_CODEX_SOURCE, plan.device, LEGACY_UNKNOWN_CODEX_SOURCE);
+    INSERT OR IGNORE INTO session_usage (
+      device, source, session_id, last_activity, project_path, model, input_tokens,
+      output_tokens, cache_creation_tokens, cache_read_tokens, cached_input_tokens,
+      reasoning_output_tokens, total_tokens, cost_usd, updated_at
+    ) SELECT device, ?, session_id, last_activity, project_path, model, input_tokens,
+      output_tokens, cache_creation_tokens, cache_read_tokens, cached_input_tokens,
+      reasoning_output_tokens, total_tokens, cost_usd, updated_at
+    FROM session_usage WHERE device = ? AND source = ? AND session_id = ?
+  `).run(GENERIC_CODEX_SOURCE, device, source, sessionId);
+  for (const table of ['session_annotations', 'session_outputs']) {
+    db.prepare(`
+      DELETE FROM ${table} WHERE device = ? AND source = ? AND session_id = ?
+        AND EXISTS (SELECT 1 FROM ${table} AS current
+          WHERE current.device = ? AND current.source = ? AND current.session_id = ?
+            AND COALESCE(julianday(current.updated_at), 0) >= COALESCE(julianday(${table}.updated_at), 0))
+    `).run(device, source, sessionId, device, GENERIC_CODEX_SOURCE, sessionId);
+    db.prepare(`
+      DELETE FROM ${table} WHERE device = ? AND source = ? AND session_id = ?
+        AND EXISTS (SELECT 1 FROM ${table} AS legacy
+          WHERE legacy.device = ? AND legacy.source = ? AND legacy.session_id = ?
+            AND COALESCE(julianday(legacy.updated_at), 0) > COALESCE(julianday(${table}.updated_at), 0))
+    `).run(device, GENERIC_CODEX_SOURCE, sessionId, device, source, sessionId);
+    db.prepare(`UPDATE ${table} SET source = ? WHERE device = ? AND source = ? AND session_id = ?`)
+      .run(GENERIC_CODEX_SOURCE, device, source, sessionId);
+  }
+  db.prepare(`
+    DELETE FROM work_item_sessions WHERE device = ? AND source = ? AND session_id = ?
+      AND EXISTS (SELECT 1 FROM work_item_sessions AS current WHERE current.work_item_id = work_item_sessions.work_item_id AND current.device = ? AND current.source = ? AND current.session_id = ?)
+  `).run(device, source, sessionId, device, GENERIC_CODEX_SOURCE, sessionId);
+  db.prepare(`UPDATE work_item_sessions SET source = ? WHERE device = ? AND source = ? AND session_id = ?`)
+    .run(GENERIC_CODEX_SOURCE, device, source, sessionId);
+  db.prepare(`DELETE FROM session_usage WHERE device = ? AND source = ? AND session_id = ?`)
+    .run(device, source, sessionId);
 }
 
 function legacyGenericCodexEventId(eventId) {

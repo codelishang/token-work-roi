@@ -68,7 +68,8 @@
     "prepack": "npm run build && node scripts/build-runtime.ts",
     "postpack": "node scripts/clean-runtime.ts",
     "typecheck:tools": "tsc --noEmit",
-    "test": "node --test"
+    "test": "node --test",
+    "test:pricing": "node --test test/official-pricing.test.ts test/exchange-rate.test.ts test/deployment-config.test.ts"
   },
   "engines": {
     "node": ">=24.0.0"

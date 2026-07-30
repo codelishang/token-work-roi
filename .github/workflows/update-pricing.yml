@@ -18,6 +18,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: update-pricing
+  cancel-in-progress: false
+
 jobs:
   update-pricing-main:
     name: Refresh official model pricing (main)
@@ -38,7 +42,7 @@ jobs:
         run: npm run pricing:update
 
       - run: npm run typecheck:tools
-      - run: npm test
+      - run: npm run test:pricing
 
       - run: npm run build
 
@@ -82,7 +86,7 @@ jobs:
         run: npm run pricing:update
 
       - run: npm run typecheck:tools
-      - run: npm test
+      - run: npm run test:pricing
 
       - run: npm run build
 

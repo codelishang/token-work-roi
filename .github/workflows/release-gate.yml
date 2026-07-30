@@ -14,9 +14,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-gate-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   release-gate:
     name: ubuntu-latest / Node 24.x
+    if: "github.event_name != 'push' || github.actor != 'github-actions[bot]' || github.event.head_commit.message != 'chore: refresh official model pricing'"
     runs-on: ubuntu-latest
     env:
       ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
@@ -54,6 +59,7 @@ jobs:
 
   package-smoke:
     name: ${{ matrix.os }} / Node 24.x
+    if: "github.event_name != 'push' || github.actor != 'github-actions[bot]' || github.event.head_commit.message != 'chore: refresh official model pricing'"
     runs-on: ${{ matrix.os }}
     env:
       ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
