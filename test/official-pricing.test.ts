@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import pricingCache from '../data/official-pricing.json' with { type: 'json' };
 import {
   attachOfficialPricing,
   calculateCost,
@@ -194,6 +195,28 @@ test('calculates Gemini API USD price from official rates', () => {
     });
     assert.equal(cost.priced, true, model);
     assert.equal(cost.provider, 'Gemini', model);
+  }
+});
+
+test('recognizes the current DeepSeek V4 Flash version identifier', () => {
+  const cost = calculateOfficialCost('deepseek-v4-flash-0731', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    output: 1_000_000
+  });
+
+  assert.equal(cost.priced, true);
+  assert.equal(cost.provider, 'deepseek');
+  assert.equal(cost.resolvedModel, 'deepseek-v4-flash');
+});
+
+test('keeps cached official provenance when a pricing page is temporarily unavailable', () => {
+  const byModel = new Map(pricingCache.models.map(row => [row.model, row]));
+  for (const model of ['grok-4.5', 'claude-fable-5', 'claude-opus-5']) {
+    assert.match(byModel.get(model).pricingFetchStatus, /^(official-page|cached-official-page)$/);
+  }
+  for (const model of ['gemini-3.5-flash', 'gemini-3.1-pro-preview']) {
+    assert.match(byModel.get(model).pricingFetchStatus, /^(official-page|fallback-parse-error|cached-fallback-parse-error)$/);
   }
 });
 
