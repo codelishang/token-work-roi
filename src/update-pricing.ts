@@ -36,7 +36,7 @@ const STABLE_ALIASES = new Map([
   ['openai::gpt-5-6-sol', ['gpt-5.6-sol', 'gpt-5-6-sol']],
   ['openai::gpt-5-6-terra', ['gpt-5.6-terra', 'gpt-5-6-terra']],
   ['openai::gpt-5-6-luna', ['gpt-5.6-luna', 'gpt-5-6-luna']],
-  ['deepseek::deepseek-v4-flash', ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner']],
+  ['deepseek::deepseek-v4-flash', ['deepseek-v4-flash', 'deepseek-v4-flash-0731', 'deepseek-chat', 'deepseek-reasoner']],
   ['xiaomi::mimo-v2.5-pro', ['mimo-v2.5-pro', 'mimo-v2-pro']],
   ['zhipu glm::glm-5.2', ['glm-5.2', 'glm-5-2']],
   ['zhipu glm::glm-5.1', ['glm-5.1', 'glm-5-1']],
@@ -156,7 +156,7 @@ function fallbackPricingModel(model, previous, exchangeRate, sourceStatus = null
     ...model,
     aliases: uniqueModelAliases(model.aliases || [model.model])
   };
-  const fallbackStatus = sourceStatus === 'parse-error' ? 'fallback-parse-error' : 'fallback-table';
+  const fallbackStatus = fallbackPricingFetchStatus(previous, sourceStatus);
   const officialRates = model.officialRatesPerMTok || previous?.officialRatesPerMTok || null;
   if (officialRates?.currency !== 'CNY' || !officialRates.ratesPerMTok) {
     return { ...normalizedModel, pricingFetchStatus: fallbackStatus };
@@ -176,6 +176,15 @@ function fallbackPricingModel(model, previous, exchangeRate, sourceStatus = null
     pricingFetchStatus: sourceStatus === 'parse-error' ? 'cached-official-cny-parse-error' : 'cached-official-cny',
     note: model.note || previous?.note
   };
+}
+
+function fallbackPricingFetchStatus(previous, sourceStatus) {
+  const previousStatus = String(previous?.pricingFetchStatus || '');
+  if (previousStatus.startsWith('official-')) return `cached-${previousStatus}`;
+  if (previousStatus.startsWith('cached-official-')) return previousStatus;
+  if (previousStatus === 'cached-fallback-parse-error') return previousStatus;
+  if (previousStatus === 'fallback-parse-error') return 'cached-fallback-parse-error';
+  return sourceStatus === 'parse-error' ? 'fallback-parse-error' : 'fallback-table';
 }
 
 function officialRateSource(model) {
