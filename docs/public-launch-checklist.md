@@ -63,7 +63,7 @@ TOKEN_WORK_CAPTURE_REAL=1 node scripts/capture-real-screenshots.ts
 - Fallback package name if unavailable: `tokenroi`.
 - Primary one-command real-data path: `npx token-work`.
 - Demo-only path: `npx token-work demo`.
-- Troubleshooting path: `npx token-work --dry-run-only`, then `npx token-work --no-collect` if you only want to inspect the current SQLite.
+- Troubleshooting paths: use `npx token-work coverage --sources=claude,codex,cursor` to inspect source coverage, or `npx token-work --no-collect` to open the current SQLite without collection.
 - Do not publish until `npm pack --dry-run` shows no SQLite databases, logs, `.env`, `.claude`, `.codex`, or `node_modules`; the built `dist/` directory is required.
 - `prepack` builds `dist/` and generates `dist-runtime/` for the tarball. Both remain ignored by Git; Docker builds its own copies.
 - Do not publish until the tarball includes `data/official-pricing.json`, `docs/demo-data/token-work-demo.json`, `LICENSE`, `COMMERCIAL-LICENSE.md`, `NOTICE.md`, `PRIVACY.md`, and no deprecated pricing cache files.
@@ -83,7 +83,7 @@ TOKEN_WORK_CAPTURE_REAL=1 node scripts/capture-real-screenshots.ts
 
 ## Pricing Refresh
 
-- `.github/workflows/update-pricing.yml` must run weekly at Monday 01:15 Asia/Shanghai (`15 17 * * 0` in UTC).
+- `.github/workflows/update-pricing.yml` must run weekly at Tuesday 01:15 Asia/Shanghai (`15 17 * * 1` in UTC).
 - `npm run pricing:update` must fetch provider-owned pricing pages, write `data/official-pricing.json`, and update `src/pricing.ts` only after at least one official source succeeds.
 - If all official sources fail, the workflow should fail and leave the existing cache and built-in table unchanged.
 - RMB prices may be converted to internal USD cost math using the captured USD/CNY refresh rate, but README/release notes must keep the “not a provider invoice” boundary.

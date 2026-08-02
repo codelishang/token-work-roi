@@ -274,23 +274,29 @@ function sleep(ms) {
 
 function stopChild(child) {
   if (child.exitCode != null) return Promise.resolve();
-  return new Promise<void>(resolveStop => {
-    const timer = setTimeout(resolveStop, 5000);
-    timer.unref?.();
+  return new Promise<void>((resolveStop, rejectStop) => {
+    const timer = setTimeout(() => {
+      stopProcessTree(child, 'SIGKILL');
+      rejectStop(new Error('installed CLI did not exit within 5 seconds'));
+    }, 5000);
     child.once('close', () => {
       clearTimeout(timer);
       resolveStop();
     });
-    if (process.platform === 'win32' && child.pid) {
-      spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
-    } else {
-      try {
-        process.kill(-child.pid, 'SIGINT');
-      } catch {
-        child.kill('SIGINT');
-      }
-    }
+    stopProcessTree(child, 'SIGINT');
   });
+}
+
+function stopProcessTree(child, signal) {
+  if (process.platform === 'win32' && child.pid) {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
+    return;
+  }
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    child.kill(signal);
+  }
 }
 
 async function cleanupTempDir(dir) {

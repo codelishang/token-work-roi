@@ -31,6 +31,7 @@ try {
       NODE_OPTIONS: '--no-warnings'
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
     windowsHide: true
   });
 
@@ -118,6 +119,7 @@ async function runBrowserConsoleCheck(url) {
     'about:blank'
   ], {
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
     windowsHide: true
   });
 
@@ -347,19 +349,29 @@ function safeEnv(extra = {}) {
 
 function stopChild(child) {
   if (child.exitCode != null) return Promise.resolve();
-  return new Promise<void>(resolveStop => {
-    const timer = setTimeout(resolveStop, 5000);
-    timer.unref?.();
+  return new Promise<void>((resolveStop, rejectStop) => {
+    const timer = setTimeout(() => {
+      stopProcessTree(child, 'SIGKILL');
+      rejectStop(new Error('browser smoke app did not exit within 5 seconds'));
+    }, 5000);
     child.once('close', () => {
       clearTimeout(timer);
       resolveStop();
     });
-    if (process.platform === 'win32' && child.pid) {
-      spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
-    } else {
-      child.kill();
-    }
+    stopProcessTree(child, 'SIGTERM');
   });
+}
+
+function stopProcessTree(child, signal) {
+  if (process.platform === 'win32' && child.pid) {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
+    return;
+  }
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    child.kill(signal);
+  }
 }
 
 async function cleanupTempDir(dir) {

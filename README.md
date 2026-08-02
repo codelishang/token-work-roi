@@ -30,7 +30,7 @@
 2. 用量主要来自哪些工具、模型和项目。
 3. 这些消耗对应了什么任务和产出，下次是否需要调整模型选择。
 
-数据保存在本机 SQLite 中。元衡不保存 prompt、response、完整对话、diff 或命令正文，也不代替模型服务商账单。部分采集器会在本地保存 workspace/project path 用于项目归因；这些路径不会上传，公开截图和导出前仍应检查并脱敏。
+数据保存在本机 SQLite 中。采集器不保存 prompt、response、完整对话、diff 或命令正文，元衡也不代替模型服务商账单。部分采集器会在本地保存 workspace/project path 用于项目归因；默认不会上传这些路径，公开截图、导出或启用远程推送前仍应检查并脱敏。
 
 ## 功能
 
@@ -52,15 +52,15 @@
 npx token-work
 ```
 
-默认入口会先打开浏览器页面，再在后台采集 AI 编程工具（如Claude Code、Codex）的可信事件级记录。采集通过可信门槛后，元衡会备份并更新本地 SQLite。
-持续运行时，定时采集只在用量发生变化时备份，最多每小时一个，并保留最近 24 个定时备份；人工采集、导入和手工备份不受此限制。
+默认入口会先打开浏览器页面，再在后台采集 Claude Code 和 Codex 的可信事件级记录。Codex 会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex。采集通过可信门槛后，元衡会备份并更新本地 SQLite。
+定时采集只在数据需要写入或修复时创建完整备份；新的受管备份创建成功后，只保留最新一份，避免长期堆积。
 
 首次使用只想看界面，可以选择以下方式：
 
 ```bash
 npx token-work demo           # 使用合成演示数据
-npx token-work --dry-run-only # 检查来源，不写数据库
-npx token-work --no-collect   # 只打开已有数据库
+npx token-work --dry-run-only # 禁用定时采集，不写入采集结果
+npx token-work --no-collect   # 不扫描本机 AI 工具记录
 ```
 
 源码目录使用本地入口，不要用 `npx token-work` 代替当前源码：
@@ -90,7 +90,7 @@ node src/cli.ts
 
 | 类型 | 来源 |
 |---|---|
-| 稳定采集 | Claude Code、Codex CLI、Gemini CLI、OpenCode、OpenClaw、Hermes Agent |
+| 稳定采集 | Claude Code、Codex（CLI、Desktop 或未识别客户端）、Gemini CLI、OpenCode、OpenClaw、Hermes Agent |
 | 实验采集 | Cursor、GitHub Copilot CLI、Qwen Code、Kimi、Goose |
 | 外部导入 | ccusage JSON、ccusage CLI 以及兼容的结构化 JSON |
 
@@ -137,7 +137,7 @@ npm run desktop
 npm run pricing:update
 ```
 
-仓库工作流每周一 01:15（Asia/Shanghai）尝试更新价格和汇率。
+仓库工作流每周二 01:15（Asia/Shanghai）尝试更新价格和汇率。
 
 ## 隐私
 

@@ -1,8 +1,8 @@
-import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
-import { basename, dirname, extname, join, resolve } from 'node:path';
+import { basename, extname, join, resolve } from 'node:path';
 import { URL } from 'node:url';
 import {
   attachOfficialPricing,
@@ -28,6 +28,7 @@ import {
   WORK_STAGES,
   applyAutoSessionAnnotations,
   batchUpsertSessionAnnotations,
+  createSqliteBackup,
   defaultDbPath,
   deleteProjectAliasRule,
   deleteAdvisorAction,
@@ -1861,16 +1862,7 @@ function sendText(res, value, contentType = 'text/plain; charset=utf-8', status 
 }
 
 function createDbBackup({ reason = 'manual' } = {}) {
-  const createdAt = new Date().toISOString();
-  const stamp = createdAt.replace(/[:.]/g, '-');
-  const safeReason = String(reason || 'manual').replace(/[^a-z0-9-]+/gi, '-').toLowerCase();
-  const backupDir = process.env.BACKUP_DIR || join(dirname(dbPath), 'backups');
-  mkdirSync(backupDir, { recursive: true });
-  db.exec('PRAGMA wal_checkpoint(FULL)');
-  const fileName = `usage-${stamp}-${safeReason}.sqlite`;
-  const backupPath = join(backupDir, fileName);
-  copyFileSync(dbPath, backupPath);
-  return { createdAt, path: backupPath, fileName };
+  return createSqliteBackup(db, dbPath, { reason });
 }
 
 function trimOutput(value) {

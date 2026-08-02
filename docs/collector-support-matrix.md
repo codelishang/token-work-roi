@@ -15,11 +15,11 @@ Yuanheng imports usage only when explicit token fields exist. It prefers missing
 
 ## 支持表 / Matrix
 
-| 来源 | 状态 | 数据来源 | 是否读取对话正文 | 可检测 | 可采集 | 默认检查 | 默认写入 |
+| 来源 | 状态 | 数据来源 | 是否保存对话正文 | 可检测 | 可采集 | 默认检查 | 默认写入 |
 |---|---|---|---:|---:|---:|---:|---:|
 | Claude Code | stable | 本机元数据或日志文件 | 否 | 是 | 是 | 是 | 是 |
-| Codex CLI | stable | 本机 JSONL session 元数据 | 否 | 是 | 是 | 是 | 是 |
-| Cursor | experimental | 明确的结构化 usage JSON/JSONL | 否 | 是 | 仅明确词元字段 | 是 | 否 |
+| Codex（CLI、Desktop 或未识别客户端） | stable | 本机 JSONL session 元数据 | 否 | 是 | 是 | 是 | 是 |
+| Cursor | experimental | 明确的结构化 usage JSON/JSONL | 否 | 是 | 仅明确词元字段 | 否 | 否 |
 | Gemini CLI | stable | 本机 session 元数据 | 否 | 是 | 是 | 否 | 否 |
 | OpenCode | stable | 本机数据目录 | 否 | 是 | 是 | 否 | 否 |
 | OpenClaw | stable | 本机 agent 元数据 | 否 | 是 | 是 | 否 | 否 |
@@ -41,9 +41,9 @@ Yuanheng imports usage only when explicit token fields exist. It prefers missing
 | Grok Build | detected-only | 本机路径检测 | 否 | 是 | 否 | 否 | 否 |
 | Kilo | detected-only | 本机路径检测 | 否 | 是 | 否 | 否 | 否 |
 
-“默认检查”表示快速启动时会只读检查该来源是否存在可靠字段；“默认写入”表示通过可信门槛后会写入 SQLite。
+“默认检查”表示快速启动的定时采集会处理该来源；“默认写入”表示通过可信门槛后会写入 SQLite。
 
-“Default check” means the quick start checks the source in read-only mode. “Default write” means trusted events can be written to SQLite after the trust gate passes.
+“Default check” means quick-start scheduled collection processes the source. “Default write” means trusted events can be written to SQLite after the trust gate passes.
 
 ## 结构化 JSON 导入 / Structured JSON Import
 
