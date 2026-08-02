@@ -1,15 +1,15 @@
 # 本地采集说明 / Local Collectors
 
-元衡的采集逻辑只处理结构化用量数据。它不会读取对话正文，也不会从文本长度估算词元。
+元衡的采集逻辑只提取结构化用量字段，不保存或输出对话正文，也不会从文本长度估算词元。
 
-Yuanheng collectors handle structured usage metadata only. They do not read conversation text or estimate tokens from text length.
+Yuanheng collectors extract structured usage metadata only. They do not store or output conversation text, and they do not estimate tokens from text length.
 
 ## 稳定采集器 / Stable Collectors
 
 当前已实现稳定采集的来源：
 
 - Claude Code
-- Codex CLI
+- Codex（CLI、Desktop 或未识别客户端）
 - Gemini CLI
 - OpenCode
 - OpenClaw
@@ -17,9 +17,9 @@ Yuanheng collectors handle structured usage metadata only. They do not read conv
 
 这些来源在本机存在可靠元数据时，可以生成 `daily_usage`、`session_usage` 和 `token_events`。稳定采集不等于快速启动时全部自动写入。
 
-快速启动默认检查 Claude Code、Codex CLI 和 Cursor，只自动写入通过可信门槛的 Claude Code 与 Codex CLI 事件记录。其他稳定采集器需要通过 `coverage --sources` 或 `collect --sources` 明确选择。
+快速启动的定时采集只处理 Claude Code 和 Codex；Codex 记录会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex。其他稳定采集器和实验来源需要通过 `coverage --sources` 或 `collect --sources` 明确选择。
 
-These collectors can produce structured usage when reliable local metadata exists. The quick-start flow checks Claude Code, Codex CLI, and Cursor, and only auto-writes trusted Claude Code and Codex CLI events. Select other stable collectors explicitly with `coverage --sources` or `collect --sources`.
+These collectors can produce structured usage when reliable local metadata exists. Quick-start scheduled collection handles Claude Code and Codex only. Codex records are labeled as Codex CLI, Codex Desktop, or Codex according to available client metadata. Select other stable or experimental collectors explicitly with `coverage --sources` or `collect --sources`.
 
 ## 实验来源 / Experimental Sources
 
@@ -60,12 +60,12 @@ v2 源码入口使用 TypeScript 文件。旧的 `.mjs` 源码直跑路径不再
 | 命令 | 作用 |
 |---|---|
 | `node src/cli.ts` | 默认入口，先打开浏览器，再在后台采集可信 Claude/Codex 事件级记录 |
-| `--no-collect` | 只打开当前 SQLite，不扫描本机日志 |
-| `--dry-run-only` | 只预检，不写入数据库 |
+| `--no-collect` | 不扫描本机日志，也不写入采集结果 |
+| `--dry-run-only` | 禁用定时采集并打开界面，不写入采集结果 |
 | `coverage` | 查看每个来源是否有可靠词元字段，以及 daily/session/event 是否能对上 |
 | `collect --dry-run` | 输出将要读取和写入的摘要，不修改 SQLite |
 | `collect --apply` | 明确确认后写入，写入前创建 SQLite 备份 |
-| 定时采集 | 用量发生变化时才备份，最多每小时一个，只保留最近 24 个定时备份 |
+| 定时采集 | 数据需要写入或修复时才创建完整备份；受管备份只保留最新一份 |
 | `compare-ccusage` | 调用 ccusage JSON 模式进行对比，但不采用 ccusage 的成本字段 |
 
 ## 写入前的保护 / Write Safety
@@ -102,6 +102,6 @@ Yuanheng can only read local history that still exists and contains reliable tok
 
 ## 隐私 / Privacy
 
-采集器只保存结构化词元元数据。不保存 prompt、response、完整 transcript、命令正文或 diff 内容。部分来源会把 workspace/project path 保存到本机 SQLite，用于项目归因；分享数据库、截图或导出文件前应检查并脱敏。
+采集器只保存结构化词元元数据，不保存 prompt、response、完整 transcript、命令正文或 diff 内容。部分来源会把 workspace/project path 保存到本机 SQLite，用于项目归因；分享数据库、截图、导出文件或启用远程推送前应检查并脱敏。
 
 Collectors may store structured token metadata only. They must not store prompts, responses, full transcripts, command bodies, or diff content. Some sources keep a workspace or project path in local SQLite for attribution; review and sanitize it before sharing a database, screenshot, or export.

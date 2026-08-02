@@ -1,19 +1,21 @@
 # Privacy
 
-元衡（Token Work ROI）是本机运行的 AI 编程用量复盘工具。默认数据文件位于 `data/`，不会上传到第三方服务器。
+元衡（Token Work ROI）是本机运行的 AI 编程用量复盘工具。默认数据文件位于 `data/`，默认不会上传到第三方服务器。
 
 ## 启动与采集
 
 - `token-work demo` 只使用合成演示数据。
-- `token-work --no-collect` 只打开已有 SQLite，不检查本机 AI 工具记录。
-- `token-work --dry-run-only` 只检查结构化来源，不写入 SQLite。
-- `token-work`、`token-work start` 和 `token-work live` 会先执行只读可信度检查；Claude Code 或 Codex CLI 的事件级记录通过可信门槛后，才会备份并写入本地 SQLite。
+- `token-work --no-collect` 不检查本机 AI 工具记录，也不写入采集结果。
+- `token-work --dry-run-only` 禁用定时采集并打开本地界面，不写入采集结果。
+- `token-work`、`token-work start` 和 `token-work live` 会启动定时采集；Claude Code 或 Codex 的事件级记录通过可信门槛后，才会备份并写入本地 SQLite。Codex 会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex。
 - `token-work collect --apply` 和结构化 JSON 导入需要用户明确确认。
-- Electron 桌面入口默认只启动或复用本地服务，不主动执行采集，也不开启定时采集。
+- Electron 桌面入口会复用已有服务；没有可复用服务时，会启动本地服务并开启与默认入口相同的定时采集。
 
-## 不保存的内容
+`--no-collect` 和 `--dry-run-only` 不会把 SQLite 变成只读文件；首次启动时仍可能初始化数据库结构，用户在界面中的主动操作也可以写入本地数据。
 
-元衡不保存：
+## 采集器不保存的内容
+
+采集器不保存：
 
 - prompt、response 或完整 transcript；
 - diff、代码正文或命令正文；
@@ -21,6 +23,7 @@
 - 账号密码、API key 或模型服务商凭据。
 
 用户填写的产出链接只保存 URL、标签和类型，不会抓取链接内容。
+备注由用户主动填写，内容由用户自行控制。
 
 ## 本地保存的内容
 
@@ -34,6 +37,8 @@
 - 文件类型、工具分类和不可逆路径哈希等派生字段。
 
 workspace/project path 用于本地项目归因，可能包含用户名或目录结构。界面、截图、SQLite、导出文件或问题日志在对外分享前都应人工检查。路径哈希用于区分来源，不等同于明文路径。
+
+只有用户显式执行带 `--push` 的采集命令时，结构化采集结果才会发送到指定 ingest 地址；其中可能包含 workspace/project path。
 
 ## 本地接口
 

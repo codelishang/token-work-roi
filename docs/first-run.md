@@ -10,8 +10,8 @@
 npx token-work
 ```
 
-默认入口先打开浏览器，再在后台采集 Claude Code 和 Codex CLI 的可信事件级记录。采集通过可信门槛后，元衡会备份并更新本地 SQLite。
-持续运行时，定时采集只在用量发生变化时备份，最多每小时一个，并保留最近 24 个定时备份；人工采集、导入和手工备份不受此限制。
+默认入口先打开浏览器，再在后台采集 Claude Code 和 Codex 的可信事件级记录。Codex 会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex。采集通过可信门槛后，元衡会备份并更新本地 SQLite。
+定时采集只在数据需要写入或修复时创建完整备份；新的受管备份创建成功后，只保留最新一份。
 
 只想熟悉界面：
 
@@ -19,13 +19,15 @@ npx token-work
 npx token-work demo
 ```
 
-只检查、不写入：
+禁用定时采集，不写入采集结果：
 
 ```bash
 npx token-work --dry-run-only
 ```
 
-只打开已有数据库：
+需要检查来源覆盖时运行 `npx token-work coverage --sources=claude,codex,cursor`。
+
+不扫描本机 AI 工具记录：
 
 ```bash
 npx token-work --no-collect

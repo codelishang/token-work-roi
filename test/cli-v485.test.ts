@@ -338,7 +338,6 @@ function stopChildWithSignal(child, signal) {
   if (!child || child.exitCode != null) return Promise.resolve();
   return new Promise<void>((resolveStop, rejectStop) => {
     const timer = setTimeout(() => rejectStop(new Error(`CLI did not exit after ${signal}`)), 5000);
-    timer.unref?.();
     child.once('close', () => {
       clearTimeout(timer);
       resolveStop();

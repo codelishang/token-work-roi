@@ -1,5 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -9,6 +9,7 @@ import {
   VALUE_LEVELS,
   WORK_PURPOSES,
   WORK_STAGES,
+  createSqliteBackup,
   defaultDbPath,
   normalizeSessionAnnotation,
   normalizeSessionOutput,
@@ -235,7 +236,7 @@ export function applyClosureImport(db, plan, { dbPath = defaultDbPath, backupDir
     };
   }
 
-  const backup = createDbBackup(db, dbPath, { reason, backupDir });
+  const backup = createSqliteBackup(db, dbPath, { reason, backupDir });
   db.exec('BEGIN');
   try {
     for (const item of plan.planned) {
@@ -522,20 +523,6 @@ function resolveSessionIdentity(db, row, index) {
   if (matches.length === 0) throw new Error(`sessions[${index}].sessionId does not exist in session_usage`);
   if (matches.length > 1) throw new Error(`sessions[${index}].sessionId is ambiguous; include device and source`);
   return matches[0];
-}
-
-function createDbBackup(db, dbPath, { reason = 'closure-import', backupDir = null } = {}) {
-  const resolvedDbPath = resolve(dbPath);
-  const createdAt = new Date().toISOString();
-  const stamp = createdAt.replace(/[:.]/g, '-');
-  const safeReason = String(reason || 'manual').replace(/[^a-z0-9-]+/gi, '-').toLowerCase();
-  const dir = backupDir || process.env.BACKUP_DIR || join(dirname(resolvedDbPath), 'backups');
-  mkdirSync(dir, { recursive: true });
-  db.exec('PRAGMA wal_checkpoint(FULL)');
-  const fileName = `usage-${stamp}-${safeReason}.sqlite`;
-  const path = join(dir, fileName);
-  copyFileSync(resolvedDbPath, path);
-  return { createdAt, path, fileName };
 }
 
 function normalizeText(value) {

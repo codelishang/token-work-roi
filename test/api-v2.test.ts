@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -129,6 +129,8 @@ test('v2 APIs cover alias rules, batch annotations, outputs, backup, export and 
       projectAliasRules: 1
     });
     assert.equal(existsSync(imported.backup.path), true);
+    assert.equal(existsSync(backup.backup.path), false);
+    assert.equal(readdirSync(backupDir).length, 1);
 
     const emptyImport = await postJson(port, '/api/import/annotations', {});
     assert.equal(emptyImport.backup, null);

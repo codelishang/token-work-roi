@@ -30,7 +30,7 @@ Yuanheng is the Chinese name of Token Work ROI. It reviews structured usage reco
 2. Which tools, models, and projects account for that usage?
 3. What work did the usage produce, and should I change model choices next time?
 
-Data stays in a local SQLite database. Token Work ROI does not store prompts, responses, full conversations, diffs, or command bodies. Some collectors keep a workspace or project path locally for attribution; paths are not uploaded and should be reviewed before sharing screenshots or exports. The software is not a replacement for provider billing.
+Data stays in a local SQLite database. Collectors do not store prompts, responses, full conversations, diffs, or command bodies. Some collectors keep a workspace or project path locally for attribution; paths are not uploaded by default and should be reviewed before sharing screenshots, exporting data, or enabling remote push. The software is not a replacement for provider billing.
 
 ## Features
 
@@ -52,15 +52,15 @@ Requires Node.js 24.0.0 or newer.
 npx token-work
 ```
 
-The default entrypoint opens the browser UI first, then collects trusted event-level records from Claude Code and Codex CLI in the background. When collection passes the trust gate, Token Work ROI backs up and updates the local SQLite database.
-While the service stays running, scheduled collection backs up only when usage changes, at most once per hour, and retains the latest 24 scheduled backups. Manual collection, imports, and manual backups are unaffected.
+The default entrypoint opens the browser UI first, then collects trusted event-level records from Claude Code and Codex in the background. Codex records are labeled as Codex CLI, Codex Desktop, or Codex according to available client metadata. When collection passes the trust gate, Token Work ROI backs up and updates the local SQLite database.
+Scheduled collection creates a full backup only when data needs to be written or repaired. After a new managed backup succeeds, only the latest one is retained.
 
 For a first look without writing real usage:
 
 ```bash
 npx token-work demo           # Synthetic demo data
-npx token-work --dry-run-only # Check sources without writing SQLite
-npx token-work --no-collect   # Open the existing database only
+npx token-work --dry-run-only # Disable scheduled collection writes
+npx token-work --no-collect   # Do not scan local AI tool records
 ```
 
 From a source checkout, run the local entrypoint instead of resolving the npm package with `npx`:
@@ -90,7 +90,7 @@ Screenshots use synthetic or sanitized data and contain no real local logs.
 
 | Type | Sources |
 |---|---|
-| Stable collectors | Claude Code, Codex CLI, Gemini CLI, OpenCode, OpenClaw, Hermes Agent |
+| Stable collectors | Claude Code, Codex (CLI, Desktop, or unidentified client), Gemini CLI, OpenCode, OpenClaw, Hermes Agent |
 | Experimental collectors | Cursor, GitHub Copilot CLI, Qwen Code, Kimi, Goose |
 | External import | ccusage JSON, ccusage CLI, and compatible structured JSON |
 
@@ -137,7 +137,7 @@ Maintainers can refresh the cache manually:
 npm run pricing:update
 ```
 
-The repository workflow attempts a pricing and exchange-rate refresh every Monday at 03:15 Asia/Shanghai.
+The repository workflow attempts a pricing and exchange-rate refresh every Tuesday at 01:15 Asia/Shanghai.
 
 ## Privacy
 
