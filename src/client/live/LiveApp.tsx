@@ -520,7 +520,7 @@ function sourceDonutGradient(rows, totalTokens) {
 }
 
 function sourceColor(index) {
-  return ['#35f4ff', '#6dff9c', '#a86bff', '#ffb84d', '#ff4d6d'][index % 5];
+  return ['#36d1c4', '#ff8b72', '#a78bfa', '#e6be56', '#78a6ff'][index % 5];
 }
 
 function freshnessLabel(value) {
