@@ -350,9 +350,11 @@ function SourceDonut({ rows, totalTokens }) {
       <div className="source-list">
         {rows.map((row, index) => (
           <div key={row.key}>
-            <i style={{ background: sourceColor(index) }}/>
             <div className="source-meta">
-              <span>{row.key}</span>
+              <span className="source-label">
+                <i style={{ background: sourceColor(index) }}/>
+                <span>{row.key}</span>
+              </span>
               <strong>{totalTokens ? `${((row.totalTokens / totalTokens) * 100).toFixed(1)}%` : '0.0%'}</strong>
             </div>
           </div>
