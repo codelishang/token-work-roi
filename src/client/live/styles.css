@@ -881,15 +881,12 @@ body.desktop-pulse-body::before {
 }
 
 .source-list > div {
-  display: grid;
-  grid-template-columns: 10px minmax(0, 1fr);
-  gap: 9px;
-  align-items: center;
   color: var(--pulse-muted);
   font-size: 12px;
 }
 
 .source-list i {
+  flex: 0 0 auto;
   width: 8px;
   height: 8px;
   border-radius: 3px;
@@ -910,10 +907,22 @@ body.desktop-pulse-body::before {
   min-width: 0;
   width: max-content;
   max-width: 100%;
+  margin-inline: auto;
   display: grid;
   justify-items: center;
   gap: 4px;
   text-align: center;
+}
+
+.source-label {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.source-label > span {
+  min-width: 0;
 }
 
 .advice-list {
@@ -1147,6 +1156,19 @@ body.desktop-pulse-body::before {
   }
 }
 
+@media (min-width: 1181px) and (max-width: 1279px) {
+  .browser-live .source-donut-layout {
+    grid-template-columns: 142px minmax(0, 1fr);
+    gap: 8px;
+  }
+  .browser-live .source-donut {
+    width: 142px;
+  }
+  .browser-live .source-donut::after {
+    inset: 36px;
+  }
+}
+
 @media (max-width: 1180px) {
   .browser-live.live-shell {
     height: auto;
@@ -1155,8 +1177,19 @@ body.desktop-pulse-body::before {
     overflow-x: hidden;
     overflow-y: visible;
   }
+  .browser-live .pulse-kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
   .pulse-kpi-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .browser-live .pulse-main-grid,
+  .browser-live .pulse-bottom-grid {
+    grid-template-columns: 1fr;
+  }
+  .browser-live .pulse-chart-panel,
+  .browser-live .pulse-agent-panel {
+    grid-column: auto;
   }
   .pulse-main-grid,
   .pulse-bottom-grid {
@@ -1183,6 +1216,9 @@ body.desktop-pulse-body::before {
   .pulse-kpi-grid {
     grid-template-columns: 1fr;
   }
+  .browser-live .pulse-kpi-grid {
+    grid-template-columns: 1fr;
+  }
   .pulse-brand strong {
     font-size: 16px;
   }
@@ -1197,6 +1233,10 @@ body.desktop-pulse-body::before {
     gap: 8px;
   }
   .source-donut-layout {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+  .browser-live .source-donut-layout {
     grid-template-columns: 1fr;
     justify-items: center;
   }
