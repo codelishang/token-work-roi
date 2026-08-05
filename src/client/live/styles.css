@@ -742,8 +742,11 @@ body.desktop-pulse-body::before {
 }
 
 .browser-live .model-list {
+  height: 100%;
+  min-height: 0;
   padding: 4px 14px 0;
   gap: clamp(7px, 0.9vh, 10px);
+  grid-auto-rows: minmax(0, 1fr);
 }
 
 .model-row {

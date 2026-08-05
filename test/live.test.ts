@@ -86,6 +86,33 @@ test('live snapshot reports idle empty state', () => {
   assert.deepEqual(snapshot.byModel, []);
 });
 
+test('live snapshot excludes zero-token synthetic model placeholders', () => {
+  const snapshot = buildLiveSnapshot({
+    now: new Date('2026-06-17T02:15:00Z'),
+    windowMinutes: 15,
+    sessions: [{
+      device: 'demo',
+      source: 'Claude Code',
+      sessionId: 'real-session',
+      lastActivity: '2026-06-17T02:10:00Z',
+      model: 'glm-5.2',
+      inputTokens: 1000,
+      outputTokens: 100,
+      totalTokens: 1100
+    }, {
+      device: 'demo',
+      source: 'Claude Code',
+      sessionId: 'placeholder-session',
+      lastActivity: '2026-06-17T02:11:00Z',
+      model: '<synthetic>'
+    }]
+  });
+
+  assert.equal(snapshot.totals.totalTokens, 1100);
+  assert.deepEqual(snapshot.byModel.map(row => row.key), ['glm-5.2']);
+  assert.deepEqual(snapshot.activeSessions.map(row => row.model), ['glm-5.2']);
+});
+
 test('live data freshness explains collecting, stale and empty states', () => {
   assert.equal(buildLiveDataFreshness({
     collectionState: { status: 'running' }

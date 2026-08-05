@@ -45,8 +45,12 @@ export function buildLiveSnapshot({
   const nowMs = new Date(now).getTime();
   const windowMs = Math.max(1, Number(windowMinutes) || DEFAULT_WINDOW_MINUTES) * 60 * 1000;
   const sinceMs = nowMs - windowMs;
-  const normalizedEvents = tokenEvents.map(normalizeEvent);
-  const normalizedSessions = sessions.map(normalizeSession);
+  const normalizedEvents = tokenEvents
+    .map(normalizeEvent)
+    .filter(row => row.model !== '<synthetic>' || row.totalTokens > 0);
+  const normalizedSessions = sessions
+    .map(normalizeSession)
+    .filter(row => row.model !== '<synthetic>' || row.totalTokens > 0);
   const recentEvents = normalizedEvents
     .filter(event => event.timestampMs >= sinceMs && event.timestampMs <= nowMs);
   const recentSessions = normalizedSessions
@@ -54,8 +58,10 @@ export function buildLiveSnapshot({
 
   const metricRows = recentEvents.length ? recentEvents : recentSessions;
   const sourceRows = aggregate(metricRows, 'source');
-  const modelRows = aggregate(metricRows, 'model');
+  const modelRows = aggregate(metricRows, 'model')
+    .filter(row => row.key !== '<synthetic>' && number(row.totalTokens) > 0);
   const activeSessions = recentSessions
+    .filter(session => session.model !== '<synthetic>')
     .sort((a, b) => b.lastActivityMs - a.lastActivityMs)
     .slice(0, 12)
     .map(session => ({
