@@ -158,9 +158,12 @@ async function parseSessionFile(filePath) {
     const dedupKey = dedupKeyForAssistant(obj);
     const anonymousCount = anonymousRecordCount.get(trimmed) || 0;
     anonymousRecordCount.set(trimmed, anonymousCount + 1);
+    const model = normalizeModelForGrouping(obj.message.model || obj.model || 'unknown');
+    if (model === '<synthetic>' || tokenTotal(extractTokens(obj.message.usage)) === 0) continue;
+
     const record = {
       timestamp: typeof obj.timestamp === 'string' ? obj.timestamp : null,
-      model: obj.message.model || obj.model || 'unknown',
+      model,
       usage: obj.message.usage,
       costUSD: typeof obj.costUSD === 'number' ? obj.costUSD : 0,
       dedupKey,
