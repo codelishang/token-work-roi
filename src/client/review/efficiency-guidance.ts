@@ -6,7 +6,7 @@ export function buildEfficiencyGuidance({
 } = {}) {
   return {
     cache: classifyCache(cacheReuseRate),
-    io: classifyInputOutput(inputOutputRatio),
+    io: classifyInputOutput(inputOutputRatio, cacheReuseRate),
     reasoning: classifyReasoning(reasoningShare, hasReasoningTokens)
   };
 }
@@ -25,11 +25,12 @@ function classifyCache(value) {
   if (v < 80) {
     return item('良好', '50-80%', '复用率较好，适合长项目连续工作。注意别为了追求 cache 而塞入无关上下文。', 'ok');
   }
-  return item('很高', '80%+', '大量 token 来自缓存复用，成本结构通常更友好；同时检查是否长期保留了过多过期上下文。', 'strong');
+  return item('很高', '80%+', '缓存复用良好，无需为了降低 token 主动重开窗口；只在目标或约束改变时再更新上下文。', 'strong');
 }
 
-function classifyInputOutput(value) {
+function classifyInputOutput(value, cacheReuseRate) {
   const v = finite(value);
+  const cache = finite(cacheReuseRate);
   if (v <= 0) {
     return item('缺输出', '0', '没有可计算的输出 token。先确认采集来源是否记录 output_tokens。', 'neutral');
   }
@@ -38,6 +39,9 @@ function classifyInputOutput(value) {
   }
   if (v < 8) {
     return item('健康', '3-8', '输入和输出比较均衡。多数编码、解释和复盘任务可接受。', 'ok');
+  }
+  if (cache >= 70) {
+    return item('缓存复用良好', '8+', '输入较多但缓存复用正常，单靠 Input / Output 比不能判断存在上下文浪费。', 'ok');
   }
   if (v < 15) {
     return item('上下文偏重', '8-15', '输入明显多于输出。检查是否把整个项目、长日志或重复错误一次性塞给模型。', 'warn');

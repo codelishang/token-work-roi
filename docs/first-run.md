@@ -10,8 +10,8 @@
 npx token-work
 ```
 
-默认入口先打开浏览器，再在后台采集 Claude Code 和 Codex 的可信事件级记录。Codex 会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex。采集通过可信门槛后，元衡会备份并更新本地 SQLite。
-定时采集只在数据需要写入或修复时创建完整备份；新的受管备份创建成功后，只保留最新一份。
+默认入口先打开浏览器，再每 5 分钟在后台采集 Claude Code 和 Codex 的可信事件级记录。Codex 会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex。采集通过可信门槛后，元衡会更新本地 SQLite。
+普通定时写入最多每 24 小时创建一份完整备份；数据修复前会单独备份。新的受管备份创建成功后只保留最新一份。
 
 只想熟悉界面：
 

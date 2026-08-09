@@ -11,6 +11,7 @@ type InputRecord = Record<string, unknown>;
 
 const LEGACY_CODEX_SOURCE = 'Codex CLI';
 const UNKNOWN_CODEX_SOURCE = 'Codex (unidentified client)';
+const SCHEDULED_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 interface CollectArgs {
   [key: string]: string | boolean | undefined;
@@ -294,24 +295,36 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
 
   const needsStoredUsageRepair = mode === 'apply' && db && usageTotalsNeedRepair(db);
   if (mode === 'apply' && db) {
-    const shouldBackup = needsStoredUsageRepair || tokenUsageWouldChange(db, payloads)
-      || payloads.some(payload => payload.type === 'data'
-        && payload.sourceSummary.id === 'codex'
-        && codexSourceMigrationWouldChange(db, payload));
+    const hasClaudePlaceholders = payloads.some(payload => payload.type === 'data'
+      && payload.sourceSummary.id === 'claude'
+      && hasClaudeSyntheticPlaceholders(db, payload));
+    const hasCodexMigration = payloads.some(payload => payload.type === 'data'
+      && payload.sourceSummary.id === 'codex'
+      && codexSourceMigrationWouldChange(db, payload));
+    const deletesStoredUsage = storedUsageWouldBeDeleted(db, payloads);
+    const shouldBackup = needsStoredUsageRepair || hasClaudePlaceholders
+      || hasCodexMigration || deletesStoredUsage || tokenUsageWouldChange(db, payloads);
+    const protectedMutation = needsStoredUsageRepair || hasClaudePlaceholders
+      || hasCodexMigration || deletesStoredUsage;
     summary.backup = shouldBackup
       ? createSqliteBackup(db, dbPath, scheduled
-          ? {
-              reason: 'scheduled-collect'
-            }
+          ? protectedMutation
+            ? { reason: 'scheduled-collect-repair' }
+            : { reason: 'scheduled-collect', minimumIntervalMs: SCHEDULED_BACKUP_INTERVAL_MS }
           : { reason: 'collect' })
       : null;
   }
 
   if (mode === 'apply' && db) {
     for (const payload of payloads) {
+      if (payload.type === 'data' && payload.sourceSummary.id === 'claude') {
+        removeClaudeSyntheticPlaceholders(db, payload);
+      }
       if (payload.type === 'data' && payload.sourceSummary.id === 'codex') {
-        migrateLegacyCodexClientSources(db, payload);
-        removeOrphanedCodexDailyUsage(db, payload.device);
+        runInTransaction(db, () => {
+          migrateLegacyCodexClientSources(db, payload);
+          removeOrphanedCodexDailyUsage(db, payload.device);
+        });
       }
     }
     for (const payload of payloads) {
@@ -366,6 +379,102 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
       exportPayload.runs.push(run);
     }
   }
+}
+
+function storedUsageWouldBeDeleted(db, payloads) {
+  const legacyEvent = db.prepare(`
+    SELECT 1 FROM token_events
+    WHERE event_id = ? AND device = ? AND source = ?
+  `);
+  for (const payload of payloads) {
+    if (payload.type === 'error') continue;
+    for (const source of payloadSources(payload)) {
+      const plan = eventReconciliationPlan(db, payload, source);
+      if (plan.prefixes.length || plan.replaceManagedEvents) return true;
+    }
+    for (const row of payload.eventRows) {
+      if (row.legacyEventIds.some(eventId => legacyEvent.get(eventId, row.device, row.source))) return true;
+    }
+  }
+  return false;
+}
+
+function hasClaudeSyntheticPlaceholders(db, payload) {
+  const source = payload.label;
+  return Boolean(db.prepare(`
+    SELECT 1 FROM token_events
+    WHERE device = ? AND source = ?
+      AND (model = '<synthetic>' OR instr(session_id, '<synthetic>') > 0)
+      AND input_tokens = 0 AND output_tokens = 0
+      AND cache_read_tokens = 0 AND cache_creation_tokens = 0 AND reasoning_tokens = 0
+    UNION ALL
+    SELECT 1 FROM daily_usage
+    WHERE device = ? AND source = ? AND model = '<synthetic>'
+      AND input_tokens = 0 AND output_tokens = 0
+      AND cache_creation_tokens = 0 AND cache_read_tokens = 0
+      AND cached_input_tokens = 0 AND reasoning_output_tokens = 0
+      AND total_tokens = 0 AND cost_usd = 0
+    UNION ALL
+    SELECT 1 FROM session_usage AS session
+    WHERE session.device = ? AND session.source = ?
+      AND (session.model = '<synthetic>' OR instr(session.session_id, '<synthetic>') > 0)
+      AND session.input_tokens = 0 AND session.output_tokens = 0
+      AND session.cache_creation_tokens = 0 AND session.cache_read_tokens = 0
+      AND session.cached_input_tokens = 0 AND session.reasoning_output_tokens = 0
+      AND session.total_tokens = 0 AND session.cost_usd = 0
+      AND NOT EXISTS (SELECT 1 FROM token_events AS event
+        WHERE event.device = session.device AND event.source = session.source AND event.session_id = session.session_id)
+      AND NOT EXISTS (SELECT 1 FROM session_annotations AS annotation
+        WHERE annotation.device = session.device AND annotation.source = session.source AND annotation.session_id = session.session_id)
+      AND NOT EXISTS (SELECT 1 FROM session_outputs AS output
+        WHERE output.device = session.device AND output.source = session.source AND output.session_id = session.session_id)
+      AND NOT EXISTS (SELECT 1 FROM work_item_sessions AS link
+        WHERE link.device = session.device AND link.source = session.source AND link.session_id = session.session_id)
+    LIMIT 1
+  `).get(
+    payload.device, source,
+    payload.device, source,
+    payload.device, source
+  ));
+}
+
+function removeClaudeSyntheticPlaceholders(db, payload) {
+  if (!hasClaudeSyntheticPlaceholders(db, payload)) return;
+  const source = payload.label;
+  runInTransaction(db, () => {
+    db.prepare(`
+      DELETE FROM token_events
+      WHERE device = ? AND source = ?
+        AND (model = '<synthetic>' OR instr(session_id, '<synthetic>') > 0)
+        AND input_tokens = 0 AND output_tokens = 0
+        AND cache_read_tokens = 0 AND cache_creation_tokens = 0 AND reasoning_tokens = 0
+    `).run(payload.device, source);
+    db.prepare(`
+      DELETE FROM session_usage AS session
+      WHERE session.device = ? AND session.source = ?
+        AND (session.model = '<synthetic>' OR instr(session.session_id, '<synthetic>') > 0)
+        AND session.input_tokens = 0 AND session.output_tokens = 0
+        AND session.cache_creation_tokens = 0 AND session.cache_read_tokens = 0
+        AND session.cached_input_tokens = 0 AND session.reasoning_output_tokens = 0
+        AND session.total_tokens = 0 AND session.cost_usd = 0
+        AND NOT EXISTS (SELECT 1 FROM token_events AS event
+          WHERE event.device = session.device AND event.source = session.source AND event.session_id = session.session_id)
+        AND NOT EXISTS (SELECT 1 FROM session_annotations AS annotation
+          WHERE annotation.device = session.device AND annotation.source = session.source AND annotation.session_id = session.session_id)
+        AND NOT EXISTS (SELECT 1 FROM session_outputs AS output
+          WHERE output.device = session.device AND output.source = session.source AND output.session_id = session.session_id)
+        AND NOT EXISTS (SELECT 1 FROM work_item_sessions AS link
+          WHERE link.device = session.device AND link.source = session.source AND link.session_id = session.session_id)
+    `).run(payload.device, source);
+    db.prepare(`
+      DELETE FROM daily_usage
+      WHERE device = ? AND source = ? AND model = '<synthetic>'
+        AND input_tokens = 0 AND output_tokens = 0
+        AND cache_creation_tokens = 0 AND cache_read_tokens = 0
+        AND cached_input_tokens = 0 AND reasoning_output_tokens = 0
+        AND total_tokens = 0 AND cost_usd = 0
+    `).run(payload.device, source);
+  });
 }
 
 function tokenUsageWouldChange(db, payloads) {

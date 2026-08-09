@@ -488,10 +488,11 @@ function EfficiencySection({ daily, period }) {
     input: RU.sumField(daily, 'inputTokens'),
     output: RU.sumField(daily, 'outputTokens'),
     cacheRead: RU.sumField(daily, 'cacheReadTokens'),
+    cacheCreation: RU.sumField(daily, 'cacheCreationTokens'),
     reasoning: RU.sumField(daily, 'reasoningOutputTokens')
   }), [daily]);
 
-  const cacheRate = totals.total ? (totals.cacheRead / totals.total) * 100 : 0;
+  const cacheRate = U.cacheHitRate(totals.input, totals.cacheRead, totals.cacheCreation);
   const ioRatio   = totals.output ? totals.input / totals.output : 0;
   const reasonPct = totals.total ? (totals.reasoning / totals.total) * 100 : 0;
   const guidance = useMemo(() => buildEfficiencyGuidance({
@@ -507,13 +508,13 @@ function EfficiencySection({ daily, period }) {
   const cacheSeries = useMemo(() => {
     const m = new Map();
     for (const r of daily) {
-      const x = m.get(r.usageDate) || { tot: 0, cr: 0 };
-      x.tot += r.totalTokens; x.cr += r.cacheReadTokens;
+      const x = m.get(r.usageDate) || { input: 0, cr: 0, cc: 0 };
+      x.input += r.inputTokens; x.cr += r.cacheReadTokens; x.cc += r.cacheCreationTokens;
       m.set(r.usageDate, x);
     }
     return daysArr.map(d => {
       const x = m.get(d.date);
-      return x && x.tot ? (x.cr / x.tot) * 100 : 0;
+      return x ? U.cacheHitRate(x.input, x.cr, x.cc) : 0;
     });
   }, [daily, daysArr]);
 
@@ -554,7 +555,7 @@ function EfficiencySection({ daily, period }) {
           label="Cache 复用率"
           value={cacheRate.toFixed(1)}
           unit="%"
-          note={`本期 ${U.compactCN(totals.cacheRead)} tokens 来自 cache read。这里是本地复盘口径，不是供应商精确 hit rate。`}
+          note={`本期 ${U.compactCN(totals.cacheRead)} tokens 来自 cache read；按 input、cache read 和 cache creation 计算。`}
           guidance={guidance.cache}
           spark={cacheSeries}
           color="oklch(0.55 0.16 265)"/>

@@ -156,7 +156,8 @@ test('live guardrails warn on burn rate, low cache hit, low output/input and unp
       inputTokens: 20_000,
       outputTokens: 500,
       cacheReadTokens: 0
-    }]
+    }],
+    guardrailConfig: { tokenBudgetPerHour: 50_000 }
   });
   const types = snapshot.warnings.map(item => item.type).sort();
   assert.deepEqual(types, [
@@ -166,6 +167,69 @@ test('live guardrails warn on burn rate, low cache hit, low output/input and unp
     'unpriced-model-active'
   ].sort());
   assert.equal(snapshot.guardrails.tokenBudgetPerHour, 50_000);
+});
+
+test('live advice uses observed model cost, cache reuse and nearby project sessions without a default budget', () => {
+  const now = new Date('2026-08-09T12:00:00Z');
+  const snapshot = buildLiveSnapshot({
+    now,
+    windowMinutes: 60,
+    sessions: [{
+      device: 'macbook',
+      source: 'Codex Desktop',
+      sessionId: 'textweave-session',
+      projectPath: '/Users/coderlishang/projects/TextWeaveFlutter',
+      lastActivity: '2026-08-09T11:55:00Z',
+      model: 'gpt-5.6-sol',
+      inputTokens: 100_000,
+      cacheReadTokens: 1_900_000,
+      outputTokens: 5_000,
+      totalTokens: 2_005_000
+    }, {
+      device: 'macbook',
+      source: 'Codex Desktop',
+      sessionId: 'token-work-session',
+      projectPath: '/Users/coderlishang/projects/token-work-roi',
+      lastActivity: '2026-08-09T11:42:00Z',
+      model: 'gpt-5.6-sol',
+      inputTokens: 80_000,
+      cacheReadTokens: 1_500_000,
+      outputTokens: 4_000,
+      totalTokens: 1_584_000
+    }],
+    tokenEvents: [{
+      eventId: 'textweave-event',
+      device: 'macbook',
+      source: 'Codex Desktop',
+      sessionId: 'textweave-session',
+      timestamp: '2026-08-09T11:55:00Z',
+      model: 'gpt-5.6-sol',
+      inputTokens: 100_000,
+      cacheReadTokens: 1_900_000,
+      outputTokens: 5_000,
+      costUSD: 10
+    }, {
+      eventId: 'token-work-event',
+      device: 'macbook',
+      source: 'Codex Desktop',
+      sessionId: 'token-work-session',
+      timestamp: '2026-08-09T11:42:00Z',
+      model: 'gpt-5.6-sol',
+      inputTokens: 80_000,
+      cacheReadTokens: 1_500_000,
+      outputTokens: 4_000,
+      costUSD: 8
+    }]
+  });
+  const types = snapshot.warnings.map(item => item.type);
+
+  assert.equal(snapshot.guardrails.tokenBudgetPerHour, 0);
+  assert.equal(types.includes('high-burn-rate'), false);
+  assert.equal(types.includes('low-output-input-ratio'), false);
+  assert.equal(types.includes('heavy-model-stop-today'), false);
+  assert.ok(types.includes('dominant-heavy-model-cost'));
+  assert.ok(types.includes('parallel-heavy-contexts'));
+  assert.ok(types.includes('healthy-cache-reuse'));
 });
 
 test('live guardrail thresholds can be overridden', () => {
@@ -303,7 +367,7 @@ test('live snapshot builds budget windows and budget warnings', () => {
   assert.ok(snapshot.warnings.some(item => item.type === 'budget-exceeded'));
 });
 
-test('live guardrails suggest pausing heavy models when budget pressure is active', () => {
+test('live guardrails use a custom budget without inventing a model-stop instruction', () => {
   const snapshot = buildLiveSnapshot({
     now: new Date('2026-06-17T02:15:00Z'),
     windowMinutes: 15,
@@ -326,9 +390,8 @@ test('live guardrails suggest pausing heavy models when budget pressure is activ
       outputTokens: 2_000
     }]
   });
-  const warning = snapshot.warnings.find(item => item.type === 'heavy-model-stop-today');
-  assert.ok(warning);
-  assert.match(warning.action, /轻量\/中模型/);
+  assert.ok(snapshot.warnings.some(item => item.type === 'budget-exceeded'));
+  assert.equal(snapshot.warnings.some(item => item.type === 'heavy-model-stop-today'), false);
 });
 
 test('live snapshot warns when current pace will exceed custom budget', () => {
@@ -421,11 +484,12 @@ test('live API returns guardrails and warnings from temporary SQLite', async () 
     const response = await fetch(`http://127.0.0.1:${port}/api/live`);
     if (!response.ok) assert.fail(await response.text());
     const body = await response.json();
-    assert.equal(body.guardrails.tokenBudgetPerHour, 50_000);
+    assert.equal(body.guardrails.tokenBudgetPerHour, 0);
     assert.equal(body.dataFreshness, 'fresh');
     assert.equal(typeof body.latestEventAt, 'string');
     assert.equal(body.collectionState.status, 'idle');
-    assert.ok(body.warnings.some(item => item.type === 'high-burn-rate'));
+    assert.equal(body.warnings.some(item => item.type === 'high-burn-rate'), false);
+    assert.ok(body.warnings.some(item => item.type === 'low-cache-hit'));
   } finally {
     await stopTestServer(server.child);
     await removeTempDir(dir);

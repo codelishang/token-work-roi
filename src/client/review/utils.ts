@@ -124,7 +124,7 @@ function aggregateBy(rows, key) {
   return Array.from(m.values()).map(v => ({
     ...v,
     dayCount: v.days.size,
-    cacheHitRate: v.totalTokens ? (v.cacheReadTokens / v.totalTokens) * 100 : 0
+    cacheHitRate: U.cacheHitRate(v.inputTokens, v.cacheReadTokens, v.cacheCreationTokens)
   }));
 }
 
@@ -183,7 +183,9 @@ function buildInsights(daily, period, prevDaily) {
   const totals = {
     total: sumField(daily, 'totalTokens'),
     cost:  sumField(daily, 'costUSD'),
+    input: sumField(daily, 'inputTokens'),
     cache: sumField(daily, 'cacheReadTokens'),
+    cacheCreation: sumField(daily, 'cacheCreationTokens'),
     avgDaily: 0
   };
   const days = dailyTotals(daily, period);
@@ -234,9 +236,12 @@ function buildInsights(daily, period, prevDaily) {
   // 3. Cache hit improvement
   if (prevDaily && prevDaily.length) {
     const prevCache = sumField(prevDaily, 'cacheReadTokens');
-    const prevTotal = sumField(prevDaily, 'totalTokens');
-    const prevRate = prevTotal ? (prevCache / prevTotal) * 100 : 0;
-    const currRate = totals.total ? (totals.cache / totals.total) * 100 : 0;
+    const prevRate = U.cacheHitRate(
+      sumField(prevDaily, 'inputTokens'),
+      prevCache,
+      sumField(prevDaily, 'cacheCreationTokens')
+    );
+    const currRate = U.cacheHitRate(totals.input, totals.cache, totals.cacheCreation);
     const diff = currRate - prevRate;
     if (Math.abs(diff) > 2) {
       insights.push({
@@ -249,8 +254,8 @@ function buildInsights(daily, period, prevDaily) {
           { k: '节省 tk',  v: U.compactCN(totals.cache - prevCache) }
         ],
         narrative: diff > 0
-          ? `更高的命中率意味着你在同一上下文里反复迭代，工作连续性更好。继续保持。`
-          : `命中率下降可能是因为切换项目或重启上下文更频繁，看看能否合并任务批次。`
+          ? '本期缓存读取占比更高；这反映上下文复用变化，不代表产出质量变化。'
+          : '本期缓存读取占比更低；结合项目切换情况查看，不要只凭这一项判断效率。'
       });
     }
   }

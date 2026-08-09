@@ -68,7 +68,7 @@ function HeroSection({ period, totals, prevTotals, stats }) {
         <div className="stat-cell">
           <div className="l">缓存命中率</div>
           <div className="v">{totals.cacheHitRate.toFixed(0)}<span style={{fontSize: 18, color: 'var(--ink-3)'}}>%</span></div>
-          <div className="s">节省约 {Math.round(totals.cacheHitRate / 5)}× 重复计算</div>
+          <div className="s">{U.compactCN(totals.cacheRead)} cache read</div>
         </div>
         <div className="stat-cell">
           <div className="l">日均官方价</div>

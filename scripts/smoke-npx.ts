@@ -38,6 +38,7 @@ try {
     cwd: runDir,
     env: safeEnv({
       TOKEN_WORK_CONFIG: join(fixtureDir, 'collectors.json'),
+      SCHEDULED_COLLECT_RUN_ON_START: '1',
       NODE_OPTIONS: '--no-warnings'
     })
   });

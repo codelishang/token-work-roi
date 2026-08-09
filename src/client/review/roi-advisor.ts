@@ -15,6 +15,7 @@ const EXPLORATION_STAGES = new Set(['探索', '验证']);
 const PRODUCTIVE_STATUSES = new Set(['已完成', '已发布']);
 const LOW_VALUE_LEVELS = new Set(['低']);
 const HIGH_VALUE_LEVELS = new Set(['高', '关键']);
+const HEALTHY_CACHE_HIT_RATE = 70;
 
 export function buildRoiAdvisor({ sessions = [], daily = [] }: { sessions?: UsageRow[]; daily?: UsageRow[] } = {}) {
   const total = aggregateRows(sessions.length ? sessions : daily);
@@ -145,7 +146,8 @@ function isLowCostSession(session, total) {
 function buildInputRatioSuggestion(sessions, daily, total) {
   const aggregate = aggregateRows(sessions.length ? sessions : daily);
   const ratio = aggregate.outputTokens ? aggregate.inputTokens / aggregate.outputTokens : 0;
-  if (ratio < 4 || aggregate.inputTokens < 100_000) return null;
+  const cacheRate = U.cacheHitRate(aggregate.inputTokens, aggregate.cacheReadTokens);
+  if (ratio < 4 || aggregate.inputTokens < 100_000 || cacheRate >= HEALTHY_CACHE_HIT_RATE) return null;
   return suggestion({
     id: 'reduce-context-bloat',
     category: '上下文压缩',
@@ -153,8 +155,8 @@ function buildInputRatioSuggestion(sessions, daily, total) {
     tone: 'optimize',
     title: '压缩上下文，减少大段输入',
     recommendation: '把长上下文改成“目标 + 相关文件 + 约束 + 验收标准”，不要每轮重复喂全部背景。',
-    reason: 'Input / Output 比过高通常说明输入上下文过大，模型在读材料上消耗了大量 token。',
-    evidence: withAttributionEvidence(`本期 Input / Output 比为 ${ratio.toFixed(1)}:1，输入 ${compact(aggregate.inputTokens)}，输出 ${compact(aggregate.outputTokens)}。`, sessions),
+    reason: 'Input / Output 比偏高且 cache 命中偏低，说明重复读取上下文的可能性较高。',
+    evidence: withAttributionEvidence(`本期 Input / Output 比为 ${ratio.toFixed(1)}:1，cache hit ${cacheRate.toFixed(1)}%，输入 ${compact(aggregate.inputTokens)}，输出 ${compact(aggregate.outputTokens)}。`, sessions),
     action: '为高频项目沉淀 README/任务摘要；每轮只附与当前问题直接相关的文件和错误信息。',
     score: 76 + Math.min(20, ratio)
   });
@@ -162,8 +164,8 @@ function buildInputRatioSuggestion(sessions, daily, total) {
 
 function buildCacheSuggestion(sessions, daily, total) {
   const aggregate = aggregateRows(sessions.length ? sessions : daily);
-  const cacheRate = aggregate.totalTokens ? aggregate.cacheReadTokens / aggregate.totalTokens : 0;
-  if (cacheRate > 0.2 || aggregate.inputTokens < 100_000) return null;
+  const cacheRate = U.cacheHitRate(aggregate.inputTokens, aggregate.cacheReadTokens);
+  if (cacheRate >= 10 || aggregate.inputTokens < 100_000) return null;
   return suggestion({
     id: 'improve-cache-and-task-continuity',
     category: '上下文压缩',
@@ -172,7 +174,7 @@ function buildCacheSuggestion(sessions, daily, total) {
     title: '提高上下文连续性，减少重新读项目',
     recommendation: '把同一项目的相关任务集中处理，减少频繁开新上下文。',
     reason: 'cache 命中低且输入高，说明模型经常重新读取类似背景。',
-    evidence: withAttributionEvidence(`本期 cache 命中约 ${(cacheRate * 100).toFixed(1)}%，输入 ${compact(aggregate.inputTokens)} tokens。`, sessions),
+    evidence: withAttributionEvidence(`本期 cache hit ${cacheRate.toFixed(1)}%，输入 ${compact(aggregate.inputTokens)} tokens。`, sessions),
     action: '同一项目尽量连续完成“方案-实现-验证”，并用项目摘要替代重复粘贴长上下文。',
     score: 70
   });

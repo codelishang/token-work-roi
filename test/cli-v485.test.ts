@@ -32,7 +32,7 @@ test('bare CLI starts the UI before its scheduled collection begins', async () =
     assert.equal(data.meta.dataMode.id, 'empty');
     const live = await getJson(apiPort, '/api/live');
     assert.equal(live.autoCollectEnabled, true);
-    assert.equal(live.refreshIntervalSeconds, 60);
+    assert.equal(live.refreshIntervalSeconds, 300);
     assert.equal(live.collectionState.status, 'idle');
   } finally {
     await stopChild(child);

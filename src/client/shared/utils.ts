@@ -250,6 +250,14 @@ function filterDaily(rows, f) {
   );
 }
 
+function cacheHitRate(inputTokens, cacheReadTokens, cacheCreationTokens = 0) {
+  const input = Number(inputTokens || 0);
+  const cacheRead = Number(cacheReadTokens || 0);
+  const cacheCreation = Number(cacheCreationTokens || 0);
+  const denominator = input + cacheRead + cacheCreation;
+  return denominator > 0 ? (cacheRead / denominator) * 100 : 0;
+}
+
 // Aggregate totals across rows
 function aggregateTotals(rows) {
   let total = 0, inp = 0, out = 0, cacheRd = 0, cacheCr = 0, reason = 0, cost = 0;
@@ -271,7 +279,7 @@ function aggregateTotals(rows) {
     cacheTokens: cacheRd + cacheCr,
     reasoningTokens: reason,
     costUSD: cost,
-    cacheHitRate: total ? (cacheRd / total) * 100 : 0
+    cacheHitRate: cacheHitRate(inp, cacheRd, cacheCr)
   };
 }
 
@@ -341,6 +349,6 @@ export const U = {
   getExchangeRate, setExchangeRate, loadExchangeRate, startExchangeRateRefresh, exchangeRateLabel, exchangeRateSourceLabel,
   compact, compactCN, pct, deltaPct, formatTs,
   localDateStr, daysAgo, addDays, rangeDates,
-  filterDaily, aggregateTotals, groupByDate, uniqueValues,
+  filterDaily, cacheHitRate, aggregateTotals, groupByDate, uniqueValues,
   csvCell, downloadCSV, downloadText, projectLabel, alpha
 };
