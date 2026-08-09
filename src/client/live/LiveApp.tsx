@@ -167,7 +167,7 @@ export function LiveApp() {
         </Panel>
 
         <Panel title="当前建议" className="pulse-advice-panel">
-          <AdviceList warnings={warnings} />
+          <AdviceList warnings={warnings} snapshot={snapshot} />
         </Panel>
       </section>
 
@@ -364,8 +364,13 @@ function SourceDonut({ rows, totalTokens }) {
   );
 }
 
-function AdviceList({ warnings }) {
-  if (!warnings.length) return <EmptyState text="当前没有触发 guardrail。继续观察 burn rate、缓存复用和未定价模型。" />;
+function AdviceList({ warnings, snapshot }) {
+  if (!warnings.length) {
+    const hasBudget = (snapshot?.budgetWindows || []).some(row => Number(row.tokenBudget || row.costBudgetUSD) > 0);
+    return <EmptyState text={hasBudget
+      ? '当前没有触发已配置预算或效率异常。'
+      : '未设置自定义预算，当前只展示实际消耗，不会把固定阈值当成超限。'} />;
+  }
   return (
     <div className="advice-list">
       {warnings.slice(0, 3).map(warning => (

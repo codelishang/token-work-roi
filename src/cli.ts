@@ -327,15 +327,15 @@ function liveCollectEnv({ enabled = false } = {}) {
   const intervalSeconds = envLiveCollectIntervalSeconds();
   return {
     SCHEDULED_COLLECT_ENABLED: '1',
-    SCHEDULED_COLLECT_RUN_ON_START: '0',
+    SCHEDULED_COLLECT_RUN_ON_START: process.env.SCHEDULED_COLLECT_RUN_ON_START || '0',
     SCHEDULED_COLLECT_INTERVAL_SECONDS: String(intervalSeconds),
     TOKEN_WORK_LIVE_COLLECT_INTERVAL_SECONDS: String(intervalSeconds)
   };
 }
 
 function envLiveCollectIntervalSeconds() {
-  const requested = Number(process.env.TOKEN_WORK_LIVE_COLLECT_INTERVAL_SECONDS || process.env.SCHEDULED_COLLECT_INTERVAL_SECONDS || 60);
-  return Math.max(30, Number.isFinite(requested) && requested > 0 ? Math.round(requested) : 60);
+  const requested = Number(process.env.TOKEN_WORK_LIVE_COLLECT_INTERVAL_SECONDS || process.env.SCHEDULED_COLLECT_INTERVAL_SECONDS || 300);
+  return Math.max(30, Number.isFinite(requested) && requested > 0 ? Math.round(requested) : 300);
 }
 
 async function collectCommand() {

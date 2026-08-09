@@ -241,7 +241,7 @@ function ReviewDashboard({ rawData, onReloadData }) {
     const cost = RU.sumField(daily, 'costUSD');
     return {
       total, input, output, cacheRead, cacheCreation, reasoning, cost,
-      cacheHitRate: total ? (cacheRead / total) * 100 : 0
+      cacheHitRate: U.cacheHitRate(input, cacheRead, cacheCreation)
     };
   }, [daily]);
 

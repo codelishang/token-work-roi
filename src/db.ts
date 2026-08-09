@@ -81,7 +81,7 @@ export function createSqliteBackup(db, dbPath = defaultDbPath, {
   const safeReason = String(reason || 'manual').replace(/[^a-z0-9-]+/gi, '-').toLowerCase();
   const targetDir = backupDir || process.env.BACKUP_DIR || join(dirname(resolvedDbPath), 'backups');
   mkdirSync(targetDir, { recursive: true });
-  const existing = backupFiles(targetDir, safeReason);
+  const existing = minimumIntervalMs > 0 ? backupFiles(targetDir) : backupFiles(targetDir, safeReason);
   if (minimumIntervalMs > 0 && existing.length > 0) {
     const latest = statSync(join(targetDir, existing[0]));
     if (new Date(now).getTime() - latest.mtimeMs < minimumIntervalMs) {
@@ -366,6 +366,14 @@ export function upsertDaily(db, row) {
       total_tokens = excluded.total_tokens,
       cost_usd = excluded.cost_usd,
       updated_at = datetime('now')
+    WHERE daily_usage.input_tokens != excluded.input_tokens
+      OR daily_usage.output_tokens != excluded.output_tokens
+      OR daily_usage.cache_creation_tokens != excluded.cache_creation_tokens
+      OR daily_usage.cache_read_tokens != excluded.cache_read_tokens
+      OR daily_usage.cached_input_tokens != excluded.cached_input_tokens
+      OR daily_usage.reasoning_output_tokens != excluded.reasoning_output_tokens
+      OR daily_usage.total_tokens != excluded.total_tokens
+      OR daily_usage.cost_usd != excluded.cost_usd
   `).run(
     usage.device,
     usage.source,
@@ -403,6 +411,17 @@ export function upsertSession(db, row) {
       total_tokens = excluded.total_tokens,
       cost_usd = excluded.cost_usd,
       updated_at = datetime('now')
+    WHERE session_usage.last_activity IS NOT COALESCE(excluded.last_activity, session_usage.last_activity)
+      OR session_usage.project_path IS NOT COALESCE(excluded.project_path, session_usage.project_path)
+      OR session_usage.model != CASE WHEN excluded.model != '' THEN excluded.model ELSE session_usage.model END
+      OR session_usage.input_tokens != excluded.input_tokens
+      OR session_usage.output_tokens != excluded.output_tokens
+      OR session_usage.cache_creation_tokens != excluded.cache_creation_tokens
+      OR session_usage.cache_read_tokens != excluded.cache_read_tokens
+      OR session_usage.cached_input_tokens != excluded.cached_input_tokens
+      OR session_usage.reasoning_output_tokens != excluded.reasoning_output_tokens
+      OR session_usage.total_tokens != excluded.total_tokens
+      OR session_usage.cost_usd != excluded.cost_usd
   `).run(
     session.device,
     session.source,
@@ -1003,16 +1022,38 @@ export function upsertTokenEvent(db, row: InputRecord = {}) {
       updated_at = datetime('now')
     WHERE token_events.device = excluded.device
       AND token_events.source = excluded.source
+      AND (
+        token_events.session_id != excluded.session_id
+        OR token_events.timestamp != excluded.timestamp
+        OR token_events.model != excluded.model
+        OR token_events.input_tokens != excluded.input_tokens
+        OR token_events.output_tokens != excluded.output_tokens
+        OR token_events.cache_read_tokens != excluded.cache_read_tokens
+        OR token_events.cache_creation_tokens != excluded.cache_creation_tokens
+        OR token_events.reasoning_tokens != excluded.reasoning_tokens
+        OR token_events.tool_category IS NOT excluded.tool_category
+        OR token_events.file_extension IS NOT excluded.file_extension
+        OR token_events.repo_path_hash IS NOT excluded.repo_path_hash
+        OR token_events.privacy_level != excluded.privacy_level
+      )
   `);
   let result = runTokenEventUpsert(upsert, event);
   if (result.changes === 0) {
+    if (tokenEventHasOwner(db, event)) return event;
     event.eventId = scopedTokenEventId(event);
     result = runTokenEventUpsert(upsert, event);
-    if (result.changes === 0) {
+    if (result.changes === 0 && !tokenEventHasOwner(db, event)) {
       throw new Error('token event id collision could not be resolved');
     }
   }
   return event;
+}
+
+function tokenEventHasOwner(db, event) {
+  return Boolean(db.prepare(`
+    SELECT 1 FROM token_events
+    WHERE event_id = ? AND device = ? AND source = ?
+  `).get(event.eventId, event.device, event.source));
 }
 
 function runTokenEventUpsert(statement, event) {

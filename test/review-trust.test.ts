@@ -91,4 +91,12 @@ test('efficiency guidance covers cache, input/output and missing reasoning range
   assert.equal(high.cache.label, '很高');
   assert.equal(high.io.label, '健康');
   assert.equal(high.reasoning.label, '深度推理');
+
+  const highReuseInput = buildEfficiencyGuidance({
+    cacheReuseRate: 95,
+    inputOutputRatio: 35,
+    reasoningShare: 0,
+    hasReasoningTokens: true
+  });
+  assert.equal(highReuseInput.io.label, '缓存复用良好');
 });

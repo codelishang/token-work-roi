@@ -65,7 +65,7 @@ v2 源码入口使用 TypeScript 文件。旧的 `.mjs` 源码直跑路径不再
 | `coverage` | 查看每个来源是否有可靠词元字段，以及 daily/session/event 是否能对上 |
 | `collect --dry-run` | 输出将要读取和写入的摘要，不修改 SQLite |
 | `collect --apply` | 明确确认后写入，写入前创建 SQLite 备份 |
-| 定时采集 | 数据需要写入或修复时才创建完整备份；受管备份只保留最新一份 |
+| 定时采集 | 默认每 5 分钟运行；普通写入最多每 24 小时备份一次，数据修复前单独备份，受管备份只保留最新一份 |
 | `compare-ccusage` | 调用 ccusage JSON 模式进行对比，但不采用 ccusage 的成本字段 |
 
 ## 写入前的保护 / Write Safety

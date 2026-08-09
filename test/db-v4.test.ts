@@ -79,6 +79,14 @@ test('backup retention is rate limited and keeps only the latest full backup', (
   });
   assert.ok(newerManual && existsSync(newerManual.path));
   assert.deepEqual(manualBackups(), [newerManual.fileName]);
+  const scheduledAfterManual = createSqliteBackup(db, dbPath, {
+    reason: 'scheduled-collect',
+    backupDir,
+    minimumIntervalMs: 24 * 60 * 60 * 1000,
+    now: new Date('2026-07-19T03:01:00.000Z')
+  });
+  assert.equal(scheduledAfterManual, null);
+  assert.deepEqual(readdirSync(backupDir), [newerManual.fileName]);
   db.close();
 });
 
@@ -113,6 +121,31 @@ test('token_events upsert is idempotent and privacy bounded', () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].inputTokens, 20);
   assert.equal(rows[0].privacyLevel, 'safe');
+  db.close();
+});
+
+test('identical usage upserts do not rewrite stored rows', () => {
+  const db = tempDb();
+  const daily = { device: 'demo', source: 'Codex', usageDate: '2026-08-09', model: 'gpt-5.6', inputTokens: 10, totalTokens: 10 };
+  const session = { device: 'demo', source: 'Codex', sessionId: 'session-1', model: 'gpt-5.6', inputTokens: 10, totalTokens: 10 };
+  const event = { eventId: 'event-1', device: 'demo', source: 'Codex', sessionId: 'session-1', timestamp: '2026-08-09T00:00:00Z', model: 'gpt-5.6', inputTokens: 10 };
+  upsertDaily(db, daily);
+  upsertSession(db, session);
+  upsertTokenEvent(db, event);
+  db.exec(`
+    UPDATE daily_usage SET updated_at = '2000-01-01';
+    UPDATE session_usage SET updated_at = '2000-01-01';
+    UPDATE token_events SET updated_at = '2000-01-01';
+  `);
+
+  upsertDaily(db, daily);
+  upsertSession(db, session);
+  upsertTokenEvent(db, event);
+
+  assert.equal(db.prepare(`SELECT updated_at FROM daily_usage`).get().updated_at, '2000-01-01');
+  assert.equal(db.prepare(`SELECT updated_at FROM session_usage`).get().updated_at, '2000-01-01');
+  assert.equal(db.prepare(`SELECT updated_at FROM token_events`).get().updated_at, '2000-01-01');
+  assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM token_events`).get().count, 1);
   db.close();
 });
 

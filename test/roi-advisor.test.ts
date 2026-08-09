@@ -193,3 +193,26 @@ test('advisor emits context compression and unpriced model advice without fake c
   assert.equal(unpriced.category, '未定价模型');
   assert.match(unpriced.recommendation, /不把 \$0 当成免费/);
 });
+
+test('advisor does not treat high input/output with healthy cache reuse as context waste', () => {
+  const suggestions = buildRoiAdvisor({
+    sessions: [{
+      sessionId: 'cached-session',
+      model: 'gpt-5.6-sol',
+      taskType: '功能开发',
+      outputStatus: '已完成',
+      workPurpose: '功能开发',
+      workStage: '实现',
+      valueLevel: '中',
+      inputTokens: 900_000,
+      outputTokens: 50_000,
+      cacheReadTokens: 18_000_000,
+      totalTokens: 18_950_000,
+      costUSD: 20,
+      pricingStatus: 'priced'
+    }]
+  });
+
+  assert.equal(suggestions.some(item => item.id === 'reduce-context-bloat'), false);
+  assert.equal(suggestions.some(item => item.id === 'improve-cache-and-task-continuity'), false);
+});

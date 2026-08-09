@@ -582,6 +582,70 @@ test('coverage command returns historical coverage risk and reconciliation', asy
   }
 });
 
+test('collect removes only unassociated zero-token Claude placeholders', async () => {
+  const fixture = createCollectorFixture();
+  try {
+    const initial = await runNode([
+      'src/collect.ts', '--sources=claude', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], fixture.env);
+    assert.equal(initial.code, 0, initial.stderr);
+
+    const device = hostname();
+    const db = new DatabaseSync(fixture.dbPath);
+    try {
+      const insertSession = db.prepare(`
+        INSERT INTO session_usage(device, source, session_id, model, input_tokens, total_tokens)
+        VALUES (?, 'Claude Code', ?, '<synthetic>', ?, ?)
+      `);
+      insertSession.run(device, 'remove:<synthetic>', 0, 0);
+      insertSession.run(device, 'keep-annotation:<synthetic>', 0, 0);
+      insertSession.run(device, 'keep-usage:<synthetic>', 1, 1);
+      insertSession.run(device, 'remove-event:<synthetic>', 0, 0);
+      db.prepare(`
+        INSERT INTO session_annotations(device, source, session_id)
+        VALUES (?, 'Claude Code', 'keep-annotation:<synthetic>')
+      `).run(device);
+      db.prepare(`
+        INSERT INTO token_events(event_id, device, source, session_id, timestamp, model)
+        VALUES ('placeholder-event', ?, 'Claude Code', 'remove-event:<synthetic>', '2026-08-09T00:00:00Z', '<synthetic>')
+      `).run(device);
+      db.prepare(`
+        INSERT INTO daily_usage(device, source, usage_date, model)
+        VALUES (?, 'Claude Code', '2026-08-09', '<synthetic>')
+      `).run(device);
+    } finally {
+      db.close();
+    }
+
+    const cleaned = await runNode([
+      'src/collect.ts', '--sources=claude', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], { ...fixture.env, TOKEN_WORK_COLLECT_REASON: 'scheduled' });
+    assert.equal(cleaned.code, 0, cleaned.stderr);
+    const summary = JSON.parse(cleaned.stdout);
+    assert.match(summary.backup?.fileName || '', /scheduled-collect-repair/);
+
+    const after = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.deepEqual(after.prepare(`
+        SELECT session_id AS sessionId, total_tokens AS totalTokens
+        FROM session_usage
+        WHERE source = 'Claude Code' AND instr(session_id, '<synthetic>') > 0
+        ORDER BY session_id
+      `).all().map(row => ({ ...row })), [
+        { sessionId: 'keep-annotation:<synthetic>', totalTokens: 0 },
+        { sessionId: 'keep-usage:<synthetic>', totalTokens: 1 }
+      ]);
+      assert.equal(after.prepare(`SELECT COUNT(*) AS count FROM session_annotations WHERE session_id = 'keep-annotation:<synthetic>'`).get().count, 1);
+      assert.equal(after.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE model = '<synthetic>'`).get().count, 0);
+      assert.equal(after.prepare(`SELECT COUNT(*) AS count FROM daily_usage WHERE model = '<synthetic>'`).get().count, 0);
+    } finally {
+      after.close();
+    }
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
 test('collect apply writes temp SQLite with backup and before/after counts', async () => {
   const fixture = createCollectorFixture();
   try {
@@ -684,11 +748,10 @@ test('collect apply writes temp SQLite with backup and before/after counts', asy
     }
 
     const backupDir = join(fixture.dir, 'backups');
-    const scheduledBackups = readdirSync(backupDir)
-      .filter(name => name.endsWith('-scheduled-collect.sqlite'));
-    assert.equal(scheduledBackups.length, 1);
-    const oldTime = new Date(Date.now() - 2 * 60 * 60 * 1000);
-    utimesSync(join(backupDir, scheduledBackups[0]), oldTime, oldTime);
+    const existingBackups = readdirSync(backupDir).filter(name => name.endsWith('.sqlite'));
+    assert.equal(existingBackups.length, 1);
+    const oldTime = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    utimesSync(join(backupDir, existingBackups[0]), oldTime, oldTime);
 
     const unchanged = await runNode([
       'src/collect.ts',
