@@ -19,7 +19,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { configuredPaths, configuredStrings, envPathList } from '../collector-config.ts';
 import { calculateCost } from '../pricing.ts';
@@ -310,12 +310,12 @@ function extractSessionId(obj) {
 // Main collector
 // ---------------------------------------------------------------------------
 
-export async function collect(pricingData = null) {
-  return collectFromSessionFiles(await parseSessionFiles(), pricingData);
+export async function collect(pricingData = null, options = {}) {
+  return collectFromSessionFiles(await parseSessionFiles(options), pricingData);
 }
 
-export async function collectWithAudit(pricingData = null) {
-  const sessionFiles = await parseSessionFiles();
+export async function collectWithAudit(pricingData = null, options = {}) {
+  const sessionFiles = await parseSessionFiles(options);
   return {
     ...collectFromSessionFiles(sessionFiles, pricingData),
     audit: auditFromSessionFiles(sessionFiles)
@@ -431,8 +431,8 @@ function auditFromSessionFiles(sessionFiles) {
   return summary;
 }
 
-async function parseSessionFiles() {
-  const filePaths = await collectSessionFiles();
+async function parseSessionFiles({ changedAfterMs = null } = {}) {
+  const filePaths = await collectSessionFiles(changedAfterMs);
   const files = [];
   for (const filePath of filePaths) {
     const fileSessionId = basename(filePath).replace(/\.jsonl$/, '');
@@ -441,6 +441,12 @@ async function parseSessionFiles() {
       fileSessionId,
       lineage: await readSessionLineage(filePath, fileSessionId)
     });
+  }
+  if (Number.isFinite(changedAfterMs)) {
+    const knownSessions = new Set(files.map(file => file.lineage.sessionId));
+    if (files.some(file => file.lineage.parentSessionId && !knownSessions.has(file.lineage.parentSessionId))) {
+      return parseSessionFiles();
+    }
   }
   const bySessionId = new Map();
   for (const file of files) {
@@ -572,10 +578,20 @@ function validTimestamp(value) {
   return Number.isFinite(new Date(value).getTime()) ? value : null;
 }
 
-async function collectSessionFiles() {
+async function collectSessionFiles(changedAfterMs = null) {
   const roots = [...getSessionRoots(), ...getHeadlessRoots()];
   const nestedPaths = await Promise.all(roots.map((root) => collectJsonlFiles(root)));
-  return [...new Set(nestedPaths.flat())];
+  const files = [...new Set(nestedPaths.flat())];
+  if (!Number.isFinite(changedAfterMs)) return files;
+
+  const changed = await Promise.all(files.map(async filePath => {
+    try {
+      return (await stat(filePath)).mtimeMs > changedAfterMs ? filePath : null;
+    } catch {
+      return null;
+    }
+  }));
+  return changed.filter(Boolean);
 }
 
 function codexEventDedupKey({ source, sessionId, identityKey }) {

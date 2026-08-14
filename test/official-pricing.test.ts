@@ -394,6 +394,28 @@ test('prices current DoubaoSeed models without inventing unknown rates', () => {
   assert.equal(unknown.totalUSD, 0);
 });
 
+test('prices gpt-image-2 and Doubao Seed 2.0 Lite from official token rates', () => {
+  const image = calculateOfficialCost('gpt_image_2', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    output: 1_000_000
+  }, { pricingData: pricingCache });
+  const lite = calculateOfficialCost('doubao_seed_2_0_lite', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    output: 1_000_000
+  }, { provider: 'DoubaoSeed', pricingData: pricingCache });
+
+  assert.equal(image.priced, true);
+  assert.equal(image.provider, 'openai');
+  assert.equal(image.totalUSD, 40);
+  assert.equal(lite.priced, true);
+  assert.equal(lite.provider, 'DoubaoSeed');
+  assert.ok(Math.abs(lite.ratesPerMTok.input - 0.6 / 6.752312) < 1e-12);
+  assert.ok(Math.abs(lite.ratesPerMTok.cachedInput - 0.12 / 6.752312) < 1e-12);
+  assert.ok(Math.abs(lite.ratesPerMTok.output - 3.6 / 6.752312) < 1e-12);
+});
+
 test('uses official pricing cache when provided', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'token-work-pricing-'));
   const cachePath = join(dir, 'official-pricing.json');

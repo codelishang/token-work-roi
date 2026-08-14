@@ -142,6 +142,21 @@ test('live data freshness explains collecting, stale and empty states', () => {
   assert.match(stale.staleReason, /刷新/);
 });
 
+test('live snapshot keeps the last collection failure reason for the real-time page', () => {
+  const snapshot = buildLiveSnapshot({
+    collectionState: {
+      status: 'error',
+      message: '无法启动采集进程：spawn node ENOENT',
+      finishedAt: '2026-06-20T10:00:00Z',
+      exitCode: null
+    }
+  });
+
+  assert.equal(snapshot.dataFreshness, 'error');
+  assert.equal(snapshot.staleReason, '无法启动采集进程：spawn node ENOENT');
+  assert.equal(snapshot.collectionState.message, '无法启动采集进程：spawn node ENOENT');
+});
+
 test('live guardrails warn on burn rate, low cache hit, low output/input and unpriced models', () => {
   const snapshot = buildLiveSnapshot({
     now: new Date('2026-06-17T02:15:00Z'),
@@ -161,6 +176,7 @@ test('live guardrails warn on burn rate, low cache hit, low output/input and unp
   });
   const types = snapshot.warnings.map(item => item.type).sort();
   assert.deepEqual(types, [
+    'current-model-focus',
     'high-burn-rate',
     'low-cache-hit',
     'low-output-input-ratio',
@@ -229,7 +245,61 @@ test('live advice uses observed model cost, cache reuse and nearby project sessi
   assert.equal(types.includes('heavy-model-stop-today'), false);
   assert.ok(types.includes('dominant-heavy-model-cost'));
   assert.ok(types.includes('parallel-heavy-contexts'));
-  assert.ok(types.includes('healthy-cache-reuse'));
+  assert.ok(types.includes('current-model-focus'));
+  assert.equal(types.includes('healthy-cache-reuse'), false);
+});
+
+test('live advice follows the active session instead of an older session with more daily tokens', () => {
+  const now = new Date('2026-08-12T12:00:00Z');
+  const snapshot = buildLiveSnapshot({
+    now,
+    windowMinutes: 1440,
+    tokenEvents: [{
+      eventId: 'older-heavy-session',
+      device: 'macbook',
+      source: 'Codex Desktop',
+      sessionId: 'older-heavy-session',
+      timestamp: '2026-08-12T10:20:00Z',
+      model: 'gpt-5.6-sol',
+      inputTokens: 900_000,
+      outputTokens: 100_000
+    }, {
+      eventId: 'active-session',
+      device: 'macbook',
+      source: 'Codex Desktop',
+      sessionId: 'active-session',
+      timestamp: '2026-08-12T11:55:00Z',
+      model: 'gpt-5.6-terra',
+      inputTokens: 12_000,
+      outputTokens: 3_000
+    }]
+  });
+  const warning = snapshot.warnings.find(item => item.type === 'current-model-focus');
+
+  assert.ok(warning);
+  assert.equal(warning.message, '当前主窗口使用 gpt-5.6-terra');
+  assert.match(warning.evidence, /近 60 分钟 15,000 tokens/);
+  assert.match(warning.evidence, /窗口 active-session/);
+  assert.equal(snapshot.warnings.some(item => item.type === 'healthy-cache-reuse'), false);
+});
+
+test('live advice does not describe session summaries as recent event usage', () => {
+  const snapshot = buildLiveSnapshot({
+    now: new Date('2026-08-12T12:00:00Z'),
+    windowMinutes: 1440,
+    sessions: [{
+      device: 'macbook',
+      source: 'Codex Desktop',
+      sessionId: 'summary-only-session',
+      lastActivity: '2026-08-12T11:55:00Z',
+      model: 'gpt-5.6-sol',
+      inputTokens: 40_000,
+      outputTokens: 5_000,
+      totalTokens: 45_000
+    }]
+  });
+
+  assert.equal(snapshot.warnings.some(item => item.type === 'current-model-focus'), false);
 });
 
 test('live guardrail thresholds can be overridden', () => {

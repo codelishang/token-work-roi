@@ -8,7 +8,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, relative } from 'node:path';
 import { configuredBool, configuredPath, configuredPaths, envPathList } from '../collector-config.ts';
@@ -256,12 +256,12 @@ function addInto(target, tokens) {
  *
  * @returns {{ graphJson: object, modelsJson: object }}
  */
-export async function collect(pricingData = null) {
-  return collectFromFiles(await scanSessionFiles(), pricingData);
+export async function collect(pricingData = null, options = {}) {
+  return collectFromFiles(await scanSessionFiles(options), pricingData);
 }
 
-export async function collectWithAudit(pricingData = null) {
-  const files = await scanSessionFiles();
+export async function collectWithAudit(pricingData = null, options = {}) {
+  const files = await scanSessionFiles(options);
   return {
     ...collectFromFiles(files, pricingData),
     audit: auditFromFiles(files)
@@ -371,14 +371,24 @@ export async function audit() {
   return auditFromFiles(await scanSessionFiles());
 }
 
-async function scanSessionFiles() {
+async function scanSessionFiles({ changedAfterMs = null } = {}) {
   const files = [];
   for (const root of await getScanRoots()) {
     for (const filePath of await collectJsonlFiles(root.path)) {
+      if (!await changedSince(filePath, changedAfterMs)) continue;
       files.push({ root, filePath, records: await parseSessionFile(filePath) });
     }
   }
   return files;
+}
+
+async function changedSince(filePath, changedAfterMs) {
+  if (!Number.isFinite(changedAfterMs)) return true;
+  try {
+    return (await stat(filePath)).mtimeMs > changedAfterMs;
+  } catch {
+    return false;
+  }
 }
 
 function auditFromFiles(files) {

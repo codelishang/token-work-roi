@@ -53,6 +53,7 @@ async function main() {
   const pricingData = await loadPricing(pricingCachePath);
   const enabled = enabledCollectors(args);
   const scheduled = isScheduledCollection();
+  const incrementalRefresh = isIncrementalMetadataRefresh();
   const includeExperimental = Boolean(args.sources || args.collectors || args.experimental);
   const collectors = collectableCollectors({ includeExperimental }).filter(({ id }) => enabled.has(id));
   const exportPayload = {
@@ -106,7 +107,19 @@ async function main() {
       db = openDb(args.db);
       summary.before = countRows(db);
     }
-    await collectLocal({ collectors, mode, db, dbPath: args.db, pricingData, device, collectedAt, exportPayload, summary, scheduled });
+    await collectLocal({
+      collectors,
+      mode,
+      db,
+      dbPath: args.db,
+      pricingData,
+      device,
+      collectedAt,
+      exportPayload,
+      summary,
+      scheduled,
+      incrementalRefresh
+    });
     if (args.push) {
       if (mode !== 'apply') throw new Error('--push is only available with --apply.');
       await pushPayload(args.push, exportPayload, args.token);
@@ -203,7 +216,7 @@ function releaseCollectionLock(lockPath) {
   }
 }
 
-async function collectLocal({ collectors, mode, db, dbPath, pricingData, device, collectedAt, exportPayload, summary, scheduled }) {
+async function collectLocal({ collectors, mode, db, dbPath, pricingData, device, collectedAt, exportPayload, summary, scheduled, incrementalRefresh }) {
   if (!collectors.length) return;
 
   const payloads = [];
@@ -242,15 +255,21 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
 
     try {
       const collectorModule = await import(module);
+      const changedAfterMs = incrementalRefresh && db
+        ? metadataRefreshSince(db, device, label)
+        : null;
+      const collectorOptions = Number.isFinite(changedAfterMs)
+        ? { changedAfterMs }
+        : undefined;
       if (typeof collectorModule.collectWithAudit === 'function') {
-        const result = await collectorModule.collectWithAudit(pricingData);
+        const result = await collectorModule.collectWithAudit(pricingData, collectorOptions);
         audit = normalizeAuditSummary(result.audit);
         ({ graphJson = {}, modelsJson = {}, tokenEvents = [], reconciliation = null } = result);
       } else if (typeof collectorModule.collect === 'function') {
         if (typeof collectorModule.audit === 'function') {
           audit = normalizeAuditSummary(await collectorModule.audit());
         }
-        ({ graphJson = {}, modelsJson = {}, tokenEvents = [], reconciliation = null } = await collectorModule.collect(pricingData));
+        ({ graphJson = {}, modelsJson = {}, tokenEvents = [], reconciliation = null } = await collectorModule.collect(pricingData, collectorOptions));
       } else {
         throw new Error(`Collector ${id} does not export collect()`);
       }
@@ -295,17 +314,16 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
 
   const needsStoredUsageRepair = mode === 'apply' && db && usageTotalsNeedRepair(db);
   if (mode === 'apply' && db) {
-    const hasClaudePlaceholders = payloads.some(payload => payload.type === 'data'
+    const hasClaudePlaceholders = !incrementalRefresh && payloads.some(payload => payload.type === 'data'
       && payload.sourceSummary.id === 'claude'
       && hasClaudeSyntheticPlaceholders(db, payload));
-    const hasCodexMigration = payloads.some(payload => payload.type === 'data'
+    const hasCodexMigration = !incrementalRefresh && payloads.some(payload => payload.type === 'data'
       && payload.sourceSummary.id === 'codex'
       && codexSourceMigrationWouldChange(db, payload));
-    const deletesStoredUsage = storedUsageWouldBeDeleted(db, payloads);
-    const shouldBackup = needsStoredUsageRepair || hasClaudePlaceholders
-      || hasCodexMigration || deletesStoredUsage || tokenUsageWouldChange(db, payloads);
+    const deletesStoredUsage = !incrementalRefresh && storedUsageWouldBeDeleted(db, payloads);
     const protectedMutation = needsStoredUsageRepair || hasClaudePlaceholders
       || hasCodexMigration || deletesStoredUsage;
+    const shouldBackup = protectedMutation || tokenUsageWouldChange(db, payloads);
     summary.backup = shouldBackup
       ? createSqliteBackup(db, dbPath, scheduled
           ? protectedMutation
@@ -317,10 +335,10 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
 
   if (mode === 'apply' && db) {
     for (const payload of payloads) {
-      if (payload.type === 'data' && payload.sourceSummary.id === 'claude') {
+      if (!incrementalRefresh && payload.type === 'data' && payload.sourceSummary.id === 'claude') {
         removeClaudeSyntheticPlaceholders(db, payload);
       }
-      if (payload.type === 'data' && payload.sourceSummary.id === 'codex') {
+      if (!incrementalRefresh && payload.type === 'data' && payload.sourceSummary.id === 'codex') {
         runInTransaction(db, () => {
           migrateLegacyCodexClientSources(db, payload);
           removeOrphanedCodexDailyUsage(db, payload.device);
@@ -512,7 +530,6 @@ function tokenUsageWouldChange(db, payloads) {
     SELECT 1 FROM token_events
     WHERE event_id = ? AND device = ? AND source = ?
   `);
-
   for (const payload of payloads) {
     if (payload.type === 'error') continue;
     for (const source of payloadSources(payload)) {
@@ -1117,6 +1134,27 @@ function isScheduledCollection() {
     || (!reason && ['1', 'true', 'yes', 'on'].includes(String(process.env.SCHEDULED_COLLECT_ENABLED || '').toLowerCase()));
 }
 
+function isIncrementalMetadataRefresh() {
+  return ['scheduled', 'live-refresh'].includes(process.env.TOKEN_WORK_COLLECT_REASON)
+    && process.env.TOKEN_WORK_SCHEDULED_INCREMENTAL === '1';
+}
+
+function metadataRefreshSince(db, device, source) {
+  const previous = db.prepare(`
+    SELECT collected_at AS collectedAt
+    FROM collection_runs
+    WHERE device = ? AND source = ? AND status IN ('ok', 'empty')
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(device, source);
+  if (previous?.collectedAt) {
+    const timestamp = new Date(previous.collectedAt).getTime();
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+
+  return null;
+}
+
 function recordCollectionRun(db, run, scheduled) {
   if (!scheduled) {
     recordRun(db, run);
@@ -1134,7 +1172,20 @@ function recordCollectionRun(db, run, scheduled) {
     : Number.POSITIVE_INFINITY;
   const sameOutcome = previous?.status === run.status
     && (run.status === 'ok' || previous?.message === run.message);
-  if (sameOutcome && elapsed >= 0 && elapsed < 60 * 60 * 1000) return;
+  if (sameOutcome && elapsed >= 0 && elapsed < 60 * 60 * 1000) {
+    db.prepare(`
+      UPDATE collection_runs
+      SET collected_at = ?
+      WHERE id = (
+        SELECT id
+        FROM collection_runs
+        WHERE device = ? AND source = ?
+        ORDER BY id DESC
+        LIMIT 1
+      )
+    `).run(run.collectedAt, run.device, run.source);
+    return;
+  }
   recordRun(db, run);
 }
 
