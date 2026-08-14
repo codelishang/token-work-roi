@@ -639,7 +639,8 @@ function parseVolcengineModels(body, exchangeRate) {
   const pairs = [
     ['doubao-seed-evolving', 'Doubao_Seed_Evolving'],
     ['doubao-seed-2.1-pro', 'Doubao_Seed_2.1_pro'],
-    ['doubao-seed-2.1-turbo', 'Doubao_Seed_2.1_turbo']
+    ['doubao-seed-2.1-turbo', 'Doubao_Seed_2.1_turbo'],
+    ['doubao-seed-2.0-lite', 'Doubao_Seed_2.0_Lite']
   ];
   return pairs.map(([model, label]) => {
     const apiRates = volcengineApiInferenceRates(normalized, label);
@@ -671,9 +672,12 @@ function volcengineApiInferenceRates(body, configurationCode): ParsedRates | nul
     const rows = parseVolcenginePricingResponse(body)?.Result?.TableList
       ?.flatMap(table => table?.Rows || [])
       .filter(row => String(row?.ConfigurationCode || '').toLowerCase() === configurationCode.toLowerCase()) || [];
-    const input = volcengineApiPrice(rows, 'infer_input_');
-    const output = volcengineApiPrice(rows, 'infer_output_');
-    const cachedInput = volcengineApiPrice(rows, 'infer_kvcache_hit_');
+    const baseTierRows = configurationCode.toLowerCase() === 'doubao_seed_2.0_lite'
+      ? rows.filter(row => /_32k_/i.test(String(row?.ChargeItemCode || '')))
+      : rows;
+    const input = volcengineApiPrice(baseTierRows, 'infer_input_');
+    const output = volcengineApiPrice(baseTierRows, 'infer_output_');
+    const cachedInput = volcengineApiPrice(baseTierRows, 'infer_kvcache_hit_');
     if (input == null || output == null) return null;
     return {
       input: input * 1000,

@@ -370,7 +370,28 @@ test('collect reconciles current Codex events while preserving historical usage'
       repaired.close();
     }
 
-    const stable = await runNode([
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('scheduled Codex collection preserves unchanged session events', async () => {
+  const fixture = createCollectorFixture();
+  try {
+    const unchangedPath = join(fixture.codexHome, 'sessions', '2026', '06', '17', 'unchanged-session.jsonl');
+    writeFileSync(unchangedPath, [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'unchanged-session', originator: 'codex-tui' } }),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-06-17T02:30:00.000Z',
+        payload: {
+          type: 'token_count',
+          info: { total_token_usage: { input_tokens: 50 }, last_token_usage: { input_tokens: 50 } }
+        }
+      })
+    ].join('\n'), 'utf8');
+    const initial = await runNode([
       'src/collect.ts',
       '--sources=codex',
       '--db',
@@ -378,17 +399,74 @@ test('collect reconciles current Codex events while preserving historical usage'
       '--apply',
       '--yes',
       '--json'
-    ], { ...fixture.env, SCHEDULED_COLLECT_ENABLED: '1' });
-    assert.equal(stable.code, 0, stable.stderr);
-    assert.equal(JSON.parse(stable.stdout).backup, null);
-    const stableDb = new DatabaseSync(fixture.dbPath);
+    ], {
+      ...fixture.env,
+      TOKEN_WORK_COLLECT_REASON: 'scheduled',
+      TOKEN_WORK_SCHEDULED_INCREMENTAL: '1'
+    });
+    assert.equal(initial.code, 0, initial.stderr);
+    assert.equal(JSON.parse(initial.stdout).sources[0].candidateFiles, 2);
+    const before = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    let eventCount;
+    let unchangedDailyTotal;
     try {
-      assert.equal(stableDb.prepare(`
-        SELECT total_tokens AS totalTokens FROM daily_usage
+      eventCount = before.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE source = 'Codex CLI'`).get().count;
+      unchangedDailyTotal = before.prepare(`
+        SELECT total_tokens AS totalTokens
+        FROM daily_usage
         WHERE source = 'Codex CLI' AND usage_date = '2026-06-17' AND model = 'gpt-5.4-mini'
-      `).get().totalTokens, 170);
+      `).get().totalTokens;
     } finally {
-      stableDb.close();
+      before.close();
+    }
+
+    const codexPath = join(fixture.codexHome, 'sessions', '2026', '06', '17', 'codex-session.jsonl');
+    const refreshedAt = new Date(Date.now() + 1_000).toISOString();
+    writeFileSync(codexPath, [
+      readFileSync(codexPath, 'utf8').trim(),
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: refreshedAt,
+        payload: {
+          type: 'token_count',
+          info: {
+            total_token_usage: { input_tokens: 100 },
+            last_token_usage: { input_tokens: 20 }
+          }
+        }
+      })
+    ].join('\n'), 'utf8');
+    const refreshed = await runNode([
+      'src/collect.ts',
+      '--sources=codex',
+      '--db',
+      fixture.dbPath,
+      '--apply',
+      '--yes',
+      '--json'
+    ], {
+      ...fixture.env,
+      TOKEN_WORK_COLLECT_REASON: 'scheduled',
+      TOKEN_WORK_SCHEDULED_INCREMENTAL: '1'
+    });
+    assert.equal(refreshed.code, 0, refreshed.stderr);
+    const changed = JSON.parse(refreshed.stdout);
+    assert.equal(changed.sources[0].candidateFiles, 1);
+    assert.equal(changed.sources[0].tokenEvents, 3);
+    const after = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.equal(after.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE source = 'Codex CLI'`).get().count, eventCount + 1);
+      assert.equal(after.prepare(`
+        SELECT COUNT(*) AS count FROM token_events
+        WHERE source = 'Codex CLI' AND session_id LIKE 'local:codex:unchanged-session:%'
+      `).get().count, 1);
+      assert.equal(after.prepare(`
+        SELECT total_tokens AS totalTokens
+        FROM daily_usage
+        WHERE source = 'Codex CLI' AND usage_date = '2026-06-17' AND model = 'gpt-5.4-mini'
+      `).get().totalTokens, unchangedDailyTotal);
+    } finally {
+      after.close();
     }
   } finally {
     cleanupFixture(fixture);

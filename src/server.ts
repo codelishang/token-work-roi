@@ -1034,7 +1034,7 @@ async function handleImportCcusageJson(req, res) {
   }
 }
 
-function handleCollect(req, res) {
+async function handleCollect(req, res) {
   if (!validateLocalJsonWrite(req, res, '采集接口')) return;
   if (demoModeEnabled()) {
     sendJson(res, { error: 'Demo Mode 只使用合成数据，不允许扫描本机 AI 日志。请使用 token-work start 打开真实 SQLite 后再采集。' }, 400);
@@ -1042,7 +1042,9 @@ function handleCollect(req, res) {
   }
 
   try {
-    const started = startCollection({ reason: 'manual' });
+    const payload = await readJson(req, 8 * 1024);
+    const reason = payload.reason === 'live-refresh' ? 'live-refresh' : 'manual';
+    const started = startCollection({ reason });
     if (!started) {
       sendJson(res, { ...collectionState, error: '采集正在运行' }, 409);
       return;
@@ -1070,7 +1072,8 @@ function startCollection({ reason = 'manual' } = {}) {
       ...process.env,
       TOKEN_WORK_COLLECTORS: sources,
       TOKEN_WORK_COLLECT_CONFIRMED: '1',
-      TOKEN_WORK_COLLECT_REASON: reason
+      TOKEN_WORK_COLLECT_REASON: reason,
+      TOKEN_WORK_SCHEDULED_INCREMENTAL: ['scheduled', 'live-refresh'].includes(reason) ? '1' : ''
     },
     windowsHide: true
   });
@@ -1109,19 +1112,24 @@ function startCollection({ reason = 'manual' } = {}) {
 
   child.on('error', error => {
     clearTimeout(timeout);
+    if (activeCollection !== child) return;
     activeCollection = null;
     collectionState = {
       ...collectionState,
       status: 'error',
-      message: error.message,
+      message: `无法启动采集进程：${error.message}`,
       finishedAt: new Date().toISOString(),
       stderr: error.message,
       backup: null
     };
+    console.error(`[collect] ${collectionState.message}`);
   });
 
   child.on('close', code => {
     clearTimeout(timeout);
+    // A spawn error can emit close later. Do not let that old callback replace
+    // its diagnostic state, or a newer collection that has already started.
+    if (activeCollection !== child) return;
     activeCollection = null;
     if (collectionAlreadyRunning(stderr)) {
       collectionState = {
@@ -1143,7 +1151,7 @@ function startCollection({ reason = 'manual' } = {}) {
     }
     collectionState = {
       status: !timedOut && code === 0 ? 'ok' : 'error',
-      message: timedOut ? '采集超过 90 秒，已停止。请稍后重试。' : code === 0 ? '采集完成' : '采集失败',
+      message: collectionResultMessage({ timedOut, code, stderr }),
       exitCode: code,
       startedAt,
       finishedAt: new Date().toISOString(),
@@ -1152,9 +1160,25 @@ function startCollection({ reason = 'manual' } = {}) {
       backup: parsedSummary?.backup || null,
       summary: parsedSummary ? summarizeCollectState(parsedSummary) : null
     };
+    if (collectionState.status === 'error') {
+      console.error(`[collect] ${collectionState.message}`);
+    }
   });
 
   return true;
+}
+
+function collectionResultMessage({ timedOut, code, stderr }) {
+  if (timedOut) return '采集超过 90 秒，已停止。请稍后重试。';
+  if (code === 0) return '采集完成';
+  const detail = String(stderr || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .find(Boolean);
+  const exitCode = code == null ? '未知' : String(code);
+  return detail
+    ? `采集失败（退出码 ${exitCode}）：${detail.slice(0, 300)}`
+    : `采集失败（退出码 ${exitCode}）。`;
 }
 
 function collectionAlreadyRunning(stderr) {

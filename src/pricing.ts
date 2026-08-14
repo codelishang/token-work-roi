@@ -263,6 +263,18 @@ export const OFFICIAL_PRICE_TABLE = [
   }),
   officialRate({
     provider: "openai",
+    model: "gpt-image-2",
+    aliases: ["gpt-image-2", "gpt_image_2"],
+    input: 8,
+    cachedInput: 2,
+    cacheWrite5m: 8,
+    cacheWrite1h: 8,
+    output: 30,
+    source: "openai",
+    note: "OpenAI API image-token rate. The source event format does not identify text and image input separately, so input tokens use the published image rate; cache creation uses the input rate because the pricing table does not list a separate cache-write rate."
+  }),
+  officialRate({
+    provider: "openai",
     model: "gpt-5.4-mini",
     aliases: ["gpt-5-4-mini"],
     source: "openai",
@@ -585,6 +597,19 @@ export const OFFICIAL_PRICE_TABLE = [
     officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":3,"output":15,"cachedInput":0.6,"cacheWrite5m":0,"cacheWrite1h":0},"exchangeRate":6.752312,"sourceUnit":"元 / 1M tokens"},
     source: "DoubaoSeed",
     note: "Official Volcengine Ark CNY online-inference rate converted to USD at the last verified refresh rate. Cache-storage charges are not included."
+  }),
+  officialRate({
+    provider: "DoubaoSeed",
+    model: "doubao-seed-2.0-lite",
+    aliases: ["doubao-seed-2-0-lite", "doubao_seed_2_0_lite"],
+    input: 0.08885845322313306,
+    cachedInput: 0.017771690644626612,
+    cacheWrite5m: 0,
+    cacheWrite1h: 0,
+    output: 0.5331507193387984,
+    officialRatesPerMTok: {"currency":"CNY","unit":"1M tokens","ratesPerMTok":{"input":0.6,"output":3.6,"cachedInput":0.12,"cacheWrite5m":0,"cacheWrite1h":0},"exchangeRate":6.752312,"sourceUnit":"元 / 1M tokens"},
+    source: "DoubaoSeed",
+    note: "Official Volcengine Ark regular online-inference rate for input length [0, 32K], converted to USD at the last verified refresh rate. Longer requests use higher tiered rates and are not distinguished by the local usage format."
   }),
   officialRate({
     provider: "DoubaoSeed",

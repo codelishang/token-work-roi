@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { U } from '../shared/utils.ts';
 import './styles.css';
 
@@ -12,7 +12,13 @@ export function LiveApp() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(null);
   const [, setExchangeRateVersion] = useState(0);
+  const mounted = useRef(true);
   const isDesktopPulse = new URLSearchParams(window.location.search).get('surface') === 'desktop';
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   useEffect(() => {
     document.body.classList.add('pulse-live-body');
@@ -59,7 +65,7 @@ export function LiveApp() {
   const pulse = snapshot?.pulse || {};
   const agent = pulse.agent || {};
   const collectionRunning = snapshot?.collectionState?.status === 'running';
-  const freshness = error ? 'error' : snapshot?.dataFreshness || 'loading';
+  const freshness = error ? 'network-error' : snapshot?.dataFreshness || 'loading';
   const canManualRefresh = Boolean(snapshot && !snapshot.demoMode && !collectionRunning && !refreshing);
   const generated = useMemo(() => formatChinaStandardTime(snapshot?.generatedAt), [snapshot?.generatedAt]);
   const statuslineCommand = `npx token-work statusline --format=text --window-minutes=${PULSE_WINDOW_MINUTES}`;
@@ -88,26 +94,43 @@ export function LiveApp() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'live-refresh' })
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      setSnapshot(current => current ? {
-        ...current,
-        collectionState: payload,
-        dataFreshness: 'collecting',
-        staleReason: '正在刷新本地 Claude/Codex 结构化 token 日志。'
-      } : current);
-      window.setTimeout(async () => {
-        try {
-          setSnapshot(await fetchLiveSnapshot(PULSE_WINDOW_MINUTES));
-          setError(null);
-        } catch (err) {
-          setError(err.message);
-        }
-      }, 1800);
+      const state = await response.json().catch(() => ({}));
+      if (!response.ok && response.status !== 409) {
+        throw new Error(state.error || `HTTP ${response.status}`);
+      }
+      if (mounted.current) {
+        setSnapshot(current => current ? {
+          ...current,
+          collectionState: state,
+          dataFreshness: 'collecting',
+          staleReason: '正在刷新本机 Claude/Codex 结构化 token 日志。'
+        } : current);
+      }
+      await waitForCollection();
+      if (mounted.current) setError(null);
     } catch (err) {
-      setRefreshError(err.message);
+      if (mounted.current) setRefreshError(err.message);
     } finally {
-      setRefreshing(false);
+      if (mounted.current) setRefreshing(false);
+    }
+  }
+
+  async function waitForCollection() {
+    for (;;) {
+      await delay(1_200);
+      const response = await fetch('/api/collect/status');
+      const state = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(state.error || `HTTP ${response.status}`);
+      if (!mounted.current) return;
+      if (state.status === 'running') {
+        setSnapshot(current => current ? { ...current, collectionState: state } : current);
+        continue;
+      }
+      if (state.status !== 'ok') {
+        throw new Error(state.stderr || state.message || '采集失败');
+      }
+      setSnapshot(await fetchLiveSnapshot(PULSE_WINDOW_MINUTES));
+      return;
     }
   }
 
@@ -123,17 +146,20 @@ export function LiveApp() {
           <span className="pulse-time">{generated}</span>
           <button type="button" onClick={copyStatuslineCommand}>{copied ? '已复制' : '复制 statusline'}</button>
           <button type="button" onClick={triggerCollect} disabled={!canManualRefresh}>
-            {refreshing ? '提交中' : collectionRunning ? '采集中' : '刷新'}
+            {refreshing || collectionRunning ? '采集中' : '刷新'}
           </button>
           <a href="/review">打开复盘</a>
         </div>
       </nav>
 
-      {(error || refreshError) && (
+      {(error || refreshError || freshness === 'error') && (
         <section className="pulse-error">
           {error && <strong>实时数据加载失败：{error}</strong>}
           {refreshError && <strong>刷新失败：{refreshError}</strong>}
-          <span>这通常表示 UI 代理没有连上本地 API。请重新运行 Token Work，或在 /trust 查看服务状态。</span>
+          {!error && !refreshError && <strong>最近一次采集失败：{snapshot?.staleReason || '未返回具体原因'}</strong>}
+          <span>{error || refreshError
+            ? '这通常表示 UI 代理没有连上本地 API。请重新运行 Token Work，或在 /trust 查看服务状态。'
+            : '已有历史数据不会因本次采集失败被删除；解决后可点击“刷新”重新采集。'}</span>
         </section>
       )}
 
@@ -186,6 +212,10 @@ async function fetchLiveSnapshot(windowMinutes) {
   const response = await fetch(`/api/live?windowMinutes=${encodeURIComponent(windowMinutes)}`);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
+}
+
+function delay(milliseconds) {
+  return new Promise(resolve => window.setTimeout(resolve, milliseconds));
 }
 
 function FreshnessNotice({ snapshot }) {
@@ -371,9 +401,10 @@ function AdviceList({ warnings, snapshot }) {
       ? '当前没有触发已配置预算或效率异常。'
       : '未设置自定义预算，当前只展示实际消耗，不会把固定阈值当成超限。'} />;
   }
+  const visibleWarnings = warnings.slice(0, 3);
   return (
     <div className="advice-list">
-      {warnings.slice(0, 3).map(warning => (
+      {visibleWarnings.map(warning => (
         <article key={warning.type} className={`advice-card level-${warning.level || 'medium'}`}>
           <strong>{warning.message}</strong>
           <span>{warning.evidence}</span>
@@ -484,7 +515,7 @@ function trendPointLabelIndexes(rows) {
   }
 
   const picked = [0, lastIndex];
-  const maxLabels = 9;
+  const maxLabels = Math.min(12, rows.length);
   const minGap = Math.max(1, Math.floor(lastIndex / maxLabels));
   for (const candidate of candidates.sort((a, b) => b.score - a.score)) {
     if (picked.length >= maxLabels) break;
@@ -493,11 +524,18 @@ function trendPointLabelIndexes(rows) {
     picked.push(candidate.index);
   }
 
-  if (picked.length < 5) {
-    [0.25, 0.5, 0.75].forEach(ratio => {
+  if (picked.length < maxLabels) {
+    for (let step = 1; step < maxLabels - 1 && picked.length < maxLabels; step += 1) {
+      const ratio = step / (maxLabels - 1);
       const index = Math.round(lastIndex * ratio);
       if (!picked.includes(index)) picked.push(index);
-    });
+    }
+  }
+
+  if (picked.length < maxLabels) {
+    for (let index = 1; index < lastIndex && picked.length < maxLabels; index += 1) {
+      if (!picked.includes(index)) picked.push(index);
+    }
   }
 
   return [...new Set(picked)].sort((a, b) => a - b).slice(0, maxLabels);
@@ -534,7 +572,8 @@ function freshnessLabel(value) {
   if (value === 'fresh') return '在线';
   if (value === 'collecting') return '采集中';
   if (value === 'stale') return '可能过期';
-  if (value === 'error') return '异常';
+  if (value === 'network-error') return '连接异常';
+  if (value === 'error') return '采集失败';
   if (value === 'empty') return '空数据';
   return '加载中';
 }

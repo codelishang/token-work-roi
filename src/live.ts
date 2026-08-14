@@ -8,6 +8,7 @@ const DEFAULT_MIN_OUTPUT_INPUT_RATIO = 0.15;
 const DEFAULT_HIGH_INPUT_TOKENS = 10_000;
 const HEALTHY_CACHE_HIT_RATE = 70;
 const PARALLEL_SESSION_WINDOW_MS = 30 * 60 * 1000;
+const ADVICE_FOCUS_WINDOW_MS = 60 * 60 * 1000;
 
 type InputRecord = Record<string, unknown>;
 
@@ -134,7 +135,7 @@ export function buildLiveSnapshot({
       nowMs,
       windowMinutes
     }),
-    adviceContext: buildLiveAdviceContext(metricRows, recentSessions),
+    adviceContext: buildLiveAdviceContext(metricRows, recentSessions, nowMs, recentEvents.length > 0),
     activeSessions,
     bySource: sourceRows,
     byModel: modelRows,
@@ -316,13 +317,16 @@ export function buildLiveGuardrails(snapshot: LiveSnapshotInput = {}, config: Gu
     }
   }
 
+  const focusAdvice = currentFocusAdvice(context);
+  if (focusAdvice) warnings.push(focusAdvice);
+
   const modelAdvice = dominantModelAdvice(snapshot);
   if (modelAdvice) warnings.push(modelAdvice);
 
   const parallelAdvice = parallelSessionAdvice(context.parallelSessions);
   if (parallelAdvice) warnings.push(parallelAdvice);
 
-  if (inputTokens >= guardrails.highInputTokens && cacheHitRate >= HEALTHY_CACHE_HIT_RATE) {
+  if (!warnings.length && inputTokens >= guardrails.highInputTokens && cacheHitRate >= HEALTHY_CACHE_HIT_RATE) {
     warnings.push({
       type: 'healthy-cache-reuse',
       level: 'low',
@@ -349,7 +353,7 @@ function dominantModelAdvice(snapshot: LiveSnapshotInput = {}) {
     level: 'medium',
     message: `${top.key} 集中承担近期官方价成本`,
     evidence: `$${number(top.costUSD).toFixed(2)} / $${totalCost.toFixed(2)}（${(share * 100).toFixed(1)}%）· ${formatInt(top.requests)} 个 token event`,
-    action: '需要控制成本时，先检查该模型对应的近期 token event；仅把可接受较低能力的新请求改用其它模型。'
+    action: '控制成本时，先检查这些 token event；低要求新任务再换模型。'
   };
 }
 
@@ -379,9 +383,46 @@ function parallelSessionAdvice(sessions: InputRecord[] = []) {
     type: 'parallel-heavy-contexts',
     level: 'low',
     message: `近 30 分钟内，${firstProject} 和 ${secondProject} 都在使用 ${first.model}`,
-    evidence: `${shortSessionId(first.sessionId)} ${formatInt(first.totalTokens)} tokens · ${shortSessionId(second.sessionId)} ${formatInt(second.totalTokens)} tokens`,
+    evidence: `${shortSessionId(first.sessionId)} 近 60 分钟 ${formatInt(first.recentTokens)} tokens · ${shortSessionId(second.sessionId)} 近 60 分钟 ${formatInt(second.recentTokens)} tokens`,
     action: '如其中一个项目暂不继续输入，保持该窗口暂停即可；不必关闭或重开另一个正在使用的窗口。'
   };
+}
+
+function currentFocusAdvice(context) {
+  const session = context.topSession;
+  const model = String(session?.model || '').trim();
+  const recentTokens = number(session?.recentTokens);
+  if (!session?.sessionId || !model || model === 'unknown' || recentTokens <= 0) return null;
+
+  const recentEvents = number(session.recentEvents);
+  const evidence = [
+    `近 60 分钟 ${formatInt(recentTokens)} tokens`,
+    recentEvents ? `${formatInt(recentEvents)} 个 token event` : '',
+    session.source ? `来源 ${session.source}` : '',
+    `窗口 ${shortSessionId(session.sessionId)}`
+  ].filter(Boolean).join(' · ');
+
+  return {
+    type: 'current-model-focus',
+    level: 'low',
+    message: `当前主窗口使用 ${model}`,
+    evidence,
+    action: modelFocusAction(model)
+  };
+}
+
+function modelFocusAction(model) {
+  const value = String(model || '').toLowerCase();
+  if (value.includes('gpt-5.6-sol')) {
+    return '整理或验证可改用 gpt-5.6-terra；复杂推理继续使用当前模型。';
+  }
+  if (value.includes('gpt-5.6-terra')) {
+    return '短答或整理可改用 gpt-5.6-luna；复杂推理再切换 gpt-5.6-sol。';
+  }
+  if (value.includes('gpt-5.6-luna')) {
+    return '跨文件推理、复杂设计或多轮定位时，再切换到更高能力模型。';
+  }
+  return '同一目标保持当前模型，任务变化再调整模型层级。';
 }
 
 function liveAdviceContext(snapshot: LiveSnapshotInput = {}) {
@@ -408,12 +449,13 @@ function liveAdviceContext(snapshot: LiveSnapshotInput = {}) {
   return {
     focusEvidence,
     focusAction,
+    topSession,
     sessionCount,
     parallelSessions: Array.isArray(snapshot.adviceContext?.parallelSessions) ? snapshot.adviceContext.parallelSessions : []
   };
 }
 
-function buildLiveAdviceContext(rows = [], recentSessions = []) {
+function buildLiveAdviceContext(rows = [], recentSessions = [], nowMs = Date.now(), hasEventRows = true) {
   const metadataBySession = new Map(recentSessions.map(session => [
     [session.device || '', session.source || '', session.sessionId || ''].join('::'),
     session
@@ -430,10 +472,16 @@ function buildLiveAdviceContext(rows = [], recentSessions = []) {
       model: row.model || 'unknown',
       projectPath: metadata.projectPath || null,
       totalTokens: 0,
+      recentTokens: 0,
+      recentEvents: 0,
       latestActivityMs: 0
     };
     current.totalTokens += number(row.totalTokens);
     const activityMs = number(row.timestampMs ?? row.lastActivityMs);
+    if (hasEventRows && activityMs >= nowMs - ADVICE_FOCUS_WINDOW_MS && activityMs <= nowMs) {
+      current.recentTokens += number(row.totalTokens);
+      current.recentEvents += 1;
+    }
     if (activityMs >= current.latestActivityMs) {
       current.latestActivityMs = activityMs;
       current.source = row.source || current.source;
@@ -442,11 +490,18 @@ function buildLiveAdviceContext(rows = [], recentSessions = []) {
     sessions.set(key, current);
   }
   const ranked = Array.from(sessions.values())
-    .sort((a, b) => b.totalTokens - a.totalTokens || b.latestActivityMs - a.latestActivityMs);
+    .sort((a, b) => hasEventRows
+      ? b.recentTokens - a.recentTokens || b.latestActivityMs - a.latestActivityMs || b.totalTokens - a.totalTokens
+      : b.totalTokens - a.totalTokens || b.latestActivityMs - a.latestActivityMs);
   return {
     sessionCount: ranked.length,
     topSession: ranked[0] || null,
-    parallelSessions: ranked
+    parallelSessions: hasEventRows
+      ? ranked.filter(session => (
+        session.recentEvents > 0
+        && session.latestActivityMs >= nowMs - PARALLEL_SESSION_WINDOW_MS
+      ))
+      : []
   };
 }
 
