@@ -249,6 +249,54 @@ test('live advice uses observed model cost, cache reuse and nearby project sessi
   assert.equal(types.includes('healthy-cache-reuse'), false);
 });
 
+test('live advice does not keep parallel-window guidance after activity ends', () => {
+  const now = new Date('2026-08-09T12:00:00Z');
+  const snapshot = buildLiveSnapshot({
+    now,
+    windowMinutes: 1440,
+    sessions: [{
+      device: 'macbook',
+      source: 'Codex Desktop',
+      sessionId: 'textweave-session',
+      projectPath: '/Users/coderlishang/projects/TextWeaveFlutter',
+      lastActivity: '2026-08-09T09:55:00Z',
+      model: 'gpt-5.6-sol',
+      totalTokens: 2_005_000
+    }, {
+      device: 'macbook',
+      source: 'Codex Desktop',
+      sessionId: 'token-work-session',
+      projectPath: '/Users/coderlishang/projects/token-work-roi',
+      lastActivity: '2026-08-09T09:42:00Z',
+      model: 'gpt-5.6-sol',
+      totalTokens: 1_584_000
+    }],
+    tokenEvents: [{
+      eventId: 'textweave-event',
+      device: 'macbook',
+      source: 'Codex Desktop',
+      sessionId: 'textweave-session',
+      timestamp: '2026-08-09T09:55:00Z',
+      model: 'gpt-5.6-sol',
+      inputTokens: 100_000,
+      outputTokens: 5_000,
+      costUSD: 10
+    }, {
+      eventId: 'token-work-event',
+      device: 'macbook',
+      source: 'Codex Desktop',
+      sessionId: 'token-work-session',
+      timestamp: '2026-08-09T09:42:00Z',
+      model: 'gpt-5.6-sol',
+      inputTokens: 80_000,
+      outputTokens: 4_000,
+      costUSD: 8
+    }]
+  });
+
+  assert.equal(snapshot.warnings.some(item => item.type === 'parallel-heavy-contexts'), false);
+});
+
 test('live advice follows the active session instead of an older session with more daily tokens', () => {
   const now = new Date('2026-08-12T12:00:00Z');
   const snapshot = buildLiveSnapshot({

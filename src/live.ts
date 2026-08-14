@@ -383,7 +383,7 @@ function parallelSessionAdvice(sessions: InputRecord[] = []) {
     type: 'parallel-heavy-contexts',
     level: 'low',
     message: `近 30 分钟内，${firstProject} 和 ${secondProject} 都在使用 ${first.model}`,
-    evidence: `${shortSessionId(first.sessionId)} ${formatInt(first.totalTokens)} tokens · ${shortSessionId(second.sessionId)} ${formatInt(second.totalTokens)} tokens`,
+    evidence: `${shortSessionId(first.sessionId)} 近 60 分钟 ${formatInt(first.recentTokens)} tokens · ${shortSessionId(second.sessionId)} 近 60 分钟 ${formatInt(second.recentTokens)} tokens`,
     action: '如其中一个项目暂不继续输入，保持该窗口暂停即可；不必关闭或重开另一个正在使用的窗口。'
   };
 }
@@ -496,7 +496,12 @@ function buildLiveAdviceContext(rows = [], recentSessions = [], nowMs = Date.now
   return {
     sessionCount: ranked.length,
     topSession: ranked[0] || null,
-    parallelSessions: ranked
+    parallelSessions: hasEventRows
+      ? ranked.filter(session => (
+        session.recentEvents > 0
+        && session.latestActivityMs >= nowMs - PARALLEL_SESSION_WINDOW_MS
+      ))
+      : []
   };
 }
 
