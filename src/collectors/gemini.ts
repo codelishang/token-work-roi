@@ -18,9 +18,11 @@
  * including the "total" cross-check for session-format files.
  */
 
+import { createReadStream } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, extname, basename } from 'node:path';
+import { createInterface } from 'node:readline';
 import { calculateCost } from '../pricing.ts';
 import { localDateFromTimestamp, normalizeModelForGrouping } from './utils.ts';
 
@@ -297,70 +299,75 @@ function parseSingleGeminiEvent(obj, sessionId, fallbackDate) {
 // ---------------------------------------------------------------------------
 
 async function parseJsonlFile(filePath, fallbackDate) {
-  const text = await safeReadFile(filePath);
-  if (!text) return [];
-
   let sessionId = basename(filePath, extname(filePath));
   let currentModel = null;
   const events = [];
   // Track direct message IDs for dedup (Gemini may emit the same ID twice with updated data)
   const directMsgIndex = new Map();  // id → index in events
 
-  for (const raw of text.split('\n')) {
-    const line = raw.trim();
-    if (!line) continue;
+  try {
+    const lines = createInterface({
+      input: createReadStream(filePath, { encoding: 'utf8' }),
+      crlfDelay: Infinity
+    });
+    for await (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
 
-    let obj;
-    try { obj = JSON.parse(line); } catch { continue; }
+      let obj;
+      try { obj = JSON.parse(line); } catch { continue; }
 
-    const type = obj.type;
+      const type = obj.type;
 
-    // ── init ──
-    if (type === 'init') {
-      if (typeof obj.model === 'string') currentModel = obj.model;
-      const id = obj.session_id ?? obj.sessionId;
-      if (typeof id === 'string') sessionId = id;
-      continue;
-    }
+      // ── init ──
+      if (type === 'init') {
+        if (typeof obj.model === 'string') currentModel = obj.model;
+        const id = obj.session_id ?? obj.sessionId;
+        if (typeof id === 'string') sessionId = id;
+        continue;
+      }
 
-    // Update session ID from any line that carries it
-    const lineSessionId = obj.session_id ?? obj.sessionId;
-    if (typeof lineSessionId === 'string') sessionId = lineSessionId;
+      // Update session ID from any line that carries it
+      const lineSessionId = obj.session_id ?? obj.sessionId;
+      if (typeof lineSessionId === 'string') sessionId = lineSessionId;
 
-    // ── gemini turn (direct token object) ──
-    if (type === 'gemini') {
-      if (typeof obj.model === 'string') currentModel = obj.model;
+      // ── gemini turn (direct token object) ──
+      if (type === 'gemini') {
+        if (typeof obj.model === 'string') currentModel = obj.model;
 
-      const parsed = parseSingleGeminiEvent(
-        obj,
-        sessionId,
-        extractDateFromValue(obj) ?? fallbackDate
-      );
-      if (parsed.length > 0) {
-        const msgId = typeof obj.id === 'string' ? obj.id : null;
-        if (msgId) {
-          if (directMsgIndex.has(msgId)) {
-            // Replace with updated data
-            events[directMsgIndex.get(msgId)] = parsed[0];
+        const parsed = parseSingleGeminiEvent(
+          obj,
+          sessionId,
+          extractDateFromValue(obj) ?? fallbackDate
+        );
+        if (parsed.length > 0) {
+          const msgId = typeof obj.id === 'string' ? obj.id : null;
+          if (msgId) {
+            if (directMsgIndex.has(msgId)) {
+              // Replace with updated data
+              events[directMsgIndex.get(msgId)] = parsed[0];
+            } else {
+              directMsgIndex.set(msgId, events.length);
+              events.push(parsed[0]);
+            }
           } else {
-            directMsgIndex.set(msgId, events.length);
             events.push(parsed[0]);
           }
-        } else {
-          events.push(parsed[0]);
         }
+        continue;
       }
-      continue;
-    }
 
-    // ── result / any line with stats ──
-    const stats = obj.stats ?? obj.result?.stats;
-    if (stats) {
-      const date      = extractDateFromValue(obj) ?? fallbackDate;
-      const modelHint = currentModel;
-      const parsed    = parseHeadlessStats(stats, modelHint, date, sessionId);
-      events.push(...parsed);
+      // ── result / any line with stats ──
+      const stats = obj.stats ?? obj.result?.stats;
+      if (stats) {
+        const date      = extractDateFromValue(obj) ?? fallbackDate;
+        const modelHint = currentModel;
+        const parsed    = parseHeadlessStats(stats, modelHint, date, sessionId);
+        events.push(...parsed);
+      }
     }
+  } catch {
+    return [];
   }
 
   return events;

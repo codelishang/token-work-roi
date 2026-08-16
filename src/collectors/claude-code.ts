@@ -8,9 +8,11 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, relative } from 'node:path';
+import { createInterface } from 'node:readline';
 import { configuredBool, configuredPath, configuredPaths, envPathList } from '../collector-config.ts';
 import { calculateCost } from '../pricing.ts';
 import { localDateFromTimestamp, normalizeModelForGrouping } from './utils.ts';
@@ -131,58 +133,59 @@ function decodeWorkspaceLabel(dirName) {
  * for each field.
  */
 async function parseSessionFile(filePath) {
-  let text;
-  try {
-    text = await readFile(filePath, 'utf8');
-  } catch {
-    return [];
-  }
-
   const records = [];
   const dedupIndex = new Map();
   const anonymousRecordCount = new Map();
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
+  try {
+    const lines = createInterface({
+      input: createReadStream(filePath, { encoding: 'utf8' }),
+      crlfDelay: Infinity
+    });
+    for await (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
 
-    let obj;
-    try {
-      obj = JSON.parse(trimmed);
-    } catch {
-      continue;
+      let obj;
+      try {
+        obj = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+
+      // Only assistant turns carry usage information
+      if (obj.type !== 'assistant' || !obj.message?.usage) continue;
+
+      const dedupKey = dedupKeyForAssistant(obj);
+      const anonymousCount = anonymousRecordCount.get(trimmed) || 0;
+      anonymousRecordCount.set(trimmed, anonymousCount + 1);
+      const model = normalizeModelForGrouping(obj.message.model || obj.model || 'unknown');
+      if (model === '<synthetic>' || tokenTotal(extractTokens(obj.message.usage)) === 0) continue;
+
+      const record = {
+        timestamp: typeof obj.timestamp === 'string' ? obj.timestamp : null,
+        model,
+        usage: obj.message.usage,
+        costUSD: typeof obj.costUSD === 'number' ? obj.costUSD : 0,
+        dedupKey,
+        // Some local-agent records omit message and request IDs. Keep those
+        // records distinct without depending on their position in the file.
+        identityKey: dedupKey || `anonymous:${stableHash(trimmed)}:${anonymousCount}`
+      };
+
+      if (dedupKey && dedupIndex.has(dedupKey)) {
+        const existing = records[dedupIndex.get(dedupKey)];
+        mergeUsageMax(existing.usage, record.usage);
+        existing.costUSD = Math.max(existing.costUSD || 0, record.costUSD || 0);
+        if (!existing.timestamp && record.timestamp) existing.timestamp = record.timestamp;
+        if (existing.model === 'unknown' && record.model !== 'unknown') existing.model = record.model;
+        continue;
+      }
+
+      if (dedupKey) dedupIndex.set(dedupKey, records.length);
+      records.push(record);
     }
-
-    // Only assistant turns carry usage information
-    if (obj.type !== 'assistant' || !obj.message?.usage) continue;
-
-    const dedupKey = dedupKeyForAssistant(obj);
-    const anonymousCount = anonymousRecordCount.get(trimmed) || 0;
-    anonymousRecordCount.set(trimmed, anonymousCount + 1);
-    const model = normalizeModelForGrouping(obj.message.model || obj.model || 'unknown');
-    if (model === '<synthetic>' || tokenTotal(extractTokens(obj.message.usage)) === 0) continue;
-
-    const record = {
-      timestamp: typeof obj.timestamp === 'string' ? obj.timestamp : null,
-      model,
-      usage: obj.message.usage,
-      costUSD: typeof obj.costUSD === 'number' ? obj.costUSD : 0,
-      dedupKey,
-      // Some local-agent records omit message and request IDs. Keep those
-      // records distinct without depending on their position in the file.
-      identityKey: dedupKey || `anonymous:${stableHash(trimmed)}:${anonymousCount}`
-    };
-
-    if (dedupKey && dedupIndex.has(dedupKey)) {
-      const existing = records[dedupIndex.get(dedupKey)];
-      mergeUsageMax(existing.usage, record.usage);
-      existing.costUSD = Math.max(existing.costUSD || 0, record.costUSD || 0);
-      if (!existing.timestamp && record.timestamp) existing.timestamp = record.timestamp;
-      if (existing.model === 'unknown' && record.model !== 'unknown') existing.model = record.model;
-      continue;
-    }
-
-    if (dedupKey) dedupIndex.set(dedupKey, records.length);
-    records.push(record);
+  } catch {
+    return [];
   }
 
   return records;

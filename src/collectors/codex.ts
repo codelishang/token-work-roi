@@ -19,7 +19,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { configuredPaths, configuredStrings, envPathList } from '../collector-config.ts';
 import { calculateCost } from '../pricing.ts';
@@ -52,8 +52,7 @@ const CODEX_DESKTOP_SOURCE = 'Codex Desktop';
 const CODEX_CLI_SOURCE = 'Codex CLI';
 const CODEX_UNKNOWN_SOURCE = 'Codex (unidentified client)';
 
-const sessionTextCache = new Map();
-const usageTimelineCache = new Map();
+const SESSION_META_SCAN_BYTES = 64 * 1024;
 
 // ---------------------------------------------------------------------------
 // Path resolution
@@ -487,15 +486,32 @@ async function parseSessionFiles({ changedAfterMs = null } = {}) {
 }
 
 async function readSessionLineage(filePath, fallbackSessionId) {
+  const header = await readSessionHeader(filePath);
+  const fromHeader = sessionLineageFromText(header, fallbackSessionId);
+  if (fromHeader) return fromHeader;
+
+  // session_meta normally starts each Codex JSONL file. Keep the fallback
+  // for older files that place it after an unusually large first record.
   const text = await readSessionText(filePath);
-  if (text == null) {
-    return {
-      sessionId: fallbackSessionId,
-      parentSessionId: null,
-      forkedAt: null,
-      source: CODEX_UNKNOWN_SOURCE
-    };
+  return sessionLineageFromText(text, fallbackSessionId) || unknownLineage(fallbackSessionId);
+}
+
+async function readSessionHeader(filePath) {
+  let handle;
+  try {
+    handle = await open(filePath, 'r');
+    const buffer = Buffer.allocUnsafe(SESSION_META_SCAN_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return buffer.toString('utf8', 0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => {});
   }
+}
+
+function sessionLineageFromText(text, fallbackSessionId) {
+  if (text == null) return null;
   for (const raw of text.split('\n')) {
     let entry;
     try { entry = JSON.parse(raw); } catch { continue; }
@@ -508,6 +524,10 @@ async function readSessionLineage(filePath, fallbackSessionId) {
       source: codexSource(payload.originator, payload.source)
     };
   }
+  return null;
+}
+
+function unknownLineage(fallbackSessionId) {
   return {
     sessionId: fallbackSessionId,
     parentSessionId: null,
@@ -539,17 +559,11 @@ async function totalUsageAt(filePath, timestamp) {
 }
 
 async function readSessionText(filePath) {
-  if (!sessionTextCache.has(filePath)) {
-    sessionTextCache.set(filePath, readFile(filePath, 'utf8').catch(() => null));
-  }
-  return sessionTextCache.get(filePath);
+  return readFile(filePath, 'utf8').catch(() => null);
 }
 
 async function usageTimelineFor(filePath) {
-  if (!usageTimelineCache.has(filePath)) {
-    usageTimelineCache.set(filePath, buildUsageTimeline(filePath));
-  }
-  return usageTimelineCache.get(filePath);
+  return buildUsageTimeline(filePath);
 }
 
 async function buildUsageTimeline(filePath) {

@@ -5,6 +5,7 @@ export function providerFromSource(source) {
   if (value.includes('grok') || /\bx[._-]?ai\b/.test(value)) return 'xai';
   if (value.includes('claude') || value.includes('anthropic')) return 'anthropic';
   if (value.includes('deepseek')) return 'deepseek';
+  if (value.includes('minimax')) return 'MiniMax';
   if (value.includes('mimo') || value.includes('xiaomi')) return 'xiaomi';
   if (value.includes('glm') || value.includes('zai') || value.includes('zhipu') || value.includes('bigmodel')) return 'Zhipu GLM';
   if (value.includes('doubao') || /\bark\b/.test(value) || value.includes('volc') || value.includes('bytedance')) return 'DoubaoSeed';

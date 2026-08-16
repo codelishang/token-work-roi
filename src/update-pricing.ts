@@ -37,12 +37,16 @@ const STABLE_ALIASES = new Map([
   ['openai::gpt-5-6-terra', ['gpt-5.6-terra', 'gpt-5-6-terra']],
   ['openai::gpt-5-6-luna', ['gpt-5.6-luna', 'gpt-5-6-luna']],
   ['deepseek::deepseek-v4-flash', ['deepseek-v4-flash', 'deepseek-v4-flash-0731', 'deepseek-chat', 'deepseek-reasoner']],
+  ['minimax::minimax-m3', ['minimax-m3', 'minimax-m-3']],
+  ['xai::grok-4-6', ['grok-4.6', 'grok-4-6']],
+  ['gemini::gemini-3-7-flash', ['gemini-3.7-flash', 'gemini-3-7-flash']],
   ['xiaomi::mimo-v2.5-pro', ['mimo-v2.5-pro', 'mimo-v2-pro']],
   ['zhipu glm::glm-5.2', ['glm-5.2', 'glm-5-2']],
   ['zhipu glm::glm-5.1', ['glm-5.1', 'glm-5-1']],
   ['zhipu glm::glm-4.5-air', ['glm-4.5-air', 'glm-4-5-air']],
   ['zhipu glm::glm-4.7', ['glm-4.7', 'glm-4-7']],
   ['qwen::qwen3.7-plus', ['qwen3.7-plus', 'qwen3-7-plus']],
+  ['qwen::qwen3-8', ['qwen3.8', 'qwen3-8', 'qwen3.8-max', 'qwen3-8-max']],
   ['qwen::qwen3.7-max', ['qwen3.7-max', 'qwen3-7-max']],
   ['qwen::qwen3.6-flash', ['qwen3.6-flash', 'qwen3-6-flash']],
   ['qwen::qwen3-coder-plus', ['qwen3-coder-plus', 'qwen3-coder']],
@@ -709,6 +713,7 @@ function volcengineApiPrice(rows, chargeKind) {
 
 function parseGeminiModels(body) {
   const models = [
+    ['gemini-3.7-flash', 'gemini-3.7-flash', 0],
     ['gemini-3.5-flash', 'gemini-3.5-flash', 0],
     ['gemini-3.1-flash-lite', 'gemini-3.1-flash-lite', 0],
     ['gemini-3.1-pro-preview', 'gemini-3.1-pro-preview', 0],
@@ -788,6 +793,7 @@ function parseKimiModels(body, exchangeRate) {
 
 function parseQwenModels(body, exchangeRate) {
   const pairs = [
+    ['qwen3.8', 'qwen3.8-max'],
     ['qwen3.7-plus', 'qwen3.7-plus'],
     ['qwen3.7-max', 'qwen3.7-max'],
     ['qwen3.6-flash', 'qwen3.6-flash'],
@@ -796,7 +802,7 @@ function parseQwenModels(body, exchangeRate) {
     ['qwen-coder-plus', 'qwen-coder-plus'],
     ['qwen-coder-turbo', 'qwen-coder-turbo']
   ];
-  return pairs
+  const qwenModels = pairs
     .map(([model, label]) => {
       const rates = qwenRates(body, label);
       if (!rates) return null;
@@ -819,6 +825,29 @@ function parseQwenModels(body, exchangeRate) {
       });
     })
     .filter(Boolean);
+  const miniMaxRates = qwenRates(body, 'MiniMax/MiniMax-M3');
+  if (!miniMaxRates) return qwenModels;
+
+  return [
+    ...qwenModels,
+    rateModel('MiniMax', 'minimax-m3', cnyToUsdRates({
+      ...miniMaxRates,
+      cachedInput: miniMaxRates.input,
+      cacheWrite5m: miniMaxRates.input,
+      cacheWrite1h: miniMaxRates.input
+    }, exchangeRate), 'Qwen', 'official-page', {
+      currency: 'CNY',
+      unit: '1M tokens',
+      ratesPerMTok: {
+        ...miniMaxRates,
+        cachedInput: miniMaxRates.input,
+        cacheWrite5m: miniMaxRates.input,
+        cacheWrite1h: miniMaxRates.input
+      },
+      exchangeRate: exchangeRate.rate,
+      sourceUnit: '元 / 1M tokens'
+    }, 'Official Alibaba Cloud Model Studio rate for MiniMax-M3. This does not represent a direct MiniMax API price.')
+  ];
 }
 
 function qwenRates(body, label): ParsedRates | null {
