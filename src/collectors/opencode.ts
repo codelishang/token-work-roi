@@ -197,7 +197,7 @@ function parseDbRows(dbPath) {
       WHERE json_extract(m.data, '$.role') = 'assistant'
         AND json_extract(m.data, '$.tokens') IS NOT NULL
       ORDER BY m.id, m.session_id
-    `).all();
+    `).iterate();
   } catch {
     try {
       rows = db.prepare(`
@@ -206,45 +206,47 @@ function parseDbRows(dbPath) {
         WHERE json_extract(m.data, '$.role') = 'assistant'
           AND json_extract(m.data, '$.tokens') IS NOT NULL
         ORDER BY m.id, m.session_id
-      `).all();
+      `).iterate();
     } catch {
       try { db.close(); } catch { /* ignore */ }
       return [];
     }
   }
 
-  try { db.close(); } catch { /* ignore */ }
-
   const messages = [];
   const fingerprintIndices = new Map();
 
-  for (const row of rows) {
-    let msg;
-    try {
-      msg = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
-    } catch {
-      continue;
-    }
-
-    const parsed = parseMessageObject(msg, row.id, row.session_id, row.workspace_root);
-    if (!parsed) continue;
-
-    const existingIndex = fingerprintIndices.get(parsed.fingerprint);
-    if (existingIndex != null) {
-      const existing = messages[existingIndex];
-      if (!existing.dedupKey && parsed.dedupKey) existing.dedupKey = parsed.dedupKey;
-      if (!existing.workspace && parsed.workspace) {
-        existing.workspace = parsed.workspace;
-        existing.workspaceLabel = parsed.workspaceLabel;
-      } else if (existing.workspace && parsed.workspace && existing.workspace !== parsed.workspace) {
-        existing.workspace = null;
-        existing.workspaceLabel = null;
+  try {
+    for (const row of rows) {
+      let msg;
+      try {
+        msg = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+      } catch {
+        continue;
       }
-      continue;
-    }
 
-    fingerprintIndices.set(parsed.fingerprint, messages.length);
-    messages.push(parsed);
+      const parsed = parseMessageObject(msg, row.id, row.session_id, row.workspace_root);
+      if (!parsed) continue;
+
+      const existingIndex = fingerprintIndices.get(parsed.fingerprint);
+      if (existingIndex != null) {
+        const existing = messages[existingIndex];
+        if (!existing.dedupKey && parsed.dedupKey) existing.dedupKey = parsed.dedupKey;
+        if (!existing.workspace && parsed.workspace) {
+          existing.workspace = parsed.workspace;
+          existing.workspaceLabel = parsed.workspaceLabel;
+        } else if (existing.workspace && parsed.workspace && existing.workspace !== parsed.workspace) {
+          existing.workspace = null;
+          existing.workspaceLabel = null;
+        }
+        continue;
+      }
+
+      fingerprintIndices.set(parsed.fingerprint, messages.length);
+      messages.push(parsed);
+    }
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
   }
 
   return messages;

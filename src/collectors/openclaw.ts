@@ -25,9 +25,10 @@
  */
 
 import { createHash } from 'node:crypto';
+import { existsSync, createReadStream } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { existsSync }              from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { configuredPaths } from '../collector-config.ts';
 import { calculateCost } from '../pricing.ts';
 import { canonicalProvider, localDateFromTimestamp, normalizeModelForGrouping } from './utils.ts';
@@ -153,9 +154,6 @@ async function parseIndexFile(indexPath) {
 // ---------------------------------------------------------------------------
 
 async function parseSessionFile(filePath, sessionId, agentPath) {
-  const text = await safeReadFile(filePath);
-  if (!text) return [];
-
   const fallbackTimestamp = await fileMtimeMs(filePath);
   const fallbackDate = localDateFromTimestamp(fallbackTimestamp);
 
@@ -164,38 +162,43 @@ async function parseSessionFile(filePath, sessionId, agentPath) {
   const events        = [];
   const recordOccurrences = new Map();
 
-  for (const raw of text.split('\n')) {
-    const line = raw.trim();
-    if (!line) continue;
+  try {
+    const lines = createInterface({
+      input: createReadStream(filePath, { encoding: 'utf8' }),
+      crlfDelay: Infinity
+    });
+    for await (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
 
-    let entry;
-    try { entry = JSON.parse(line); } catch { continue; }
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
 
-    const type = entry.type;
+      const type = entry.type;
 
-    // ── model_change ──────────────────────────────────────────────────────
-    if (type === 'model_change') {
-      if (typeof entry.modelId === 'string' && entry.modelId)
-        currentModel = entry.modelId;
-      if (typeof entry.provider === 'string' && entry.provider)
-        currentProvider = entry.provider;
-      continue;
-    }
-
-    // ── custom / model-snapshot ───────────────────────────────────────────
-    if (type === 'custom' && entry.customType === 'model-snapshot') {
-      const d = entry.data;
-      if (d) {
-        if (typeof d.modelId === 'string' && d.modelId)
-          currentModel = d.modelId;
-        if (typeof d.provider === 'string' && d.provider)
-          currentProvider = d.provider;
+      // ── model_change ──────────────────────────────────────────────────────
+      if (type === 'model_change') {
+        if (typeof entry.modelId === 'string' && entry.modelId)
+          currentModel = entry.modelId;
+        if (typeof entry.provider === 'string' && entry.provider)
+          currentProvider = entry.provider;
+        continue;
       }
-      continue;
-    }
 
-    // ── message ───────────────────────────────────────────────────────────
-    if (type === 'message') {
+      // ── custom / model-snapshot ───────────────────────────────────────────
+      if (type === 'custom' && entry.customType === 'model-snapshot') {
+        const d = entry.data;
+        if (d) {
+          if (typeof d.modelId === 'string' && d.modelId)
+            currentModel = d.modelId;
+          if (typeof d.provider === 'string' && d.provider)
+            currentProvider = d.provider;
+        }
+        continue;
+      }
+
+      // ── message ───────────────────────────────────────────────────────────
+      if (type !== 'message') continue;
       const msg = entry.message;
       if (!msg || msg.role !== 'assistant') continue;
 
@@ -249,6 +252,8 @@ async function parseSessionFile(filePath, sessionId, agentPath) {
         cost
       });
     }
+  } catch {
+    return [];
   }
 
   return events;
