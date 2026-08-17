@@ -147,31 +147,18 @@ function FilterBar({ f, setF, allSources, allDevices, allModels, availableRange,
       }
       return next;
     });
-  };
-
-  const resetCustomDraft = () => {
-    setCustomDraft({
-      startDateTime: currentStartDateTime,
-      endDateTime: currentEndDateTime
+    setF(current => {
+      const next = { ...current, rangeId: 'custom', [key]: value };
+      if (next.startDateTime && next.endDateTime && next.startDateTime > next.endDateTime) {
+        if (key === 'startDateTime') next.endDateTime = next.startDateTime;
+        else next.startDateTime = next.endDateTime;
+      }
+      return {
+        ...next,
+        startDate: next.startDateTime.slice(0, 10),
+        endDate: next.endDateTime.slice(0, 10)
+      };
     });
-    setCustomOpen(false);
-  };
-
-  const applyCustomDraft = () => {
-    const next = {
-      ...f,
-      rangeId: 'custom',
-      startDateTime: customDraft.startDateTime,
-      endDateTime: customDraft.endDateTime,
-      startDate: customDraft.startDateTime.slice(0, 10),
-      endDate: customDraft.endDateTime.slice(0, 10)
-    };
-    if (next.startDateTime && next.endDateTime && next.startDateTime > next.endDateTime) {
-      next.endDateTime = next.startDateTime;
-      next.endDate = next.startDate;
-    }
-    setF(next);
-    setCustomOpen(false);
   };
 
   const toggleSet = (key, value) => {
@@ -201,6 +188,7 @@ function FilterBar({ f, setF, allSources, allDevices, allModels, availableRange,
           <div className="date-range-picker" ref={customRef}>
             <span className="date-range-hint">支持自定义日期与时间</span>
             <button
+              type="button"
               className={`date-range-control ${f.rangeId === 'custom' ? 'active' : ''}`}
               aria-expanded={customOpen}
               aria-haspopup="dialog"
@@ -228,10 +216,6 @@ function FilterBar({ f, setF, allSources, allDevices, allModels, availableRange,
                     min={customDraft.startDateTime || undefined}
                     onChange={e => setCustomDraftDateTime('endDateTime', e.target.value)} />
                 </label>
-                <div className="date-range-popover-actions">
-                  <button className="date-range-action" onClick={resetCustomDraft}>取消</button>
-                  <button className="date-range-action primary" onClick={applyCustomDraft}>确定</button>
-                </div>
               </div>
             )}
           </div>

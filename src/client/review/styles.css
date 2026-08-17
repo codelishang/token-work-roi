@@ -199,7 +199,6 @@ body::before {
 
 .review-date-range-hint {
   flex: 0 0 auto;
-  color: var(--ink-soft);
   font-size: 11.5px;
   white-space: nowrap;
 }
@@ -288,36 +287,6 @@ body::before {
   border-color: var(--indigo);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--indigo), transparent 84%);
   outline: none;
-}
-
-.review-date-range-popover-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  padding-top: 4px;
-}
-
-.review-date-range-action {
-  height: 36px;
-  padding: 0 10px;
-  color: var(--ink-2);
-  background: transparent;
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.review-date-range-action:hover {
-  color: var(--ink);
-  background: var(--paper-2);
-}
-
-.review-date-range-action.primary {
-  color: var(--paper);
-  background: var(--ink);
-  border-color: var(--ink);
 }
 
 .nav-actions {

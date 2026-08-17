@@ -80,7 +80,7 @@ export async function collect(pricingData = null) {
 
   let db;
   try {
-    db = new DatabaseSync(dbPath);
+    db = new DatabaseSync(dbPath, { readOnly: true, timeout: 5000 });
   } catch {
     return empty;
   }

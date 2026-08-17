@@ -75,12 +75,13 @@ async function getClaudeDesktopLocalAgentRoots() {
     `${homedir()}/Library/Application Support/Claude/local-agent-mode-sessions`
   );
   if (!base) return [];
-  const sessionDirs = await collectClaudeDirs(base);
+  const sessionDirs = await collectClaudeDirs(base, 0, 4);
   return sessionDirs.filter((dir) => /[/\\]local_[^/\\]+[/\\]\.claude$/.test(dir));
 }
 
-async function collectClaudeDirs(dir) {
+async function collectClaudeDirs(dir, depth = 0, maxDepth = 4) {
   const results = [];
+  if (depth > maxDepth) return results;
   const entries = await safeReaddir(dir);
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
@@ -91,7 +92,7 @@ async function collectClaudeDirs(dir) {
       continue;
     }
 
-    results.push(...await collectClaudeDirs(fullPath));
+    results.push(...await collectClaudeDirs(fullPath, depth + 1, maxDepth));
   }
   return results;
 }

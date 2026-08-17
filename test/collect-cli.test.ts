@@ -473,6 +473,155 @@ test('scheduled Codex collection preserves unchanged session events', async () =
   }
 });
 
+test('scheduled Codex collection does not rescan an unchanged fork parent', async () => {
+  const fixture = createCollectorFixture();
+  try {
+    const sessionsDir = join(fixture.codexHome, 'sessions', '2026', '06', '17');
+    const parentId = 'parent-session';
+    const childId = 'child-session';
+    writeFileSync(join(sessionsDir, `${parentId}.jsonl`), [
+      JSON.stringify({ type: 'session_meta', payload: { id: parentId, originator: 'codex-tui' } }),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-06-17T03:00:00.000Z',
+        payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 20 }, last_token_usage: { input_tokens: 20 } } }
+      })
+    ].join('\n'), 'utf8');
+    const childPath = join(sessionsDir, `${childId}.jsonl`);
+    writeFileSync(childPath, [
+      JSON.stringify({ type: 'session_meta', payload: { id: childId, parent_thread_id: parentId, timestamp: '2026-06-17T03:00:00.000Z', originator: 'codex-tui' } }),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-06-17T03:05:00.000Z',
+        payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 30 }, last_token_usage: { input_tokens: 10 } } }
+      })
+    ].join('\n'), 'utf8');
+
+    const initial = await runNode([
+      'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], { ...fixture.env, TOKEN_WORK_COLLECT_REASON: 'scheduled', TOKEN_WORK_SCHEDULED_INCREMENTAL: '1' });
+    assert.equal(initial.code, 0, initial.stderr);
+
+    const refreshedAt = new Date(Date.now() + 1_000).toISOString();
+    writeFileSync(childPath, [
+      readFileSync(childPath, 'utf8').trim(),
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: refreshedAt,
+        payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 40 }, last_token_usage: { input_tokens: 10 } } }
+      })
+    ].join('\n'), 'utf8');
+
+    const refreshed = await runNode([
+      'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], { ...fixture.env, TOKEN_WORK_COLLECT_REASON: 'scheduled', TOKEN_WORK_SCHEDULED_INCREMENTAL: '1' });
+    assert.equal(refreshed.code, 0, refreshed.stderr);
+    assert.equal(JSON.parse(refreshed.stdout).sources[0].candidateFiles, 1);
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('scheduled Codex collection reclassifies a session without duplicating its usage', async () => {
+  const fixture = createCollectorFixture();
+  const sessionPath = join(fixture.codexHome, 'sessions', '2026', '06', '17', 'codex-session.jsonl');
+  const scheduledEnv = {
+    ...fixture.env,
+    TOKEN_WORK_COLLECT_REASON: 'scheduled',
+    TOKEN_WORK_SCHEDULED_INCREMENTAL: '1'
+  };
+  try {
+    const initial = await runNode([
+      'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], scheduledEnv);
+    assert.equal(initial.code, 0, initial.stderr);
+
+    const lines = readFileSync(sessionPath, 'utf8').trim().split('\n');
+    const metadata = JSON.parse(lines[0]);
+    metadata.payload.originator = 'Codex Desktop';
+    lines[0] = JSON.stringify(metadata);
+    writeFileSync(sessionPath, `${lines.join('\n')}\n`, 'utf8');
+    utimesSync(sessionPath, new Date(), new Date(Date.now() + 1_000));
+
+    const refreshed = await runNode([
+      'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], scheduledEnv);
+    assert.equal(refreshed.code, 0, refreshed.stderr);
+
+    const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.deepEqual(db.prepare(`
+        SELECT source, COALESCE(SUM(total_tokens), 0) AS totalTokens
+        FROM daily_usage
+        WHERE source LIKE 'Codex%'
+        GROUP BY source
+      `).all().map(row => ({ ...row })), [{ source: 'Codex Desktop', totalTokens: 155 }]);
+      assert.equal(db.prepare(`
+        SELECT COUNT(*) AS count FROM token_events WHERE source = 'Codex CLI'
+      `).get().count, 0);
+    } finally {
+      db.close();
+    }
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('scheduled Codex collection reads only the changed tail of a large session', async () => {
+  const fixture = createCollectorFixture();
+  try {
+    const sessionPath = join(fixture.codexHome, 'sessions', '2026', '06', '17', 'tail-session.jsonl');
+    const padding = JSON.stringify({ type: 'note', payload: { text: 'x'.repeat(512) } });
+    writeFileSync(sessionPath, [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'tail-session', originator: 'codex-tui' } }),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-06-17T04:00:00.000Z',
+        payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 10 }, last_token_usage: { input_tokens: 10 } } }
+      }),
+      ...Array.from({ length: 8_500 }, () => padding)
+    ].join('\n'), 'utf8');
+
+    const initial = await runNode([
+      'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], { ...fixture.env, TOKEN_WORK_COLLECT_REASON: 'scheduled', TOKEN_WORK_SCHEDULED_INCREMENTAL: '1' });
+    assert.equal(initial.code, 0, initial.stderr);
+
+    const refreshedAt = new Date(Date.now() + 1_000).toISOString();
+    writeFileSync(sessionPath, [
+      readFileSync(sessionPath, 'utf8').trim(),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.4-mini' } }),
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: refreshedAt,
+        payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 30 }, last_token_usage: { input_tokens: 20 } } }
+      })
+    ].join('\n'), 'utf8');
+
+    const refreshed = await runNode([
+      'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], { ...fixture.env, TOKEN_WORK_COLLECT_REASON: 'scheduled', TOKEN_WORK_SCHEDULED_INCREMENTAL: '1' });
+    assert.equal(refreshed.code, 0, refreshed.stderr);
+    assert.equal(JSON.parse(refreshed.stdout).sources[0].tokenEvents, 1);
+
+    const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.equal(db.prepare(`
+        SELECT total_tokens AS totalTokens
+        FROM session_usage
+        WHERE source = 'Codex CLI' AND session_id = 'local:codex:tail-session:gpt-5.4-mini'
+      `).get().totalTokens, 30);
+    } finally {
+      db.close();
+    }
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
 test('collect keeps distinct Codex and Claude events without relying on file position', async () => {
   const fixture = createCollectorFixture();
   try {

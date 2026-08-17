@@ -146,13 +146,14 @@ function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  if (activeCollection && activeCollection.exitCode == null) {
-    stopCollection(activeCollection);
-  }
-
-  server.close(() => process.exit(0));
   server.closeIdleConnections?.();
-  const forceExit = setTimeout(() => process.exit(0), 2500);
+  const collectorStopped = activeCollection && activeCollection.exitCode == null
+    ? stopCollectionAndWait(activeCollection)
+    : Promise.resolve();
+  const serverClosed = new Promise<void>(resolveClose => server.close(() => resolveClose()));
+
+  Promise.all([collectorStopped, serverClosed]).then(() => process.exit(0));
+  const forceExit = setTimeout(() => process.exit(0), 3000);
   forceExit.unref?.();
 }
 
@@ -171,7 +172,39 @@ function stopCollection(child, { force = false } = {}) {
     });
     if (result.status === 0) return;
   }
+
+  if (process.platform !== 'win32' && child.pid) {
+    try {
+      // Scheduled collectors run in their own process group so a timeout also
+      // stops any descendants that inherited the collector's file handles.
+      process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM');
+      return;
+    } catch {
+      // A process group is unavailable only when spawning failed or the child
+      // has already exited. The direct-child fallback below still covers both.
+    }
+  }
+
   child.kill(force ? 'SIGKILL' : 'SIGTERM');
+}
+
+function stopCollectionAndWait(child) {
+  return new Promise<void>(resolveStop => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(forceKill);
+      clearTimeout(giveUp);
+      resolveStop();
+    };
+    const forceKill = setTimeout(() => stopCollection(child, { force: true }), 1500);
+    const giveUp = setTimeout(done, 2500);
+    forceKill.unref?.();
+    giveUp.unref?.();
+    child.once('close', done);
+    stopCollection(child);
+  });
 }
 
 server.listen(port, host, () => {
@@ -1056,7 +1089,7 @@ async function handleCollect(req, res) {
 }
 
 function startCollection({ reason = 'manual' } = {}) {
-  if (activeCollection) {
+  if (shuttingDown || activeCollection) {
     return false;
   }
 
@@ -1075,6 +1108,7 @@ function startCollection({ reason = 'manual' } = {}) {
       TOKEN_WORK_COLLECT_REASON: reason,
       TOKEN_WORK_SCHEDULED_INCREMENTAL: ['scheduled', 'live-refresh'].includes(reason) ? '1' : ''
     },
+    detached: process.platform !== 'win32',
     windowsHide: true
   });
 
@@ -1082,6 +1116,7 @@ function startCollection({ reason = 'manual' } = {}) {
   let stdout = '';
   let stderr = '';
   let timedOut = false;
+  let completed = false;
   const startedAt = new Date().toISOString();
   collectionState = {
     status: 'running',
@@ -1110,26 +1145,10 @@ function startCollection({ reason = 'manual' } = {}) {
   }, COLLECTION_TIMEOUT_MS);
   timeout.unref?.();
 
-  child.on('error', error => {
+  const complete = code => {
+    if (completed || activeCollection !== child) return;
+    completed = true;
     clearTimeout(timeout);
-    if (activeCollection !== child) return;
-    activeCollection = null;
-    collectionState = {
-      ...collectionState,
-      status: 'error',
-      message: `无法启动采集进程：${error.message}`,
-      finishedAt: new Date().toISOString(),
-      stderr: error.message,
-      backup: null
-    };
-    console.error(`[collect] ${collectionState.message}`);
-  });
-
-  child.on('close', code => {
-    clearTimeout(timeout);
-    // A spawn error can emit close later. Do not let that old callback replace
-    // its diagnostic state, or a newer collection that has already started.
-    if (activeCollection !== child) return;
     activeCollection = null;
     if (collectionAlreadyRunning(stderr)) {
       collectionState = {
@@ -1163,6 +1182,29 @@ function startCollection({ reason = 'manual' } = {}) {
     if (collectionState.status === 'error') {
       console.error(`[collect] ${collectionState.message}`);
     }
+  };
+
+  child.on('error', error => {
+    if (completed || activeCollection !== child) return;
+    completed = true;
+    clearTimeout(timeout);
+    activeCollection = null;
+    collectionState = {
+      ...collectionState,
+      status: 'error',
+      message: `无法启动采集进程：${error.message}`,
+      finishedAt: new Date().toISOString(),
+      stderr: error.message,
+      backup: null
+    };
+    console.error(`[collect] ${collectionState.message}`);
+  });
+
+  child.on('close', complete);
+  child.on('exit', code => {
+    // `close` normally follows `exit` immediately. Do not let an inherited
+    // stdio handle keep the scheduler blocked when a timed-out child is gone.
+    if (timedOut) setTimeout(() => complete(code), 250).unref?.();
   });
 
   return true;

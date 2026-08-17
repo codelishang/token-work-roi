@@ -53,6 +53,14 @@ const CODEX_CLI_SOURCE = 'Codex CLI';
 const CODEX_UNKNOWN_SOURCE = 'Codex (unidentified client)';
 
 const SESSION_META_SCAN_BYTES = 64 * 1024;
+const INCREMENTAL_TAIL_BYTES = 4 * 1024 * 1024;
+
+interface SessionParseOptions {
+  tailBytes?: number;
+  workspace?: string | null;
+  sessionId?: string;
+  source?: string;
+}
 
 // ---------------------------------------------------------------------------
 // Path resolution
@@ -167,17 +175,20 @@ function summaryAtLeast(current, baseline) {
  * Parse a single Codex JSONL session file.
  * Returns an array of { timestamp, date, model, workspace, source, tokens }.
  */
-async function parseSessionFile(filePath, sessionId, inheritedTotal = null, minimumTimestamp = null) {
-  const text = await readSessionText(filePath);
+async function parseSessionFile(filePath, sessionId, inheritedTotal = null, minimumTimestamp = null, options: SessionParseOptions = {}) {
+  const tailBytes = Number(options.tailBytes) || 0;
+  const text = tailBytes > 0
+    ? await readSessionTail(filePath, tailBytes)
+    : await readSessionText(filePath);
   if (text == null) return [];
 
   // Per-file state
   let currentModel     = null;
   let previousTotal    = inheritedTotal;
   let awaitingForkBase = Boolean(inheritedTotal);
-  let workspace        = null;
-  let metaSessionId    = sessionId;
-  let source           = CODEX_UNKNOWN_SOURCE;
+  let workspace        = options.workspace || null;
+  let metaSessionId    = options.sessionId || sessionId;
+  let source           = options.source || CODEX_UNKNOWN_SOURCE;
 
   const events = [];
   const recordOccurrences = new Map();
@@ -218,12 +229,14 @@ async function parseSessionFile(filePath, sessionId, inheritedTotal = null, mini
       const info = payload.info || {};
 
       // Model resolution: payload.model → info.model → state.currentModel
-      const model = normalizeModelForGrouping(
+      const modelValue =
         extractModel(payload) ||
         extractModel(info)    ||
-        currentModel          ||
-        'unknown'
-      );
+        currentModel;
+      // A tail can begin in the middle of a session. Ignore rows before its
+      // first model context instead of assigning them to an unknown model.
+      if (!modelValue && tailBytes > 0) continue;
+      const model = normalizeModelForGrouping(modelValue || 'unknown');
 
       currentModel = model;
 
@@ -441,12 +454,6 @@ async function parseSessionFiles({ changedAfterMs = null } = {}) {
       lineage: await readSessionLineage(filePath, fileSessionId)
     });
   }
-  if (Number.isFinite(changedAfterMs)) {
-    const knownSessions = new Set(files.map(file => file.lineage.sessionId));
-    if (files.some(file => file.lineage.parentSessionId && !knownSessions.has(file.lineage.parentSessionId))) {
-      return parseSessionFiles();
-    }
-  }
   const bySessionId = new Map();
   for (const file of files) {
     const matches = bySessionId.get(file.lineage.sessionId) || [];
@@ -478,7 +485,15 @@ async function parseSessionFiles({ changedAfterMs = null } = {}) {
             file.filePath,
             file.fileSessionId,
             inheritedTotal,
-            unresolvedFork ? file.lineage.forkedAt : null
+            unresolvedFork ? file.lineage.forkedAt : null,
+            Number.isFinite(changedAfterMs)
+              ? {
+                  tailBytes: INCREMENTAL_TAIL_BYTES,
+                  sessionId: file.lineage.sessionId,
+                  source: file.lineage.source,
+                  workspace: file.lineage.workspace
+                }
+              : undefined
           )
     });
   }
@@ -521,7 +536,8 @@ function sessionLineageFromText(text, fallbackSessionId) {
       sessionId: extractSessionId(payload) || fallbackSessionId,
       parentSessionId: normalizeSessionId(payload.parent_thread_id || payload.forked_from_id),
       forkedAt: validTimestamp(payload.timestamp || entry.timestamp),
-      source: codexSource(payload.originator, payload.source)
+      source: codexSource(payload.originator, payload.source),
+      workspace: typeof payload.cwd === 'string' && payload.cwd.trim() ? payload.cwd : null
     };
   }
   return null;
@@ -532,7 +548,8 @@ function unknownLineage(fallbackSessionId) {
     sessionId: fallbackSessionId,
     parentSessionId: null,
     forkedAt: null,
-    source: CODEX_UNKNOWN_SOURCE
+    source: CODEX_UNKNOWN_SOURCE,
+    workspace: null
   };
 }
 
@@ -560,6 +577,30 @@ async function totalUsageAt(filePath, timestamp) {
 
 async function readSessionText(filePath) {
   return readFile(filePath, 'utf8').catch(() => null);
+}
+
+async function readSessionTail(filePath, maxBytes) {
+  let info;
+  try {
+    info = await stat(filePath);
+  } catch {
+    return null;
+  }
+  if (info.size <= maxBytes) return readSessionText(filePath);
+
+  let handle;
+  try {
+    handle = await open(filePath, 'r');
+    const buffer = Buffer.allocUnsafe(maxBytes);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, info.size - maxBytes);
+    const text = buffer.toString('utf8', 0, bytesRead);
+    const firstLine = text.indexOf('\n');
+    return firstLine === -1 ? '' : text.slice(firstLine + 1);
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
 }
 
 async function usageTimelineFor(filePath) {

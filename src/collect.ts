@@ -5,6 +5,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, wri
 import { dirname, resolve } from 'node:path';
 import { createSqliteBackup, defaultDbPath, openDb, recordRun, repairUsageTotals, upsertDaily, upsertSession, upsertTokenEvent, usageTotalsNeedRepair } from './db.ts';
 import { calculateCost, loadPricing } from './pricing.ts';
+import { localDateFromTimestamp } from './collectors/utils.ts';
 import { collectableCollectors, collectorLabel, enabledCollectorIds } from './collector-registry.ts';
 
 type InputRecord = Record<string, unknown>;
@@ -303,7 +304,11 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
     exportPayload.sessions.push(...sessionRows);
     exportPayload.tokenEvents.push(...eventRows);
 
-    payloads.push({ type: 'data', device, source: label, sourceSummary, label, module, dailyRows, sessionRows, eventRows, reconciliation });
+    payloads.push({
+      type: 'data', device, source: label, sourceSummary, label, module,
+      dailyRows, sessionRows, eventRows, reconciliation,
+      incremental: incrementalRefresh
+    });
   }
 
   const fatal = summary.sources.filter(source => source.fatalCoverageError);
@@ -317,7 +322,7 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
     const hasClaudePlaceholders = !incrementalRefresh && payloads.some(payload => payload.type === 'data'
       && payload.sourceSummary.id === 'claude'
       && hasClaudeSyntheticPlaceholders(db, payload));
-    const hasCodexMigration = !incrementalRefresh && payloads.some(payload => payload.type === 'data'
+    const hasCodexMigration = payloads.some(payload => payload.type === 'data'
       && payload.sourceSummary.id === 'codex'
       && codexSourceMigrationWouldChange(db, payload));
     const deletesStoredUsage = !incrementalRefresh && storedUsageWouldBeDeleted(db, payloads);
@@ -338,7 +343,7 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
       if (!incrementalRefresh && payload.type === 'data' && payload.sourceSummary.id === 'claude') {
         removeClaudeSyntheticPlaceholders(db, payload);
       }
-      if (!incrementalRefresh && payload.type === 'data' && payload.sourceSummary.id === 'codex') {
+      if (payload.type === 'data' && payload.sourceSummary.id === 'codex') {
         runInTransaction(db, () => {
           migrateLegacyCodexClientSources(db, payload);
           removeOrphanedCodexDailyUsage(db, payload.device);
@@ -579,7 +584,7 @@ function migrateLegacyCodexClientSources(db, payload) {
     .map(item => [item.prefix, item.source]));
 
   for (const oldSource of [LEGACY_CODEX_SOURCE, UNKNOWN_CODEX_SOURCE]) {
-    migrateCodexSource(db, payload, oldSource, eventSources, sessionSources, metadataSourcePrefixes);
+    migrateCodexSource(db, payload, oldSource, eventSources, sessionSources, metadataSourcePrefixes, payload.incremental);
   }
   db.prepare(`
     UPDATE collection_runs
@@ -609,7 +614,9 @@ function codexSourceMigrationWouldChange(db, payload) {
     WHERE device = ? AND source IN (?, ?) AND session_id LIKE 'local:codex:%'
   `).all(payload.device, LEGACY_CODEX_SOURCE, UNKNOWN_CODEX_SOURCE);
   if (events.some((row) => {
-    const fallback = row.source === LEGACY_CODEX_SOURCE ? UNKNOWN_CODEX_SOURCE : row.source;
+    const fallback = payload.incremental
+      ? row.source
+      : row.source === LEGACY_CODEX_SOURCE ? UNKNOWN_CODEX_SOURCE : row.source;
     return codexSourceForSession(row.sessionId, eventSources.get(row.eventId), metadataSourcePrefixes, fallback) !== row.source;
   })) return true;
 
@@ -619,9 +626,13 @@ function codexSourceMigrationWouldChange(db, payload) {
     WHERE device = ? AND source IN (?, ?) AND session_id LIKE 'local:codex:%'
   `).all(payload.device, LEGACY_CODEX_SOURCE, UNKNOWN_CODEX_SOURCE);
   if (sessions.some((row) => {
-    const fallback = row.source === LEGACY_CODEX_SOURCE ? UNKNOWN_CODEX_SOURCE : row.source;
+    const fallback = payload.incremental
+      ? row.source
+      : row.source === LEGACY_CODEX_SOURCE ? UNKNOWN_CODEX_SOURCE : row.source;
     return codexSourceForSession(row.sessionId, sessionSources.get(row.sessionId), metadataSourcePrefixes, fallback) !== row.source;
   })) return true;
+
+  if (payload.incremental) return hasOrphanedCodexDailyUsage(db, payload.device);
 
   const currentLegacyDaily = new Set(payload.dailyRows
     .filter(row => row.source === LEGACY_CODEX_SOURCE)
@@ -656,8 +667,10 @@ function removeOrphanedCodexDailyUsage(db, device) {
   `).run(device, UNKNOWN_CODEX_SOURCE, device, UNKNOWN_CODEX_SOURCE, device, UNKNOWN_CODEX_SOURCE);
 }
 
-function migrateCodexSource(db, payload, oldSource, eventSources, sessionSources, metadataSourcePrefixes) {
-  const fallbackSource = oldSource === LEGACY_CODEX_SOURCE ? UNKNOWN_CODEX_SOURCE : oldSource;
+function migrateCodexSource(db, payload, oldSource, eventSources, sessionSources, metadataSourcePrefixes, incremental = false) {
+  const fallbackSource = incremental
+    ? oldSource
+    : oldSource === LEGACY_CODEX_SOURCE ? UNKNOWN_CODEX_SOURCE : oldSource;
   const legacyEvents = db.prepare(`
     SELECT event_id AS eventId, session_id AS sessionId,
       date(timestamp, '+8 hours') AS usageDate, model,
@@ -679,8 +692,8 @@ function migrateCodexSource(db, payload, oldSource, eventSources, sessionSources
     classifiedDaily.set(key, totals);
   }
 
-  if (oldSource === LEGACY_CODEX_SOURCE || classifiedDaily.size) {
-    migrateLegacyCodexDailyUsage(db, payload, oldSource, classifiedDaily);
+  if ((!incremental && oldSource === LEGACY_CODEX_SOURCE) || classifiedDaily.size) {
+    migrateLegacyCodexDailyUsage(db, payload, oldSource, classifiedDaily, incremental);
   }
   for (const row of db.prepare(`
     SELECT session_id AS sessionId
@@ -710,7 +723,7 @@ function codexSourceForSession(sessionId, eventSource, metadataSourcePrefixes, f
   return fallbackSource;
 }
 
-function migrateLegacyCodexDailyUsage(db, payload, oldSource, classifiedDaily) {
+function migrateLegacyCodexDailyUsage(db, payload, oldSource, classifiedDaily, incremental = false) {
   const rows = db.prepare(`
     SELECT usage_date AS usageDate, model,
       input_tokens AS inputTokens, output_tokens AS outputTokens,
@@ -740,6 +753,7 @@ function migrateLegacyCodexDailyUsage(db, payload, oldSource, classifiedDaily) {
   }
   for (const row of rows) {
     const key = dailyUsageKey(oldSource, row.usageDate, row.model);
+    if (incremental && !classifiedDaily.has(key)) continue;
     const classified = classifiedDaily.get(key) || emptyUsage();
     const current = currentDaily.get(key) || emptyUsage();
     if (!hasUsage(classified) && hasUsage(current)) continue;
@@ -748,7 +762,7 @@ function migrateLegacyCodexDailyUsage(db, payload, oldSource, classifiedDaily) {
     if (hasUsage(remaining)) {
       appendDailyUsage(payload.dailyRows, {
         device: payload.device,
-        source: oldSource === LEGACY_CODEX_SOURCE ? UNKNOWN_CODEX_SOURCE : oldSource,
+        source: incremental ? oldSource : oldSource === LEGACY_CODEX_SOURCE ? UNKNOWN_CODEX_SOURCE : oldSource,
         usageDate: row.usageDate,
         model: row.model,
         ...remaining
@@ -910,6 +924,15 @@ function applyEventReconciliationPlan(db, payload, source, plan) {
 }
 
 function eventReconciliationPlan(db, payload, source) {
+  // Incremental collectors only read newly appended records. Missing rows are
+  // therefore not evidence that stored history should be removed.
+  if (payload.incremental) {
+    return {
+      prefixes: [],
+      dates: [],
+      replaceManagedEvents: false
+    };
+  }
   const prefixes = normalizedEventSessionPrefixes(payload.reconciliation);
   const managedEventIdPrefix = normalizedReconciliationPrefix(payload.reconciliation?.managedEventIdPrefix);
   const managedEventSessionPrefixes = normalizedEventSessionPrefixes({
@@ -985,8 +1008,84 @@ function mergeHistoricalEventUsage(db, payload, pricingData) {
     ? [...new Set([...payloadSources(payload), UNKNOWN_CODEX_SOURCE])]
     : payloadSources(payload);
   for (const source of sources) {
+    if (payload.incremental && payload.sourceSummary.id === 'codex') {
+      rebuildIncrementalCodexUsage(db, payload, source, pricingData);
+      continue;
+    }
     mergeHistoricalEventUsageForSource(db, payload, source, pricingData);
   }
+}
+
+function rebuildIncrementalCodexUsage(db, payload, source, pricingData) {
+  const eventIdPrefix = normalizedReconciliationPrefix(payload.reconciliation?.managedEventIdPrefix);
+  if (!eventIdPrefix) return;
+
+  const historicalRows = db.prepare(`
+    SELECT session_id AS sessionId, date(timestamp, '+8 hours') AS usageDate,
+      model, MAX(timestamp) AS lastActivity,
+      COALESCE(SUM(input_tokens), 0) AS inputTokens,
+      COALESCE(SUM(output_tokens), 0) AS outputTokens,
+      COALESCE(SUM(cache_read_tokens), 0) AS cacheReadTokens,
+      COALESCE(SUM(cache_creation_tokens), 0) AS cacheCreationTokens,
+      COALESCE(SUM(reasoning_tokens), 0) AS reasoningOutputTokens
+    FROM token_events
+    WHERE device = ? AND source = ? AND event_id LIKE ? ESCAPE '\\'
+    GROUP BY session_id, usageDate, model
+  `).all(payload.device, source, sqlLikePrefix(eventIdPrefix));
+  const eventExists = db.prepare(`
+    SELECT 1 FROM token_events
+    WHERE event_id = ? AND device = ? AND source = ?
+    LIMIT 1
+  `);
+  const projectPaths = new Map(payload.sessionRows
+    .filter(row => row.source === source)
+    .map(row => [row.sessionId, row.projectPath || null]));
+  const sessions = new Map();
+  const days = new Map();
+
+  const addEvent = ({ sessionId, usageDate, lastActivity, model, tokens, projectPath = null }) => {
+    const sessionKey = `${sessionId}::${model}`;
+    const session = sessions.get(sessionKey) || usageRow({
+      device: payload.device, source, sessionId,
+      lastActivity: lastActivity || null, projectPath, model: model || ''
+    });
+    addUsage(session, tokens, calculateCost(model || '', tokens, pricingData));
+    if (lastActivity && (!session.lastActivity || lastActivity > session.lastActivity)) {
+      session.lastActivity = lastActivity;
+    }
+    sessions.set(sessionKey, session);
+
+    const dayKey = dailyUsageKey(source, usageDate || 'unknown', model || '');
+    const day = days.get(dayKey) || usageRow({
+      device: payload.device, source, usageDate: usageDate || 'unknown', model: model || ''
+    });
+    addUsage(day, tokens, calculateCost(model || '', tokens, pricingData));
+    days.set(dayKey, day);
+  };
+
+  for (const row of historicalRows) {
+    addEvent({ ...row, tokens: eventTokens(row) });
+  }
+  for (const row of payload.eventRows) {
+    if (row.source !== source || eventExists.get(row.eventId, row.device, row.source)) continue;
+    addEvent({
+      sessionId: row.sessionId,
+      usageDate: localDateFromTimestamp(row.timestamp),
+      lastActivity: row.timestamp,
+      model: row.model,
+      tokens: eventTokens(row),
+      projectPath: projectPaths.get(row.sessionId) || null
+    });
+  }
+
+  payload.dailyRows = [
+    ...payload.dailyRows.filter(row => row.source !== source),
+    ...days.values()
+  ];
+  payload.sessionRows = [
+    ...payload.sessionRows.filter(row => row.source !== source),
+    ...sessions.values()
+  ];
 }
 
 function mergeHistoricalEventUsageForSource(db, payload, source, pricingData) {
@@ -1071,7 +1170,7 @@ function eventTokens(row) {
     output: Number(row.outputTokens || 0),
     cacheRead: Number(row.cacheReadTokens || 0),
     cacheWrite: Number(row.cacheCreationTokens || 0),
-    reasoning: Number(row.reasoningOutputTokens || 0)
+    reasoning: Number(row.reasoningTokens ?? row.reasoningOutputTokens ?? 0)
   };
 }
 
