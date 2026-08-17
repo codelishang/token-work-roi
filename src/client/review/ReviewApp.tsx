@@ -30,6 +30,11 @@ function dateTimeForPeriod(period) {
   };
 }
 
+function sameDateTimeRange(left, right) {
+  return left.startDateTime === right.startDateTime
+    && left.endDateTime === right.endDateTime;
+}
+
 function displayDateTime(value) {
   return String(value || '').replace('T', ' ');
 }
@@ -185,10 +190,10 @@ function ReviewDashboard({ rawData, onReloadData }) {
 
   useEffect(() => {
     if (periodId === 'custom') return;
-    const nextRange = dateTimeForPeriod(period);
-    setCustomRange(nextRange);
-    setCustomDraft(nextRange);
-  }, [period, periodId]);
+    const nextRange = dateTimeForPeriod(RU.getPeriod(periodId, TODAY, rawData.daily));
+    setCustomRange(current => sameDateTimeRange(current, nextRange) ? current : nextRange);
+    setCustomDraft(current => sameDateTimeRange(current, nextRange) ? current : nextRange);
+  }, [TODAY, periodId, rawData.daily]);
 
   useEffect(() => {
     if (!customOpen) return undefined;
@@ -217,18 +222,16 @@ function ReviewDashboard({ rawData, onReloadData }) {
       }
       return next;
     });
-  }, []);
-
-  const resetCustomDraft = useCallback(() => {
-    setCustomDraft(customRange);
-    setCustomOpen(false);
-  }, [customRange]);
-
-  const applyCustomDraft = useCallback(() => {
-    setCustomRange(customDraft);
+    setCustomRange(current => {
+      const next = { ...current, [key]: value };
+      if (next.startDateTime && next.endDateTime && next.startDateTime > next.endDateTime) {
+        if (key === 'startDateTime') next.endDateTime = next.startDateTime;
+        else next.startDateTime = next.endDateTime;
+      }
+      return next;
+    });
     setPeriodId('custom');
-    setCustomOpen(false);
-  }, [customDraft]);
+  }, []);
 
   // Aggregate totals
   const totals = useMemo(() => {
@@ -880,6 +883,7 @@ function ReviewDashboard({ rawData, onReloadData }) {
             <div className="review-date-range-picker" ref={customPickerRef}>
               <span className="review-date-range-hint">支持自定义日期与时间</span>
               <button
+                type="button"
                 className={`review-date-range-control ${periodId === 'custom' ? 'active' : ''}`}
                 aria-expanded={customOpen}
                 aria-haspopup="dialog"
@@ -907,10 +911,6 @@ function ReviewDashboard({ rawData, onReloadData }) {
                       min={customDraft.startDateTime || undefined}
                       onChange={event => setCustomDraftDateTime('endDateTime', event.target.value)} />
                   </label>
-                  <div className="review-date-range-popover-actions">
-                    <button className="review-date-range-action" onClick={resetCustomDraft}>取消</button>
-                    <button className="review-date-range-action primary" onClick={applyCustomDraft}>确定</button>
-                  </div>
                 </div>
               )}
             </div>

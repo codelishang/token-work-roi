@@ -339,7 +339,6 @@ button, input, select { font-family: inherit; color: inherit; }
 
 .date-range-hint {
   font-size: 11.5px;
-  color: var(--subtle);
   margin-left: 2px;
 }
 
@@ -427,40 +426,6 @@ button, input, select { font-family: inherit; color: inherit; }
   border-color: var(--c-indigo);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--c-indigo), transparent 86%);
   outline: none;
-}
-
-.date-range-popover-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  padding-top: 4px;
-}
-
-.date-range-action {
-  height: 36px;
-  padding: 0 10px;
-  color: var(--text-2);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.date-range-action:hover {
-  color: var(--text);
-  background: var(--surface-2);
-}
-
-.date-range-action.primary {
-  color: var(--bg);
-  background: var(--c-indigo);
-}
-
-.date-range-action.primary:hover {
-  color: var(--bg);
-  background: color-mix(in oklab, var(--c-indigo), black 8%);
 }
 
 .pill {

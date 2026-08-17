@@ -17,6 +17,7 @@ import { canonicalProvider, inferProviderFromModel, localDateFromTimestamp, norm
 
 export const CLIENT_KEY = 'opencode';
 export const SOURCE_LABEL = 'OpenCode';
+const MAX_LEGACY_MESSAGE_DEPTH = 4;
 
 function opencodeDataDir() {
   return configuredPath(
@@ -64,12 +65,13 @@ async function discoverDbPaths() {
   return [...new Set(paths)].sort();
 }
 
-async function collectJsonFiles(dir) {
+async function collectJsonFiles(dir, depth = 0) {
   const results = [];
+  if (depth > MAX_LEGACY_MESSAGE_DEPTH) return results;
   for (const entry of await safeReaddir(dir)) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      results.push(...await collectJsonFiles(full));
+      results.push(...await collectJsonFiles(full, depth + 1));
     } else if (entry.isFile() && entry.name.endsWith('.json')) {
       results.push(full);
     }
@@ -183,7 +185,7 @@ function fingerprintFor(msg, tokens, model, provider) {
 function parseDbRows(dbPath) {
   let db;
   try {
-    db = new DatabaseSync(dbPath);
+    db = new DatabaseSync(dbPath, { readOnly: true, timeout: 5000 });
   } catch {
     return [];
   }
