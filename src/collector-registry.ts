@@ -99,6 +99,10 @@ export const COLLECTOR_REGISTRY = [
     roots: () => configuredPaths('goose', 'roots', ['~/.config/goose', '~/.goose']),
     note: 'Experimental: supports explicit token metadata only; message bodies are not imported.'
   }),
+  stableCollector('workbuddy', 'WorkBuddy', './collectors/workbuddy.ts', {
+    privacyLevel: 'metadata-only',
+    roots: () => [configuredPath('workbuddy', 'tracesDir', '~/.workbuddy/traces')]
+  }),
   importOnlyCollector('ccusage', 'ccusage Import Bridge', {
     roots: () => configuredPaths('ccusage', 'roots', []),
     note: 'Import-only: use token-work import-usage --format=ccusage-json for saved JSON or --format=ccusage-cli for an explicit ccusage CLI bridge.'

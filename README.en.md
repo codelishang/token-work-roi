@@ -52,7 +52,7 @@ Requires Node.js 24.0.0 or newer.
 npx token-work
 ```
 
-The default entrypoint opens the browser UI first, then collects trusted event-level records from Claude Code and Codex every five minutes. Codex records are labeled as Codex CLI, Codex Desktop, or Codex according to available client metadata. Data that passes the trust gate is written to the local SQLite database.
+The default entrypoint opens the browser UI first, then collects trusted event-level records from Claude Code, Codex, and WorkBuddy every five minutes. Codex records are labeled as Codex CLI, Codex Desktop, or Codex according to available client metadata. WorkBuddy auto mode writes usage only when local trace or session metadata identifies one actual model. Data that passes the trust gate is written to the local SQLite database.
 Routine scheduled writes create at most one full backup every 24 hours; repairs create a separate backup first. Only the latest managed backup is retained to avoid frequent disk writes and unbounded growth.
 
 For a first look without writing real usage:
@@ -90,7 +90,7 @@ Screenshots use synthetic or sanitized data and contain no real local logs.
 
 | Type | Sources |
 |---|---|
-| Stable collectors | Claude Code, Codex (CLI, Desktop, or unidentified client), Gemini CLI, OpenCode, OpenClaw, Hermes Agent |
+| Stable collectors | Claude Code, Codex (CLI, Desktop, or unidentified client), Gemini CLI, OpenCode, OpenClaw, Hermes Agent, WorkBuddy |
 | Experimental collectors | Cursor, GitHub Copilot CLI, Qwen Code, Kimi, Goose |
 | External import | ccusage JSON, ccusage CLI, and compatible structured JSON |
 
@@ -129,6 +129,7 @@ It reuses the same local service and is intended for keeping the Live page open.
 - Model cost uses official public token rates and is not a provider invoice.
 - CNY values use the USD/CNY rate stored in the pricing cache and are for reference only.
 - A failed pricing or exchange-rate refresh keeps the last successful cache.
+- GLM-5V-Turbo and Hy3 are priced from the official cache. GLM-5V-Turbo currently uses CNY 5 input, CNY 1.2 cached input, and CNY 22 output; Hy3 uses CNY 1 input, CNY 0.25 cached input, and CNY 4 output per 1M tokens.
 - Models without a verified official rate remain unpriced instead of being shown as free.
 
 Maintainers can refresh the cache manually:

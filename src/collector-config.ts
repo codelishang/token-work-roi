@@ -34,6 +34,10 @@ export function loadCollectorConfig(): CollectorConfigRoot {
   return cachedConfig;
 }
 
+export function resetConfigCache(): void {
+  cachedConfig = undefined;
+}
+
 export function collectorConfig(name: string): Record<string, unknown> {
   return loadCollectorConfig().collectors?.[name] || {};
 }

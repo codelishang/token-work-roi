@@ -64,7 +64,10 @@ test('collectors audit CLI emits safe summary without full paths', async () => {
   const configPath = join(dir, 'collectors.json');
   const root = join(process.cwd(), 'test', 'fixtures', 'collectors');
   writeFileSync(configPath, JSON.stringify({
-    collectors: Object.fromEntries(EXPERIMENTAL.map(id => [id, { roots: [join(root, id)] }]))
+    collectors: {
+      ...Object.fromEntries(EXPERIMENTAL.map(id => [id, { roots: [join(root, id)] }])),
+      workbuddy: { tracesDir: '/nonexistent/workbuddy/traces' }
+    }
   }), 'utf8');
 
   try {

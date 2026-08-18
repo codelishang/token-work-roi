@@ -538,7 +538,7 @@ async function handleApi(req, url, res) {
       return;
     }
     const coverage = await collectionCoverageDryRun({
-      sources: url.searchParams.get('sources') || 'claude,codex,cursor'
+      sources: url.searchParams.get('sources') || 'claude,codex,workbuddy,cursor'
     });
     lastCoverageGate = summarizeCoverageGate(inputRecord(coverage));
     sendJson(res, coverage);
@@ -1093,7 +1093,7 @@ function startCollection({ reason = 'manual' } = {}) {
     return false;
   }
 
-  const sources = 'claude,codex';
+  const sources = 'claude,codex,workbuddy';
   const args = ['src/collect.ts', '--apply', '--yes', '--sources', sources, '--json'];
   const device = collectionDevice();
   if (device) args.push('--device', device);
@@ -1715,7 +1715,7 @@ function summarizeCollectState(summary) {
   };
 }
 
-function collectionCoverageDryRun({ sources = 'claude,codex,cursor' } = {}) {
+function collectionCoverageDryRun({ sources = 'claude,codex,workbuddy,cursor' } = {}) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [
       resolve(process.cwd(), 'src', 'collect.ts'),

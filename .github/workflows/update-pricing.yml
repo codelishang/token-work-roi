@@ -76,9 +76,9 @@ jobs:
         if: github.event_name == 'schedule'
         run: git fetch origin main --depth=1
 
-      - name: Use the pricing files verified on main
+      - name: Use the pricing files and regression test verified on main
         if: github.event_name == 'schedule'
-        run: git checkout FETCH_HEAD -- src/pricing.ts data/official-pricing.json
+        run: git checkout FETCH_HEAD -- src/pricing.ts data/official-pricing.json test/official-pricing.test.ts
 
       - run: npm ci --registry=https://registry.npmmirror.com
       - name: Refresh official pricing
