@@ -7,7 +7,7 @@
 - `token-work demo` 只使用合成演示数据。
 - `token-work --no-collect` 不检查本机 AI 工具记录，也不写入采集结果。
 - `token-work --dry-run-only` 禁用定时采集并打开本地界面，不写入采集结果。
-- `token-work`、`token-work start` 和 `token-work live` 默认每 5 分钟采集一次；Claude Code 或 Codex 的事件级记录通过可信门槛后才写入本地 SQLite。普通定时写入最多每 24 小时创建一份完整备份，数据修复前会单独备份。Codex 会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex。
+- `token-work`、`token-work start` 和 `token-work live` 默认每 5 分钟采集一次；Claude Code、Codex 和 WorkBuddy 的事件级记录通过可信门槛后才写入本地 SQLite。Codex 会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex；WorkBuddy 的 `auto` 模式只在本机元数据可确定唯一实际模型时写入。普通定时写入最多每 24 小时创建一份完整备份，数据修复前会单独备份。
 - `token-work collect --apply` 和结构化 JSON 导入需要用户明确确认。
 - Electron 桌面入口会复用已有服务；没有可复用服务时，会启动本地服务并开启与默认入口相同的定时采集。
 

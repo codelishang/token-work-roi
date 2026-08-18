@@ -215,11 +215,64 @@ test('keeps GLM-5.3 on the existing GLM-5 official price mapping', () => {
     input: 1_000_000,
     output: 1_000_000
   });
+  const rate = OFFICIAL_PRICE_TABLE.find(item => item.model === 'glm-5');
 
+  assert.ok(rate?.officialRatesPerMTok);
   assert.equal(cost.priced, true);
   assert.equal(cost.provider, 'Zhipu GLM');
   assert.equal(cost.resolvedModel, 'glm-5');
-  assert.equal(cost.totalUSD, 22 / 6.760612);
+  assert.equal(rate.officialRatesPerMTok.currency, 'CNY');
+
+  const exchangeRate = Number(rate.officialRatesPerMTok.exchangeRate);
+  const inputRate = Number(rate.officialRatesPerMTok.ratesPerMTok.input);
+  const outputRate = Number(rate.officialRatesPerMTok.ratesPerMTok.output);
+  assert.ok(Number.isFinite(exchangeRate) && exchangeRate > 0);
+  assert.ok(Number.isFinite(inputRate) && Number.isFinite(outputRate));
+  assert.equal(cost.totalUSD, (inputRate + outputRate) / exchangeRate);
+});
+
+test('calculates GLM-5V-Turbo price from official RMB rates', () => {
+  const cost = calculateOfficialCost('GLM-5v-Turbo', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    output: 1_000_000
+  });
+  const rate = OFFICIAL_PRICE_TABLE.find(item => item.model === 'glm-5v-turbo');
+
+  assert.ok(rate?.officialRatesPerMTok);
+  assert.equal(cost.priced, true);
+  assert.equal(cost.provider, 'Zhipu GLM');
+  assert.equal(cost.resolvedModel, 'glm-5v-turbo');
+  assert.deepEqual(rate.officialRatesPerMTok.ratesPerMTok, {
+    input: 5,
+    output: 22,
+    cachedInput: 1.2,
+    cacheWrite5m: 5,
+    cacheWrite1h: 5
+  });
+  assert.equal(cost.totalUSD, (5 + 1.2 + 22) / rate.officialRatesPerMTok.exchangeRate);
+});
+
+test('calculates Tencent TokenHub Hy3 price from official RMB rates', () => {
+  const cost = calculateOfficialCost('hunyuan-hy3', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    output: 1_000_000
+  }, { pricingData: pricingCache });
+  const rate = pricingCache.models.find(item => item.model === 'hy3');
+
+  assert.ok(rate?.officialRatesPerMTok);
+  assert.equal(cost.priced, true);
+  assert.equal(cost.provider, 'Tencent Hunyuan');
+  assert.equal(cost.resolvedModel, 'hy3');
+  assert.deepEqual(rate.officialRatesPerMTok.ratesPerMTok, {
+    input: 1,
+    output: 4,
+    cachedInput: 0.25,
+    cacheWrite5m: 1,
+    cacheWrite1h: 1
+  });
+  assert.ok(Math.abs(cost.totalUSD - (1 + 0.25 + 4) / rate.officialRatesPerMTok.exchangeRate) < 1e-12);
 });
 
 test('calculates Alibaba Cloud official prices for Qwen3.8 and MiniMax-M3', () => {
@@ -244,7 +297,7 @@ test('calculates Alibaba Cloud official prices for Qwen3.8 and MiniMax-M3', () =
 test('recognizes other current cross-provider model ids without inventing prices', () => {
   const cases = [
     ['gemini-3.7-flash', 'Gemini'],
-    ['grok-4.6', 'xai'],
+    ['grok-4.6', 'xai']
   ];
   for (const [model, provider] of cases) {
     const cost = calculateOfficialCost(model, { input: 1_000_000, output: 1_000_000 });

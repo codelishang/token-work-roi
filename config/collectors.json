@@ -5,7 +5,8 @@
     "gemini",
     "opencode",
     "openclaw",
-    "hermes"
+    "hermes",
+    "workbuddy"
   ],
   "scheduledCollect": {
     "enabled": false,
@@ -49,6 +50,11 @@
         "~/.moltbot/agents",
         "~/.moldbot/agents"
       ]
+    },
+    "workbuddy": {
+      "tracesDir": "~/.workbuddy/traces",
+      "sessionsDir": "~/.workbuddy/sessions",
+      "root": "~/.workbuddy"
     }
   }
 }

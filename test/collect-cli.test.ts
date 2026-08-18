@@ -111,6 +111,147 @@ test('collect dry-run scans fixtures and does not write SQLite', async () => {
   }
 });
 
+test('collect replaces transient WorkBuddy event identities without adding tokens twice', async () => {
+  const fixture = createWorkBuddyIdentityFixture();
+  try {
+    const first = await runNode([
+      'src/collect.ts', '--sources=workbuddy', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], fixture.env);
+    assert.equal(first.code, 0, first.stderr);
+
+    const db = new DatabaseSync(fixture.dbPath);
+    try {
+      const event = db.prepare(`
+        SELECT timestamp, input_tokens AS inputTokens, output_tokens AS outputTokens,
+          cache_read_tokens AS cacheReadTokens, cache_creation_tokens AS cacheCreationTokens,
+          reasoning_tokens AS reasoningTokens
+        FROM token_events
+        WHERE source = 'WorkBuddy'
+      `).get();
+      db.prepare(`
+        INSERT INTO token_events (
+          event_id, device, source, session_id, timestamp, model,
+          input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+          reasoning_tokens, privacy_level, updated_at
+        ) VALUES (?, ?, 'WorkBuddy', 'transient-session', ?, 'auto', ?, ?, ?, ?, ?, 'safe', datetime('now'))
+      `).run(
+        'workbuddy:legacy-fixture', fixture.device, event.timestamp,
+        event.inputTokens, event.outputTokens, event.cacheReadTokens,
+        event.cacheCreationTokens, event.reasoningTokens
+      );
+    } finally {
+      db.close();
+    }
+
+    const second = await runNode([
+      'src/collect.ts', '--sources=workbuddy', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], fixture.env);
+    assert.equal(second.code, 0, second.stderr);
+
+    const verified = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.deepEqual(verified.prepare(`
+        SELECT session_id AS sessionId, model,
+          input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens AS totalTokens
+        FROM token_events WHERE source = 'WorkBuddy'
+      `).all().map(row => ({ ...row })), [{
+        sessionId: 'workbuddy:trace_fixture_identity', model: 'glm-5.2', totalTokens: 120
+      }]);
+      assert.deepEqual(verified.prepare(`
+        SELECT total_tokens AS totalTokens FROM daily_usage WHERE source = 'WorkBuddy'
+      `).all().map(row => ({ ...row })), [{ totalTokens: 120 }]);
+    } finally {
+      verified.close();
+    }
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('scheduled WorkBuddy collection updates only changed traces without losing a similarly named trace', async () => {
+  const fixture = createWorkBuddyIdentityFixture();
+  try {
+    const original = JSON.parse(readFileSync(fixture.tracePath, 'utf8'));
+    const sibling = structuredClone(original);
+    sibling.trace.traceId = 'trace_fixture_identity_extra';
+    sibling.spans[0].spanId = 'span_fixture_identity_extra';
+    writeFileSync(fixture.siblingTracePath, JSON.stringify(sibling), 'utf8');
+
+    const first = await runNode([
+      'src/collect.ts', '--sources=workbuddy', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], fixture.env);
+    assert.equal(first.code, 0, first.stderr);
+
+    const oldTime = new Date(Date.now() - 60_000);
+    utimesSync(fixture.tracePath, oldTime, oldTime);
+    utimesSync(fixture.siblingTracePath, oldTime, oldTime);
+    const scheduledEnv = {
+      ...fixture.env,
+      TOKEN_WORK_COLLECT_REASON: 'scheduled',
+      TOKEN_WORK_SCHEDULED_INCREMENTAL: '1'
+    };
+    const unchanged = await runNode([
+      'src/collect.ts', '--sources=workbuddy', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], scheduledEnv);
+    assert.equal(unchanged.code, 0, unchanged.stderr);
+    assert.equal(JSON.parse(unchanged.stdout).sources[0].tokenEvents, 0);
+
+    original.spans.push({
+      ...original.spans[0],
+      spanId: 'span_fixture_identity_second',
+      startedAt: '2026-06-17T02:00:45.000Z'
+    });
+    writeFileSync(fixture.tracePath, JSON.stringify(original), 'utf8');
+
+    const updated = await runNode([
+      'src/collect.ts', '--sources=workbuddy', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], scheduledEnv);
+    assert.equal(updated.code, 0, updated.stderr);
+
+    const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.deepEqual(db.prepare(`
+        SELECT session_id AS sessionId, COUNT(*) AS events, SUM(input_tokens + output_tokens + cache_read_tokens) AS totalTokens
+        FROM token_events
+        WHERE source = 'WorkBuddy'
+        GROUP BY session_id
+        ORDER BY session_id
+      `).all().map(row => ({ ...row })), [
+        { sessionId: 'workbuddy:trace_fixture_identity', events: 2, totalTokens: 240 },
+        { sessionId: 'workbuddy:trace_fixture_identity_extra', events: 1, totalTokens: 120 }
+      ]);
+      assert.equal(db.prepare(`
+        SELECT total_tokens AS totalTokens FROM daily_usage WHERE source = 'WorkBuddy'
+      `).get().totalTokens, 360);
+    } finally {
+      db.close();
+    }
+
+    original.spans = [original.spans[1]];
+    writeFileSync(fixture.tracePath, JSON.stringify(original), 'utf8');
+    const removed = await runNode([
+      'src/collect.ts', '--sources=workbuddy', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], scheduledEnv);
+    assert.equal(removed.code, 0, removed.stderr);
+    assert.match(JSON.parse(removed.stdout).backup?.fileName || '', /scheduled-collect-repair/);
+
+    const repaired = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.equal(repaired.prepare(`
+        SELECT COUNT(*) AS count FROM token_events
+        WHERE source = 'WorkBuddy' AND session_id = 'workbuddy:trace_fixture_identity'
+      `).get().count, 1);
+      assert.equal(repaired.prepare(`
+        SELECT total_tokens AS totalTokens FROM daily_usage WHERE source = 'WorkBuddy'
+      `).get().totalTokens, 240);
+    } finally {
+      repaired.close();
+    }
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
 test('collect does not recount token history copied into a forked Codex session', async () => {
   const fixture = createForkedCodexFixture();
   try {
@@ -563,6 +704,48 @@ test('scheduled Codex collection reclassifies a session without duplicating its 
       `).get().count, 0);
     } finally {
       db.close();
+    }
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
+test('scheduled Codex collection repairs known historical client metadata without rescanning transcripts', async () => {
+  const fixture = createCollectorFixture();
+  try {
+    const initial = await runNode([
+      'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], fixture.env);
+    assert.equal(initial.code, 0, initial.stderr);
+
+    const db = new DatabaseSync(fixture.dbPath);
+    try {
+      for (const table of ['token_events', 'session_usage', 'daily_usage']) {
+        db.prepare(`UPDATE ${table} SET source = ? WHERE source = ?`).run('Codex (unidentified client)', 'Codex CLI');
+      }
+    } finally {
+      db.close();
+    }
+
+    const refreshed = await runNode([
+      'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], {
+      ...fixture.env,
+      TOKEN_WORK_COLLECT_REASON: 'scheduled',
+      TOKEN_WORK_SCHEDULED_INCREMENTAL: '1'
+    });
+    assert.equal(refreshed.code, 0, refreshed.stderr);
+    assert.equal(JSON.parse(refreshed.stdout).sources[0].candidateFiles, 0);
+
+    const repaired = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.equal(repaired.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE source = 'Codex (unidentified client)'`).get().count, 0);
+      assert.equal(repaired.prepare(`
+        SELECT total_tokens AS totalTokens FROM daily_usage
+        WHERE source = 'Codex CLI' AND model = 'gpt-5.4-mini'
+      `).get().totalTokens, 52);
+    } finally {
+      repaired.close();
     }
   } finally {
     cleanupFixture(fixture);
@@ -1149,6 +1332,55 @@ function createCollectorFixture() {
       TOKEN_WORK_CONFIG: configPath,
       NODE_OPTIONS: '--no-warnings'
     }
+  };
+}
+
+function createWorkBuddyIdentityFixture() {
+  const dir = tempDir();
+  const tracesDir = join(dir, 'workbuddy', 'traces', '12345');
+  const sessionsDir = join(dir, 'workbuddy', 'sessions');
+  mkdirSync(tracesDir, { recursive: true });
+  mkdirSync(sessionsDir, { recursive: true });
+  const tracePath = join(tracesDir, 'trace_fixture_identity.json');
+  const siblingTracePath = join(tracesDir, 'trace_fixture_identity_extra.json');
+  writeFileSync(tracePath, JSON.stringify({
+    trace: {
+      traceId: 'trace_fixture_identity',
+      workerPid: 12345,
+      startedAt: '2026-06-17T02:00:00.000Z',
+      endedAt: '2026-06-17T02:01:00.000Z',
+      modelInfo: { models: ['glm-5.2'] }
+    },
+    spans: [{
+      spanId: 'span_fixture_identity',
+      type: 'generation',
+      startedAt: '2026-06-17T02:00:30.000Z',
+      toolOutput: JSON.stringify({
+        model: 'auto',
+        usage: { prompt_tokens: 100, completion_tokens: 20 }
+      })
+    }]
+  }), 'utf8');
+  writeFileSync(join(sessionsDir, '12345.json'), JSON.stringify({
+    sessionId: 'transient-session', cwd: join(dir, 'workspace')
+  }), 'utf8');
+  const configPath = join(dir, 'collectors.json');
+  writeFileSync(configPath, JSON.stringify({
+    collectors: {
+      workbuddy: {
+        root: join(dir, 'workbuddy'),
+        tracesDir: join(dir, 'workbuddy', 'traces'),
+        sessionsDir
+      }
+    }
+  }), 'utf8');
+  return {
+    dir,
+    dbPath: join(dir, 'usage.sqlite'),
+    device: hostname(),
+    tracePath,
+    siblingTracePath,
+    env: { TOKEN_WORK_CONFIG: configPath, NODE_OPTIONS: '--no-warnings' }
   };
 }
 

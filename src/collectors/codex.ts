@@ -19,8 +19,10 @@
  */
 
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { configuredPaths, configuredStrings, envPathList } from '../collector-config.ts';
 import { calculateCost } from '../pricing.ts';
 import { localDateFromTimestamp, normalizeModelForGrouping } from './utils.ts';
@@ -177,10 +179,8 @@ function summaryAtLeast(current, baseline) {
  */
 async function parseSessionFile(filePath, sessionId, inheritedTotal = null, minimumTimestamp = null, options: SessionParseOptions = {}) {
   const tailBytes = Number(options.tailBytes) || 0;
-  const text = tailBytes > 0
-    ? await readSessionTail(filePath, tailBytes)
-    : await readSessionText(filePath);
-  if (text == null) return [];
+  const text = tailBytes > 0 ? await readSessionTail(filePath, tailBytes) : null;
+  if (tailBytes > 0 && text == null) return [];
 
   // Per-file state
   let currentModel     = null;
@@ -194,104 +194,120 @@ async function parseSessionFile(filePath, sessionId, inheritedTotal = null, mini
   const recordOccurrences = new Map();
   const minimumTime = minimumTimestamp ? new Date(minimumTimestamp).getTime() : null;
 
-  for (const raw of text.split('\n')) {
-    const line = raw.trim();
-    if (!line) continue;
+  try {
+    const lines = tailBytes > 0 ? text.split('\n') : streamSessionLines(filePath);
+    for await (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
 
-    let entry;
-    try { entry = JSON.parse(line); } catch { continue; }
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
 
-    const type = entry.type;
+      const type = entry.type;
 
-    // ── session_meta ──────────────────────────────────────────────────
-    if (type === 'session_meta') {
-      const payload = entry.payload || {};
-      metaSessionId = extractSessionId(payload) || metaSessionId;
-      if (payload.cwd) {
-        workspace = payload.cwd;
+      // ── session_meta ──────────────────────────────────────────────────
+      if (type === 'session_meta') {
+        const payload = entry.payload || {};
+        metaSessionId = extractSessionId(payload) || metaSessionId;
+        if (payload.cwd) {
+          workspace = payload.cwd;
+        }
+        source = codexSource(payload.originator, payload.source);
+        continue;
       }
-      source = codexSource(payload.originator, payload.source);
-      continue;
-    }
 
-    // ── turn_context ──────────────────────────────────────────────────
-    if (type === 'turn_context') {
-      const payload = entry.payload || {};
-      currentModel = extractModel(payload) || currentModel;
-      continue;
-    }
+      // ── turn_context ──────────────────────────────────────────────────
+      if (type === 'turn_context') {
+        const payload = entry.payload || {};
+        currentModel = extractModel(payload) || currentModel;
+        continue;
+      }
 
-    // ── event_msg / token_count ────────────────────────────────────────
-    if (type === 'event_msg') {
-      const payload = entry.payload || {};
-      if (payload.type !== 'token_count') continue;
+      // ── event_msg / token_count ────────────────────────────────────────
+      if (type === 'event_msg') {
+        const payload = entry.payload || {};
+        if (payload.type !== 'token_count') continue;
 
-      const info = payload.info || {};
+        const info = payload.info || {};
 
       // Model resolution: payload.model → info.model → state.currentModel
-      const modelValue =
-        extractModel(payload) ||
-        extractModel(info)    ||
-        currentModel;
+        const modelValue =
+          extractModel(payload) ||
+          extractModel(info)    ||
+          currentModel;
       // A tail can begin in the middle of a session. Ignore rows before its
       // first model context instead of assigning them to an unknown model.
-      if (!modelValue && tailBytes > 0) continue;
-      const model = normalizeModelForGrouping(modelValue || 'unknown');
+        if (!modelValue && tailBytes > 0) continue;
+        const model = normalizeModelForGrouping(modelValue || 'unknown');
 
-      currentModel = model;
+        currentModel = model;
 
-      const totalUsage = info.total_token_usage ? usageSummary(info.total_token_usage) : null;
+        const totalUsage = info.total_token_usage ? usageSummary(info.total_token_usage) : null;
 
-      const lastUsage = info.last_token_usage ? usageSummary(info.last_token_usage) : null;
-      let increment;
-      if (totalUsage) {
+        const lastUsage = info.last_token_usage ? usageSummary(info.last_token_usage) : null;
+        let increment;
+        if (totalUsage) {
         // Forked Codex sessions replay the parent's history when created.
         // Keep their parent total as the baseline until the child exceeds it.
-        if (awaitingForkBase && !summaryAtLeast(totalUsage, inheritedTotal)) {
-          continue;
-        }
-        awaitingForkBase = false;
-        increment = previousTotal ? summaryDelta(totalUsage, previousTotal) : lastUsage || totalUsage;
-        if (!increment) {
+          if (awaitingForkBase && !summaryAtLeast(totalUsage, inheritedTotal)) {
+            continue;
+          }
+          awaitingForkBase = false;
+          increment = previousTotal ? summaryDelta(totalUsage, previousTotal) : lastUsage || totalUsage;
+          if (!increment) {
+            previousTotal = totalUsage;
+            if (!lastUsage || summaryIsZero(lastUsage)) continue;
+            increment = lastUsage;
+          }
           previousTotal = totalUsage;
-          if (!lastUsage || summaryIsZero(lastUsage)) continue;
+        } else {
+          if (awaitingForkBase || !lastUsage || summaryIsZero(lastUsage)) continue;
           increment = lastUsage;
         }
-        previousTotal = totalUsage;
-      } else {
-        if (awaitingForkBase || !lastUsage || summaryIsZero(lastUsage)) continue;
-        increment = lastUsage;
-      }
 
-      if (summaryIsZero(increment)) continue;
+        if (summaryIsZero(increment)) continue;
 
-      const tokens = summaryToTokens(increment);
-      const recordHash = stableHash(line);
-      const occurrence = recordOccurrences.get(recordHash) || 0;
-      recordOccurrences.set(recordHash, occurrence + 1);
+        const tokens = summaryToTokens(increment);
+        const recordHash = stableHash(line);
+        const occurrence = recordOccurrences.get(recordHash) || 0;
+        recordOccurrences.set(recordHash, occurrence + 1);
 
       // Date from event timestamp
-      const timestamp = typeof entry.timestamp === 'string' ? entry.timestamp : '';
-      if (minimumTime != null && (!timestamp || new Date(timestamp).getTime() <= minimumTime)) continue;
-      let date = 'unknown';
-      if (timestamp) {
-        date = localDateFromTimestamp(timestamp);
-      }
+        const timestamp = typeof entry.timestamp === 'string' ? entry.timestamp : '';
+        if (minimumTime != null && (!timestamp || new Date(timestamp).getTime() <= minimumTime)) continue;
+        let date = 'unknown';
+        if (timestamp) {
+          date = localDateFromTimestamp(timestamp);
+        }
 
-      events.push({
-        timestamp,
-        date,
-        model,
-        workspace,
-        source,
-        tokens,
-        sessionId: metaSessionId,
-        identityKey: `${recordHash}:${occurrence}`
-      });
+        events.push({
+          timestamp,
+          date,
+          model,
+          workspace,
+          source,
+          tokens,
+          sessionId: metaSessionId,
+          identityKey: `${recordHash}:${occurrence}`
+        });
+      }
     }
+  } catch {
+    return [];
   }
 
   return events;
+}
+
+async function* streamSessionLines(filePath) {
+  const stream = createReadStream(filePath, { encoding: 'utf8' });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) yield line;
+  } finally {
+    lines.close();
+    stream.destroy();
+  }
 }
 
 function codexSource(originator, source) {
@@ -323,18 +339,19 @@ function extractSessionId(obj) {
 // ---------------------------------------------------------------------------
 
 export async function collect(pricingData = null, options = {}) {
-  return collectFromSessionFiles(await parseSessionFiles(options), pricingData);
+  const parsed = await parseSessionFiles(options);
+  return collectFromSessionFiles(parsed.files, pricingData, parsed.metadataSourcePrefixes);
 }
 
 export async function collectWithAudit(pricingData = null, options = {}) {
-  const sessionFiles = await parseSessionFiles(options);
+  const parsed = await parseSessionFiles(options);
   return {
-    ...collectFromSessionFiles(sessionFiles, pricingData),
-    audit: auditFromSessionFiles(sessionFiles)
+    ...collectFromSessionFiles(parsed.files, pricingData, parsed.metadataSourcePrefixes),
+    audit: auditFromSessionFiles(parsed.files)
   };
 }
 
-function collectFromSessionFiles(sessionFiles, pricingData) {
+function collectFromSessionFiles(sessionFiles, pricingData, metadataSourcePrefixes = []) {
   const dailyMap = new Map();   // "date::source::model" → aggregated
   const sessionMap = new Map(); // true rollout session aggregate
   const seenEventKeys = new Set();
@@ -344,17 +361,24 @@ function collectFromSessionFiles(sessionFiles, pricingData) {
   const sessionSourcePrefixes = new Map();
   const conflictingSessionSourcePrefixes = new Set();
 
+  const rememberSessionSourcePrefix = (prefix, source) => {
+    if (source === CODEX_UNKNOWN_SOURCE || conflictingSessionSourcePrefixes.has(prefix)) return;
+    const previousSource = sessionSourcePrefixes.get(prefix);
+    if (previousSource && previousSource !== source) {
+      sessionSourcePrefixes.delete(prefix);
+      conflictingSessionSourcePrefixes.add(prefix);
+      return;
+    }
+    sessionSourcePrefixes.set(prefix, source);
+  };
+
+  for (const { prefix, source } of metadataSourcePrefixes) {
+    rememberSessionSourcePrefix(prefix, source);
+  }
+
   for (const { filePath, fileSessionId, lineage, events } of sessionFiles) {
     const metadataSessionPrefix = `local:${CLIENT_KEY}:${hashableSessionPart(lineage.sessionId)}:`;
-    if (lineage.source !== CODEX_UNKNOWN_SOURCE && !conflictingSessionSourcePrefixes.has(metadataSessionPrefix)) {
-      const previousSource = sessionSourcePrefixes.get(metadataSessionPrefix);
-      if (previousSource && previousSource !== lineage.source) {
-        sessionSourcePrefixes.delete(metadataSessionPrefix);
-        conflictingSessionSourcePrefixes.add(metadataSessionPrefix);
-      } else {
-        sessionSourcePrefixes.set(metadataSessionPrefix, lineage.source);
-      }
-    }
+    rememberSessionSourcePrefix(metadataSessionPrefix, lineage.source);
     if (lineage.parentSessionId) {
       forkedSessionPrefixes.add(`local:${CLIENT_KEY}:${hashableSessionPart(lineage.sessionId)}:`);
     }
@@ -418,7 +442,8 @@ function collectFromSessionFiles(sessionFiles, pricingData) {
 }
 
 export async function audit() {
-  return auditFromSessionFiles(await parseSessionFiles());
+  const parsed = await parseSessionFiles();
+  return auditFromSessionFiles(parsed.files);
 }
 
 function auditFromSessionFiles(sessionFiles) {
@@ -443,8 +468,11 @@ function auditFromSessionFiles(sessionFiles) {
   return summary;
 }
 
-async function parseSessionFiles({ changedAfterMs = null } = {}) {
-  const filePaths = await collectSessionFiles(changedAfterMs);
+async function parseSessionFiles({ changedAfterMs = null, metadataSessionPrefixes = [] } = {}) {
+  const allFilePaths = await collectSessionFiles();
+  const filePaths = Number.isFinite(changedAfterMs)
+    ? await changedSessionFiles(allFilePaths, changedAfterMs)
+    : allFilePaths;
   const files = [];
   for (const filePath of filePaths) {
     const fileSessionId = basename(filePath).replace(/\.jsonl$/, '');
@@ -497,7 +525,35 @@ async function parseSessionFiles({ changedAfterMs = null } = {}) {
           )
     });
   }
-  return parsedFiles;
+  return {
+    files: parsedFiles,
+    metadataSourcePrefixes: await resolveMetadataSourcePrefixes(allFilePaths, metadataSessionPrefixes)
+  };
+}
+
+async function resolveMetadataSourcePrefixes(filePaths, prefixes) {
+  const requested = new Set(prefixes);
+  if (!requested.size) return [];
+
+  const sources = new Map();
+  const conflicts = new Set();
+  for (const filePath of filePaths) {
+    const fallbackSessionId = basename(filePath).replace(/\.jsonl$/, '');
+    // This repair intentionally reads only the fixed-size header. Do not fall
+    // back to the full transcript while a periodic refresh is running.
+    const lineage = sessionLineageFromText(await readSessionHeader(filePath), fallbackSessionId);
+    if (!lineage || lineage.source === CODEX_UNKNOWN_SOURCE) continue;
+    const prefix = `local:${CLIENT_KEY}:${hashableSessionPart(lineage.sessionId)}:`;
+    if (!requested.has(prefix) || conflicts.has(prefix)) continue;
+    const previousSource = sources.get(prefix);
+    if (previousSource && previousSource !== lineage.source) {
+      sources.delete(prefix);
+      conflicts.add(prefix);
+      continue;
+    }
+    sources.set(prefix, lineage.source);
+  }
+  return [...sources].map(([prefix, source]) => ({ prefix, source }));
 }
 
 async function readSessionLineage(filePath, fallbackSessionId) {
@@ -633,13 +689,14 @@ function validTimestamp(value) {
   return Number.isFinite(new Date(value).getTime()) ? value : null;
 }
 
-async function collectSessionFiles(changedAfterMs = null) {
+async function collectSessionFiles() {
   const roots = [...getSessionRoots(), ...getHeadlessRoots()];
   const nestedPaths = await Promise.all(roots.map((root) => collectJsonlFiles(root)));
-  const files = [...new Set(nestedPaths.flat())];
-  if (!Number.isFinite(changedAfterMs)) return files;
+  return [...new Set(nestedPaths.flat())];
+}
 
-  const changed = await Promise.all(files.map(async filePath => {
+async function changedSessionFiles(filePaths, changedAfterMs) {
+  const changed = await Promise.all(filePaths.map(async filePath => {
     try {
       return (await stat(filePath)).mtimeMs > changedAfterMs ? filePath : null;
     } catch {

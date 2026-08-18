@@ -1,0 +1,8 @@
+{
+  "pid": 12345,
+  "sessionId": "wb-fixture-session-001",
+  "cwd": "/tmp/test-project",
+  "startedAt": 1750137960000,
+  "kind": "interactive",
+  "updatedAt": 1750137965000
+}

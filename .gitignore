@@ -14,7 +14,7 @@ release/
 .env.*
 .claude/
 .codex/
-
+.workbuddy/
 # Local
 docs/user-manual.md
 docs/dist/

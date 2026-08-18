@@ -52,7 +52,8 @@ const STABLE_ALIASES = new Map([
   ['qwen::qwen3-coder-plus', ['qwen3-coder-plus', 'qwen3-coder']],
   ['qwen::qwen3-coder-flash', ['qwen3-coder-flash']],
   ['qwen::qwen-coder-plus', ['qwen-coder-plus']],
-  ['qwen::qwen-coder-turbo', ['qwen-coder-turbo']]
+  ['qwen::qwen-coder-turbo', ['qwen-coder-turbo']],
+  ['tencent hunyuan::hy3', ['hy3', 'hy-3', 'hunyuan-hy3']]
 ]);
 const fetchedAt = new Date().toISOString();
 const previousModels = await readPreviousPricingModels(pricingCachePath);
@@ -456,6 +457,7 @@ function parseSourceModels(source, body, exchangeRate) {
   if (source.provider === 'Gemini') return parseGeminiModels(body);
   if (source.provider === 'Kimi') return parseKimiModels(body, exchangeRate);
   if (isQwenSource(source)) return parseQwenModels(body, exchangeRate);
+  if (isTencentHunyuanSource(source)) return parseTencentHunyuanModels(body, exchangeRate);
   return [];
 }
 
@@ -470,7 +472,8 @@ function sourceHasPricingParser(source) {
     || isDoubaoSource(source)
     || source.provider === 'Gemini'
     || source.provider === 'Kimi'
-    || isQwenSource(source);
+    || isQwenSource(source)
+    || isTencentHunyuanSource(source);
 }
 
 function parseOpenAiGpt56Models(body) {
@@ -602,6 +605,7 @@ function parseZaiModels(body, exchangeRate) {
   const pairs = [
     ['glm-5.2', 'GLM-5.2'],
     ['glm-5.1', 'GLM-5.1'],
+    ['glm-5v-turbo', 'GLM-5V-Turbo'],
     ['glm-5-turbo', 'GLM-5-Turbo'],
     ['glm-5', 'GLM-5'],
     ['glm-4.7', 'GLM-4.7'],
@@ -791,6 +795,33 @@ function parseKimiModels(body, exchangeRate) {
   }, 'Official Kimi API CNY rate parsed from the current model pricing pages.')).filter(Boolean);
 }
 
+function parseTencentHunyuanModels(body, exchangeRate) {
+  const text = tableText(body);
+  const match = text.match(
+    /Hy3\s*\|+\s*-\s*\|+\s*-\s*\|+\s*([0-9]+(?:\.[0-9]+)?)\s*\|+\s*([0-9]+(?:\.[0-9]+)?)\s*\|+\s*([0-9]+(?:\.[0-9]+)?)/i
+  );
+  if (!match) return [];
+
+  const [input, output, cachedInput] = match.slice(1).map(Number);
+  const cnyRates = {
+    input,
+    output,
+    cachedInput,
+    cacheWrite5m: input,
+    cacheWrite1h: input
+  };
+  const rates = cnyToUsdRates(cnyRates, exchangeRate);
+  if (!rates) return [];
+
+  return [rateModel('Tencent Hunyuan', 'hy3', rates, 'Tencent Hunyuan', 'official-page', {
+    currency: 'CNY',
+    unit: '1M tokens',
+    ratesPerMTok: cnyRates,
+    exchangeRate: exchangeRate.rate,
+    sourceUnit: '元 / 1M tokens'
+  }, 'Official Tencent TokenHub Hy3 RMB rate converted to USD at the last verified refresh rate.')];
+}
+
 function parseQwenModels(body, exchangeRate) {
   const pairs = [
     ['qwen3.8', 'qwen3.8-max'],
@@ -974,6 +1005,10 @@ function pricingKey(row) {
 
 function isZhipuSource(source) {
   return providerKey(source?.provider) === 'zhipu glm';
+}
+
+function isTencentHunyuanSource(source) {
+  return providerKey(source?.provider) === 'tencent hunyuan';
 }
 
 function isDoubaoSource(source) {

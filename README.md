@@ -52,7 +52,7 @@
 npx token-work
 ```
 
-默认入口会先打开浏览器页面，再每 5 分钟在后台采集 Claude Code 和 Codex 的可信事件级记录。Codex 会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex。采集通过可信门槛后，元衡会更新本地 SQLite。
+默认入口会先打开浏览器页面，再每 5 分钟在后台采集 Claude Code、Codex 和 WorkBuddy 的可信事件级记录。Codex 会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex；WorkBuddy 的 `auto` 模式只在本机 trace 或 session 元数据能确定唯一实际模型时写入。采集通过可信门槛后，元衡会更新本地 SQLite。
 普通定时写入最多每 24 小时创建一份完整备份；数据修复前会单独备份。新的受管备份创建成功后只保留最新一份，避免高频写盘和长期堆积。
 
 首次使用只想看界面，可以选择以下方式：
@@ -90,7 +90,7 @@ node src/cli.ts
 
 | 类型 | 来源 |
 |---|---|
-| 稳定采集 | Claude Code、Codex（CLI、Desktop 或未识别客户端）、Gemini CLI、OpenCode、OpenClaw、Hermes Agent |
+| 稳定采集 | Claude Code、Codex（CLI、Desktop 或未识别客户端）、Gemini CLI、OpenCode、OpenClaw、Hermes Agent、WorkBuddy |
 | 实验采集 | Cursor、GitHub Copilot CLI、Qwen Code、Kimi、Goose |
 | 外部导入 | ccusage JSON、ccusage CLI 以及兼容的结构化 JSON |
 
@@ -129,6 +129,7 @@ npm run desktop
 - 模型费用按官方公开的 token 单价换算，不是服务商账单。
 - 人民币金额使用价格缓存中的 USD/CNY 汇率，仅作参考。
 - 官方价格或汇率刷新失败时保留上一次成功缓存。
+- GLM-5V-Turbo 与 Hy3 已按官方价格缓存计费；GLM-5V-Turbo 当前短上下文费率为输入 5 元、缓存命中 1.2 元、输出 22 元，Hy3 为输入 1 元、缓存命中 0.25 元、输出 4 元/百万 tokens。
 - 未确认官方价格的模型显示为“未定价”，不会按 0 元处理。
 
 维护者可以手动刷新缓存：

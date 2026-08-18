@@ -83,6 +83,7 @@ async function main() {
       candidateFiles: 0,
       usableTokenRecords: 0,
       skippedNoTokenRecords: 0,
+      skippedUnresolvedModel: 0,
       skippedConversationLikeRecords: 0,
       skippedOversizedFiles: 0,
       parseErrors: 0,
@@ -239,6 +240,7 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
       candidateFiles: 0,
       usableTokenRecords: 0,
       skippedNoTokenRecords: 0,
+      skippedUnresolvedModel: 0,
       skippedConversationLikeRecords: 0,
       skippedOversizedFiles: 0,
       parseErrors: 0,
@@ -259,8 +261,11 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
       const changedAfterMs = incrementalRefresh && db
         ? metadataRefreshSince(db, device, label)
         : null;
-      const collectorOptions = Number.isFinite(changedAfterMs)
-        ? { changedAfterMs }
+      const metadataSessionPrefixes = incrementalRefresh && db && id === 'codex'
+        ? codexUnknownSessionPrefixes(db, device)
+        : [];
+      const collectorOptions = Number.isFinite(changedAfterMs) || metadataSessionPrefixes.length
+        ? { changedAfterMs, metadataSessionPrefixes }
         : undefined;
       if (typeof collectorModule.collectWithAudit === 'function') {
         const result = await collectorModule.collectWithAudit(pricingData, collectorOptions);
@@ -325,9 +330,10 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
     const hasCodexMigration = payloads.some(payload => payload.type === 'data'
       && payload.sourceSummary.id === 'codex'
       && codexSourceMigrationWouldChange(db, payload));
-    const deletesStoredUsage = !incrementalRefresh && storedUsageWouldBeDeleted(db, payloads);
+    const deletesStoredUsage = storedUsageWouldBeDeleted(db, payloads);
+    const replacesWorkBuddyEvents = payloads.some(payload => workBuddyLegacyEventCopies(db, payload).length > 0);
     const protectedMutation = needsStoredUsageRepair || hasClaudePlaceholders
-      || hasCodexMigration || deletesStoredUsage;
+      || hasCodexMigration || deletesStoredUsage || replacesWorkBuddyEvents;
     const shouldBackup = protectedMutation || tokenUsageWouldChange(db, payloads);
     summary.backup = shouldBackup
       ? createSqliteBackup(db, dbPath, scheduled
@@ -379,11 +385,12 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
         device,
         label,
         status: sourceSummary.status,
-        message: `${sourceSummary.message}; candidate_files=${sourceSummary.candidateFiles}; usable_records=${sourceSummary.usableTokenRecords}; skipped_no_token=${sourceSummary.skippedNoTokenRecords}; skipped_unsafe=${sourceSummary.skippedConversationLikeRecords}`,
+        message: `${sourceSummary.message}; candidate_files=${sourceSummary.candidateFiles}; usable_records=${sourceSummary.usableTokenRecords}; skipped_no_token=${sourceSummary.skippedNoTokenRecords}; skipped_unresolved_model=${sourceSummary.skippedUnresolvedModel}; skipped_unsafe=${sourceSummary.skippedConversationLikeRecords}`,
         collectedAt,
         module
       });
       runInTransaction(db, () => {
+        const removedWorkBuddyEvents = removeWorkBuddyLegacyEventCopies(db, payload);
         applyEventReconciliation(db, payload);
         dailyRows.forEach(row => upsertDaily(db, row));
         sessionRows.forEach(row => upsertSession(db, row));
@@ -396,6 +403,9 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
             deleteLegacyEvent.run(legacyEventId, row.device, row.source);
           }
           upsertTokenEvent(db, row);
+        }
+        if (removedWorkBuddyEvents > 0) {
+          rebuildWorkBuddyUsage(db, payload, pricingData);
         }
         recordCollectionRun(db, run, scheduled);
       });
@@ -420,6 +430,140 @@ function storedUsageWouldBeDeleted(db, payloads) {
     }
   }
   return false;
+}
+
+function workBuddyLegacyEventCopies(db, payload) {
+  if (payload.type !== 'data' || payload.sourceSummary.id !== 'workbuddy') return [];
+
+  const expectedByFingerprint = new Map();
+  for (const row of payload.eventRows) {
+    const fingerprint = workBuddyEventFingerprint(row);
+    const expected = expectedByFingerprint.get(fingerprint) || new Set();
+    expected.add(row.eventId);
+    expectedByFingerprint.set(fingerprint, expected);
+  }
+  if (!expectedByFingerprint.size) return [];
+
+  const legacyRows = db.prepare(`
+    SELECT event_id AS eventId, timestamp,
+      input_tokens AS inputTokens, output_tokens AS outputTokens,
+      cache_read_tokens AS cacheReadTokens, cache_creation_tokens AS cacheCreationTokens,
+      reasoning_tokens AS reasoningTokens
+    FROM token_events
+    WHERE device = ? AND source = ?
+      AND event_id LIKE 'workbuddy:%'
+      AND session_id NOT GLOB 'workbuddy:trace_*'
+  `).all(payload.device, payload.label);
+
+  return legacyRows
+    .filter(row => expectedByFingerprint.has(workBuddyEventFingerprint(row)))
+    .filter(row => !expectedByFingerprint.get(workBuddyEventFingerprint(row)).has(row.eventId))
+    .map(row => row.eventId);
+}
+
+function workBuddyEventFingerprint(row) {
+  return JSON.stringify([
+    row.timestamp,
+    Number(row.inputTokens || 0),
+    Number(row.outputTokens || 0),
+    Number(row.cacheReadTokens || 0),
+    Number(row.cacheCreationTokens || 0),
+    Number(row.reasoningTokens || 0)
+  ]);
+}
+
+function removeWorkBuddyLegacyEventCopies(db, payload) {
+  const eventIds = workBuddyLegacyEventCopies(db, payload);
+  if (!eventIds.length) return 0;
+  const remove = db.prepare(`
+    DELETE FROM token_events
+    WHERE event_id = ? AND device = ? AND source = ?
+  `);
+  for (const eventId of eventIds) {
+    remove.run(eventId, payload.device, payload.label);
+  }
+  return eventIds.length;
+}
+
+function rebuildWorkBuddyUsage(db, payload, pricingData) {
+  const source = payload.label;
+  const dailyRows = db.prepare(`
+    SELECT date(timestamp, '+8 hours') AS usageDate, model,
+      COALESCE(SUM(input_tokens), 0) AS inputTokens,
+      COALESCE(SUM(output_tokens), 0) AS outputTokens,
+      COALESCE(SUM(cache_read_tokens), 0) AS cacheReadTokens,
+      COALESCE(SUM(cache_creation_tokens), 0) AS cacheCreationTokens,
+      COALESCE(SUM(reasoning_tokens), 0) AS reasoningOutputTokens
+    FROM token_events
+    WHERE device = ? AND source = ?
+    GROUP BY usageDate, model
+  `).all(payload.device, source);
+  db.prepare('DELETE FROM daily_usage WHERE device = ? AND source = ?').run(payload.device, source);
+  for (const row of dailyRows) {
+    const tokens = eventTokens(row);
+    const daily = usageRow({
+      device: payload.device, source, usageDate: row.usageDate, model: row.model || ''
+    });
+    addUsage(daily, tokens, calculateCost(row.model || '', tokens, pricingData));
+    upsertDaily(db, daily);
+  }
+
+  const sessionRows = db.prepare(`
+    SELECT session_id AS sessionId, MAX(timestamp) AS lastActivity,
+      COALESCE(SUM(input_tokens), 0) AS inputTokens,
+      COALESCE(SUM(output_tokens), 0) AS outputTokens,
+      COALESCE(SUM(cache_read_tokens), 0) AS cacheReadTokens,
+      COALESCE(SUM(cache_creation_tokens), 0) AS cacheCreationTokens,
+      COALESCE(SUM(reasoning_tokens), 0) AS reasoningOutputTokens
+    FROM token_events
+    WHERE device = ? AND source = ?
+    GROUP BY session_id
+  `).all(payload.device, source);
+  const latestModel = db.prepare(`
+    SELECT model FROM token_events
+    WHERE device = ? AND source = ? AND session_id = ?
+    ORDER BY timestamp DESC, event_id DESC
+    LIMIT 1
+  `);
+  db.prepare(`
+    UPDATE session_usage
+    SET input_tokens = 0, output_tokens = 0, cache_creation_tokens = 0,
+      cache_read_tokens = 0, cached_input_tokens = 0, reasoning_output_tokens = 0,
+      total_tokens = 0, cost_usd = 0, updated_at = datetime('now')
+    WHERE device = ? AND source = ?
+  `).run(payload.device, source);
+  for (const row of sessionRows) {
+    const model = latestModel.get(payload.device, source, row.sessionId)?.model || '';
+    const tokens = eventTokens(row);
+    const session = usageRow({
+      device: payload.device, source, sessionId: row.sessionId,
+      lastActivity: row.lastActivity, projectPath: null, model
+    });
+    addUsage(session, tokens, calculateCost(model, tokens, pricingData));
+    upsertSession(db, session);
+  }
+  db.prepare(`
+    DELETE FROM session_usage
+    WHERE device = ? AND source = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM token_events AS event
+        WHERE event.device = session_usage.device
+          AND event.source = session_usage.source
+          AND event.session_id = session_usage.session_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM session_annotations AS annotation
+        WHERE annotation.device = session_usage.device
+          AND annotation.source = session_usage.source
+          AND annotation.session_id = session_usage.session_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM session_outputs AS output
+        WHERE output.device = session_usage.device
+          AND output.source = session_usage.source
+          AND output.session_id = session_usage.session_id
+      )
+  `).run(payload.device, source);
 }
 
 function hasClaudeSyntheticPlaceholders(db, payload) {
@@ -906,9 +1050,16 @@ function applyEventReconciliationPlan(db, payload, source, plan) {
   `);
 
   if (plan.replaceManagedEvents) {
-    for (const prefix of plan.managedSessionPrefixes) {
-      deleteManagedEventsBySessionPrefix(db, payload, source, plan.managedEventIdPrefix, prefix);
-      resetSessionsByPrefix(db, payload, source, prefix);
+    for (const managedSession of plan.managedSessions) {
+      deleteManagedEventsBySessionPrefix(
+        db,
+        payload,
+        source,
+        plan.managedEventIdPrefix,
+        managedSession.sessionId,
+        managedSession.exact
+      );
+      resetSessionsByPrefix(db, payload, source, managedSession.sessionId, managedSession.exact);
     }
   }
   for (const prefix of plan.prefixes) {
@@ -926,7 +1077,7 @@ function applyEventReconciliationPlan(db, payload, source, plan) {
 function eventReconciliationPlan(db, payload, source) {
   // Incremental collectors only read newly appended records. Missing rows are
   // therefore not evidence that stored history should be removed.
-  if (payload.incremental) {
+  if (payload.incremental && !payload.reconciliation?.reconcileIncrementally) {
     return {
       prefixes: [],
       dates: [],
@@ -938,7 +1089,8 @@ function eventReconciliationPlan(db, payload, source) {
   const managedEventSessionPrefixes = normalizedEventSessionPrefixes({
     eventSessionPrefixes: payload.reconciliation?.managedEventSessionPrefixes
   });
-  if (!prefixes.length && (!managedEventIdPrefix || !managedEventSessionPrefixes.length)) {
+  const managedEventSessionIds = normalizedEventSessionIds(payload.reconciliation?.managedEventSessionIds);
+  if (!prefixes.length && (!managedEventIdPrefix || (!managedEventSessionPrefixes.length && !managedEventSessionIds.length))) {
     return {
       prefixes: [],
       dates: [],
@@ -957,12 +1109,24 @@ function eventReconciliationPlan(db, payload, source) {
   const dates = new Set();
 
   let replaceManagedEvents = false;
-  const managedSessionPrefixes = [];
-  for (const prefix of managedEventSessionPrefixes) {
+  const managedSessions = [
+    ...managedEventSessionPrefixes.map(sessionId => ({ sessionId, exact: false })),
+    ...managedEventSessionIds.map(sessionId => ({ sessionId, exact: true }))
+  ];
+  const staleManagedSessions = [];
+  for (const managedSession of managedSessions) {
+    const { sessionId, exact } = managedSession;
     const expectedIds = new Set(eventRows
-      .filter(row => row.eventId.startsWith(managedEventIdPrefix) && row.sessionId.startsWith(prefix))
+      .filter(row => row.eventId.startsWith(managedEventIdPrefix)
+        && (exact ? row.sessionId === sessionId : row.sessionId.startsWith(sessionId)))
       .map(row => row.eventId));
-    const managedRows = db.prepare(`
+    const managedRows = db.prepare(exact ? `
+      SELECT event_id AS eventId, date(timestamp, '+8 hours') AS usageDate
+      FROM token_events
+      WHERE device = ? AND source = ?
+        AND event_id LIKE ? ESCAPE '\\'
+        AND session_id = ?
+    ` : `
       SELECT event_id AS eventId, date(timestamp, '+8 hours') AS usageDate
       FROM token_events
       WHERE device = ? AND source = ?
@@ -972,11 +1136,11 @@ function eventReconciliationPlan(db, payload, source) {
       device,
       source,
       sqlLikePrefix(managedEventIdPrefix),
-      sqlLikePrefix(prefix)
+      exact ? sessionId : sqlLikePrefix(sessionId)
     );
     if (managedRows.some(row => !expectedIds.has(row.eventId))) {
       replaceManagedEvents = true;
-      managedSessionPrefixes.push(prefix);
+      staleManagedSessions.push(managedSession);
       for (const row of managedRows) {
         if (row.usageDate) dates.add(row.usageDate);
       }
@@ -999,26 +1163,37 @@ function eventReconciliationPlan(db, payload, source) {
     dates: [...dates],
     replaceManagedEvents,
     managedEventIdPrefix,
-    managedSessionPrefixes
+    managedSessions: staleManagedSessions
   };
 }
 
 function mergeHistoricalEventUsage(db, payload, pricingData) {
   const sources = payload.sourceSummary.id === 'codex'
-    ? [...new Set([...payloadSources(payload), UNKNOWN_CODEX_SOURCE])]
+    ? [...new Set([
+        ...payloadSources(payload),
+        UNKNOWN_CODEX_SOURCE,
+        ...(payload.reconciliation?.sessionSourcePrefixes || []).map(item => item.source)
+      ])]
     : payloadSources(payload);
   for (const source of sources) {
-    if (payload.incremental && payload.sourceSummary.id === 'codex') {
-      rebuildIncrementalCodexUsage(db, payload, source, pricingData);
+    if (payload.incremental && ['codex', 'workbuddy'].includes(payload.sourceSummary.id)) {
+      rebuildIncrementalEventUsage(db, payload, source, pricingData);
       continue;
     }
     mergeHistoricalEventUsageForSource(db, payload, source, pricingData);
   }
 }
 
-function rebuildIncrementalCodexUsage(db, payload, source, pricingData) {
+function rebuildIncrementalEventUsage(db, payload, source, pricingData) {
   const eventIdPrefix = normalizedReconciliationPrefix(payload.reconciliation?.managedEventIdPrefix);
   if (!eventIdPrefix) return;
+  const currentPrefixes = normalizedEventSessionPrefixes({
+    eventSessionPrefixes: payload.reconciliation?.managedEventSessionPrefixes
+  });
+  const currentSessionIds = normalizedEventSessionIds(payload.reconciliation?.managedEventSessionIds);
+  const replacesChangedSessions = Boolean(payload.reconciliation?.reconcileIncrementally);
+  const isCurrentSession = sessionId => currentPrefixes.some(prefix => sessionId.startsWith(prefix))
+    || currentSessionIds.includes(sessionId);
 
   const historicalRows = db.prepare(`
     SELECT session_id AS sessionId, date(timestamp, '+8 hours') AS usageDate,
@@ -1031,7 +1206,8 @@ function rebuildIncrementalCodexUsage(db, payload, source, pricingData) {
     FROM token_events
     WHERE device = ? AND source = ? AND event_id LIKE ? ESCAPE '\\'
     GROUP BY session_id, usageDate, model
-  `).all(payload.device, source, sqlLikePrefix(eventIdPrefix));
+  `).all(payload.device, source, sqlLikePrefix(eventIdPrefix))
+    .filter(row => !replacesChangedSessions || !isCurrentSession(row.sessionId));
   const eventExists = db.prepare(`
     SELECT 1 FROM token_events
     WHERE event_id = ? AND device = ? AND source = ?
@@ -1067,7 +1243,8 @@ function rebuildIncrementalCodexUsage(db, payload, source, pricingData) {
     addEvent({ ...row, tokens: eventTokens(row) });
   }
   for (const row of payload.eventRows) {
-    if (row.source !== source || eventExists.get(row.eventId, row.device, row.source)) continue;
+    if (row.source !== source) continue;
+    if (!replacesChangedSessions && eventExists.get(row.eventId, row.device, row.source)) continue;
     addEvent({
       sessionId: row.sessionId,
       usageDate: localDateFromTimestamp(row.timestamp),
@@ -1094,6 +1271,7 @@ function mergeHistoricalEventUsageForSource(db, payload, source, pricingData) {
   const currentPrefixes = normalizedEventSessionPrefixes({
     eventSessionPrefixes: payload.reconciliation?.managedEventSessionPrefixes
   });
+  const currentSessionIds = normalizedEventSessionIds(payload.reconciliation?.managedEventSessionIds);
   const historicalRows = db.prepare(`
     SELECT session_id AS sessionId, date(timestamp, '+8 hours') AS usageDate,
       model, MAX(timestamp) AS lastActivity,
@@ -1106,7 +1284,8 @@ function mergeHistoricalEventUsageForSource(db, payload, source, pricingData) {
     WHERE device = ? AND source = ? AND event_id LIKE ? ESCAPE '\\'
     GROUP BY session_id, usageDate, model
   `).all(payload.device, source, sqlLikePrefix(eventIdPrefix))
-    .filter(row => !currentPrefixes.some(prefix => row.sessionId.startsWith(prefix)));
+    .filter(row => !currentPrefixes.some(prefix => row.sessionId.startsWith(prefix))
+      && !currentSessionIds.includes(row.sessionId));
   if (!historicalRows.length) return;
 
   const sessions = new Map<string, InputRecord>();
@@ -1180,23 +1359,45 @@ function normalizedEventSessionPrefixes(reconciliation) {
   return [...new Set(prefixes.filter(prefix => typeof prefix === 'string' && prefix.trim()))];
 }
 
+function normalizedEventSessionIds(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter(sessionId => typeof sessionId === 'string' && sessionId.trim()))];
+}
+
 function normalizedReconciliationPrefix(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function deleteManagedEventsBySessionPrefix(db, payload, source, eventIdPrefix, sessionPrefix) {
-  if (!eventIdPrefix || !sessionPrefix) return;
-  db.prepare(`
+function deleteManagedEventsBySessionPrefix(db, payload, source, eventIdPrefix, sessionId, exact = false) {
+  if (!eventIdPrefix || !sessionId) return;
+  db.prepare(exact ? `
+    DELETE FROM token_events
+    WHERE device = ? AND source = ?
+      AND event_id LIKE ? ESCAPE '\\'
+      AND session_id = ?
+  ` : `
     DELETE FROM token_events
     WHERE device = ? AND source = ?
       AND event_id LIKE ? ESCAPE '\\'
       AND session_id LIKE ? ESCAPE '\\'
-  `).run(payload.device, source, sqlLikePrefix(eventIdPrefix), sqlLikePrefix(sessionPrefix));
+  `).run(payload.device, source, sqlLikePrefix(eventIdPrefix), exact ? sessionId : sqlLikePrefix(sessionId));
 }
 
-function resetSessionsByPrefix(db, payload, source, prefix) {
-  if (!prefix) return;
-  db.prepare(`
+function resetSessionsByPrefix(db, payload, source, sessionId, exact = false) {
+  if (!sessionId) return;
+  db.prepare(exact ? `
+    UPDATE session_usage
+    SET input_tokens = 0,
+      output_tokens = 0,
+      cache_creation_tokens = 0,
+      cache_read_tokens = 0,
+      cached_input_tokens = 0,
+      reasoning_output_tokens = 0,
+      total_tokens = 0,
+      cost_usd = 0,
+      updated_at = datetime('now')
+    WHERE device = ? AND source = ? AND session_id = ?
+  ` : `
     UPDATE session_usage
     SET input_tokens = 0,
       output_tokens = 0,
@@ -1208,7 +1409,7 @@ function resetSessionsByPrefix(db, payload, source, prefix) {
       cost_usd = 0,
       updated_at = datetime('now')
     WHERE device = ? AND source = ? AND session_id LIKE ? ESCAPE '\\'
-  `).run(payload.device, source, sqlLikePrefix(prefix));
+  `).run(payload.device, source, exact ? sessionId : sqlLikePrefix(sessionId));
 }
 
 function dailyUsageKey(source, usageDate, model) {
@@ -1252,6 +1453,22 @@ function metadataRefreshSince(db, device, source) {
   }
 
   return null;
+}
+
+function codexUnknownSessionPrefixes(db, device) {
+  const rows = db.prepare(`
+    SELECT session_id AS sessionId
+    FROM session_usage
+    WHERE device = ? AND source = ? AND session_id LIKE 'local:codex:%'
+    UNION
+    SELECT session_id AS sessionId
+    FROM token_events
+    WHERE device = ? AND source = ? AND session_id LIKE 'local:codex:%'
+  `).all(device, UNKNOWN_CODEX_SOURCE, device, UNKNOWN_CODEX_SOURCE);
+  return [...new Set(rows.map(row => {
+    const separator = String(row.sessionId || '').lastIndexOf(':');
+    return separator > 0 ? String(row.sessionId).slice(0, separator + 1) : null;
+  }).filter(Boolean))];
 }
 
 function recordCollectionRun(db, run, scheduled) {
@@ -1469,6 +1686,7 @@ function emptyAuditSummary() {
     candidateFiles: 0,
     usableTokenRecords: 0,
     skippedNoTokenRecords: 0,
+    skippedUnresolvedModel: 0,
     skippedConversationLikeRecords: 0,
     skippedOversizedFiles: 0,
     parseErrors: 0,
@@ -1486,6 +1704,7 @@ function normalizeAuditSummary(value: InputRecord = {}) {
     'candidateFiles',
     'usableTokenRecords',
     'skippedNoTokenRecords',
+    'skippedUnresolvedModel',
     'skippedConversationLikeRecords',
     'skippedOversizedFiles',
     'parseErrors',
@@ -1506,6 +1725,7 @@ function addAuditToSource(sourceSummary, audit) {
     'candidateFiles',
     'usableTokenRecords',
     'skippedNoTokenRecords',
+    'skippedUnresolvedModel',
     'skippedConversationLikeRecords',
     'skippedOversizedFiles',
     'parseErrors'
@@ -1533,7 +1753,7 @@ function addSummary(summary, sourceSummary) {
 function printSummary(summary) {
   console.log(`[collect] mode=${summary.mode} enabled=${summary.enabledCollectors.join(',') || 'none'}`);
   for (const source of summary.sources) {
-    console.log(`[${source.label}] status=${source.status} risk=${source.coverageRisk} daily=${source.dailyRows} sessions=${source.sessionRows} token_events=${source.tokenEvents} candidate_files=${source.candidateFiles} usable_records=${source.usableTokenRecords} skipped_no_token=${source.skippedNoTokenRecords} skipped_unsafe=${source.skippedConversationLikeRecords} parse_errors=${source.parseErrors} tokens(event/session/daily)=${source.eventTotalTokens}/${source.sessionTotalTokens}/${source.dailyTotalTokens}`);
+    console.log(`[${source.label}] status=${source.status} risk=${source.coverageRisk} daily=${source.dailyRows} sessions=${source.sessionRows} token_events=${source.tokenEvents} candidate_files=${source.candidateFiles} usable_records=${source.usableTokenRecords} skipped_no_token=${source.skippedNoTokenRecords} skipped_unresolved_model=${source.skippedUnresolvedModel} skipped_unsafe=${source.skippedConversationLikeRecords} parse_errors=${source.parseErrors} tokens(event/session/daily)=${source.eventTotalTokens}/${source.sessionTotalTokens}/${source.dailyTotalTokens}`);
     if (source.firstTimestamp || source.lastTimestamp) console.log(`  range=${source.firstTimestamp || '-'}..${source.lastTimestamp || '-'}`);
     if (source.coverageStatus) console.log(`  coverage=${source.coverageStatus}`);
     if (source.status === 'error' && source.message) console.log(`  error=${source.message}`);

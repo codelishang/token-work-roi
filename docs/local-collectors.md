@@ -14,12 +14,13 @@ Yuanheng collectors extract structured usage metadata only. They do not store or
 - OpenCode
 - OpenClaw
 - Hermes Agent
+- WorkBuddy
 
 这些来源在本机存在可靠元数据时，可以生成 `daily_usage`、`session_usage` 和 `token_events`。稳定采集不等于快速启动时全部自动写入。
 
-快速启动的定时采集只处理 Claude Code 和 Codex；Codex 记录会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex。其他稳定采集器和实验来源需要通过 `coverage --sources` 或 `collect --sources` 明确选择。
+快速启动的定时采集处理 Claude Code、Codex 和 WorkBuddy；Codex 记录会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex。其他稳定采集器和实验来源需要通过 `coverage --sources` 或 `collect --sources` 明确选择。
 
-These collectors can produce structured usage when reliable local metadata exists. Quick-start scheduled collection handles Claude Code and Codex only. Codex records are labeled as Codex CLI, Codex Desktop, or Codex according to available client metadata. Select other stable or experimental collectors explicitly with `coverage --sources` or `collect --sources`.
+These collectors can produce structured usage when reliable local metadata exists. Quick-start scheduled collection handles Claude Code, Codex, and WorkBuddy. Codex records are labeled as Codex CLI, Codex Desktop, or Codex according to available client metadata. Select other stable or experimental collectors explicitly with `coverage --sources` or `collect --sources`.
 
 ## 实验来源 / Experimental Sources
 
@@ -35,6 +36,27 @@ These collectors can produce structured usage when reliable local metadata exist
 
 If explicit token fields are missing, Yuanheng reports detection status only and writes no usage.
 
+## WorkBuddy 说明 / WorkBuddy Note
+
+WorkBuddy 采集器扫描 `~/.workbuddy/traces/<pid>/trace_*.json` 中的结构化 trace 文件。每个 trace 包含多个 span，其中 `generation` 类型的 span 携带 `toolOutput`（JSON 字符串），内含 OpenAI 兼容的 chat completion 响应和 `usage` 对象。
+
+采集器只提取 `usage` 中的 `prompt_tokens`、`completion_tokens`、`cached_tokens` 和 `reasoning_tokens`，不保存 prompt、response 或对话正文。`auto` 模式优先使用 trace 标明的唯一实际模型；缺失时，依次使用同一 worker 重叠 trace 的唯一模型和 WorkBuddy session 元数据中的具体模型。仍无法确定时不导入该记录，也不会把 `auto` 当作模型名称。trace ID 是本软件的稳定会话标识；`~/.workbuddy/sessions/<pid>.json` 仅用于补充工作目录元数据。
+
+`prompt_tokens` 是 cache-inclusive 的（OpenAI 惯例），采集器会减去 `cached_tokens` 得到净输入 token 数。定时采集仅重读上次采集后变化的 trace；单个超过 32 MiB 的 trace 会跳过并在采集结果中计数，避免异常日志持续占用资源。
+
+启用方式：
+
+```bash
+node src/cli.ts collect --dry-run --sources=workbuddy
+node src/cli.ts collect --apply --yes --sources=workbuddy
+```
+
+The WorkBuddy collector scans `~/.workbuddy/traces/<pid>/trace_*.json` for structured trace files. Each trace contains spans; generation spans carry a `toolOutput` JSON string with an OpenAI-compatible chat completion response including a `usage` object.
+
+Only `prompt_tokens`, `completion_tokens`, `cached_tokens`, and `reasoning_tokens` from the `usage` object are extracted. No prompt, response, or conversation content is stored. For auto mode, the collector uses a unique model named by the trace, then a unique model named by an overlapping trace from the same worker, then a concrete WorkBuddy session model. Records without enough evidence are not imported and never use `auto` as a model name. Trace ID is the stable session identity; `~/.workbuddy/sessions/<pid>.json` only supplements workspace metadata.
+
+`prompt_tokens` is cache-inclusive (OpenAI convention); the collector subtracts `cached_tokens` to derive net input tokens. Scheduled collection rereads only traces changed since the previous run. A trace larger than 32 MiB is skipped and reported in the collection result so an abnormal log cannot keep consuming resources.
+
 ## 常用命令 / Commands
 
 从源码运行时使用：
@@ -43,9 +65,9 @@ If explicit token fields are missing, Yuanheng reports detection status only and
 node src/cli.ts
 node src/cli.ts --no-collect
 node src/cli.ts --dry-run-only
-node src/cli.ts coverage --sources=claude,codex,cursor --json
-node src/cli.ts collect --dry-run --sources=claude,codex,cursor
-node src/cli.ts collect --apply --yes --sources=claude,codex
+node src/cli.ts coverage --sources=claude,codex,workbuddy,cursor --json
+node src/cli.ts collect --dry-run --sources=claude,codex,workbuddy,cursor
+node src/cli.ts collect --apply --yes --sources=claude,codex,workbuddy
 node src/cli.ts compare-ccusage --report=session --json --yes
 ```
 
@@ -59,7 +81,7 @@ v2 源码入口使用 TypeScript 文件。旧的 `.mjs` 源码直跑路径不再
 
 | 命令 | 作用 |
 |---|---|
-| `node src/cli.ts` | 默认入口，先打开浏览器，再在后台采集可信 Claude/Codex 事件级记录 |
+| `node src/cli.ts` | 默认入口，先打开浏览器，再在后台采集可信 Claude Code、Codex 和 WorkBuddy 事件级记录 |
 | `--no-collect` | 不扫描本机日志，也不写入采集结果 |
 | `--dry-run-only` | 禁用定时采集并打开界面，不写入采集结果 |
 | `coverage` | 查看每个来源是否有可靠词元字段，以及 daily/session/event 是否能对上 |
@@ -90,6 +112,10 @@ Cursor writes usage only when explicit token fields exist. Otherwise it remains 
 ## 历史数据限制 / History Limits
 
 元衡只能读取本机仍然存在、且含有可靠词元字段的历史记录。已经被上游工具删除、或者从未记录词元字段的数据，无法准确恢复。
+
+首次读取较大的 Codex 历史日志时会逐行处理，不会将单个 JSONL 文件一次载入内存；首次全量扫描所需时间仍取决于本机历史日志大小。后续定时采集只读取发生变化的日志尾部。
+
+Large Codex histories are read line by line on the first scan rather than loading an entire JSONL file into memory. The first full scan still depends on local history size; later scheduled collection reads only changed log tails.
 
 Yuanheng can only read local history that still exists and contains reliable token fields. Deleted logs or logs without token fields cannot be reconstructed accurately.
 
