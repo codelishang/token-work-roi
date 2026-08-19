@@ -195,7 +195,7 @@ function importReportsFor(status) {
   if (!['ccusage-importable', 'detected-only', 'experimental-audit'].includes(status)) return [];
   return CCUSAGE_REPORTS.map(report => ({
     report,
-    exportCommand: `npx ccusage@latest ${report} --json --no-cost > ccusage-${report}.json`,
+    exportCommand: `npx --yes ccusage@latest ${report} --json --no-cost > ccusage-${report}.json`,
     tokenStudioCommand: `npx token-work import-usage --format=ccusage-cli --report=${report} --dry-run --yes`
   }));
 }

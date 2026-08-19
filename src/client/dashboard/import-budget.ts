@@ -25,7 +25,7 @@ export function buildCcusageJsonExportCommand({ report = 'session' } = {}) {
   const normalized = CCUSAGE_BRIDGE_REPORTS.includes(String(report).toLowerCase())
     ? String(report).toLowerCase()
     : 'session';
-  return `npx ccusage@latest ${normalized} --json --no-cost > ccusage-${normalized}.json`;
+  return `npx --yes ccusage@latest ${normalized} --json --no-cost > ccusage-${normalized}.json`;
 }
 
 export function defaultResetAnchor(now = new Date()) {

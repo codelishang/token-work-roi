@@ -12,7 +12,7 @@ import { createRequire } from 'node:module';
 import { seedDemoDatabase } from './demo-seed.ts';
 import { auditExperimentalCollectors, detectCollectors } from './collector-registry.ts';
 import { CCUSAGE_CLI_REPORTS, ccusageInvocation, runCcusageCliImportPlan } from './ccusage-bridge.ts';
-import { applyCcusageImport, ccusageImportWouldChange, parseCcusageJsonText, planCcusageImport, readCcusageImportInput } from './ccusage-import.ts';
+import { applyCcusageImport, assertCcusageImportCanApply, ccusageImportWouldChange, parseCcusageJsonText, planCcusageImport, readCcusageImportInput } from './ccusage-import.ts';
 import { createSqliteBackup, defaultDbPath, deleteBudgetProfile, listBudgetProfiles, openDb, openReadOnlyDb, upsertBudgetProfile } from './db.ts';
 import { formatPrivacyCheckReport, runPrivacyCheck } from './privacy-check.ts';
 import { buildTerminalReport, formatTerminalReport } from './terminal-report.ts';
@@ -488,6 +488,7 @@ async function importUsageCommand() {
     const dbPath = cliDbPath();
     const db = openDb(dbPath);
     try {
+      assertCcusageImportCanApply(db, plan);
       summary.backup = ccusageImportWouldChange(db, plan)
         ? createSqliteBackup(db, dbPath, { reason: format === 'ccusage-cli' ? 'ccusage-cli-import' : 'ccusage-json-import' })
         : null;

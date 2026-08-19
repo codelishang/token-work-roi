@@ -50,8 +50,8 @@ export function ccusageInvocation({ report = 'session', ccusageBin = null } = {}
   }
   return {
     command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    args: ['ccusage@latest', normalizedReport, '--json', '--no-cost'],
-    commandLabel: `npx ccusage@latest ${normalizedReport} --json --no-cost`
+    args: ['--yes', 'ccusage@latest', normalizedReport, '--json', '--no-cost'],
+    commandLabel: `npx --yes ccusage@latest ${normalizedReport} --json --no-cost`
   };
 }
 

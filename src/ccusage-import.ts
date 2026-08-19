@@ -18,6 +18,8 @@ const UNSAFE_KEYS = new Set([
 ]);
 const GENERIC_CODEX_SOURCE = 'Codex';
 const LEGACY_UNKNOWN_CODEX_SOURCE = 'Codex (unidentified client)';
+const CLAUDE_CODE_SOURCE = 'Claude Code';
+const LEGACY_CLAUDE_SOURCE = 'claude';
 
 interface ImportOptions {
   device?: string;
@@ -124,7 +126,7 @@ export function planCcusageImport(payload, options: ImportOptions = {}) {
       mergeSessionRow(sessionsByKey, sessionKey, sessionRow);
 
       const eventRow = {
-        eventId: eventIdFor({ detectedShape, source, usageDate, sessionId, model, timestamp }),
+        eventId: eventIdFor({ detectedShape, source, sessionId, model }),
         device,
         source,
         sessionId,
@@ -161,15 +163,22 @@ export function planCcusageImport(payload, options: ImportOptions = {}) {
 }
 
 export function applyCcusageImport(db, plan) {
+  assertCcusageImportCanApply(db, plan);
   db.exec('BEGIN');
   try {
     migrateLegacyGenericCodexImport(db, plan);
+    migrateLegacyClaudeImport(db, plan);
+    migrateLegacySnapshotSources(db, plan);
+    migrateLegacySnapshotEvents(db, plan);
     for (const row of plan.daily) upsertDaily(db, row);
     for (const row of plan.sessions) upsertSession(db, row);
     for (const row of plan.tokenEvents) {
       const applied = upsertTokenEvent(db, row);
       if (row.source === GENERIC_CODEX_SOURCE) {
         removeAppliedLegacyCodexEvent(db, row, applied.eventId);
+      }
+      if (row.source === CLAUDE_CODE_SOURCE) {
+        removeAppliedLegacyClaudeEvent(db, row, applied.eventId);
       }
     }
     recordRun(db, plan.run);
@@ -186,8 +195,30 @@ export function applyCcusageImport(db, plan) {
   };
 }
 
+export function assertCcusageImportCanApply(db, plan) {
+  const nativeRun = db.prepare(`
+    SELECT 1 FROM collection_runs
+    WHERE device = ? AND source = ? AND source NOT LIKE 'import:ccusage%'
+    LIMIT 1
+  `);
+  const nativeEvent = db.prepare(`
+    SELECT 1 FROM token_events
+    WHERE device = ? AND source = ? AND event_id NOT LIKE 'ccusage:%'
+    LIMIT 1
+  `);
+  const targets = new Set<string>(plan.tokenEvents.map(row => `${row.device}\0${row.source}`));
+  for (const target of targets) {
+    const [device, source] = target.split('\0');
+    if (!nativeRun.get(device, source) && !nativeEvent.get(device, source)) continue;
+    throw new Error(`ccusage 导入会覆盖设备“${device}”中的原生 ${source} 数据；请为外部电脑使用不同的 --device 名称。`);
+  }
+}
+
 export function ccusageImportWouldChange(db, plan) {
   if (legacyGenericCodexImportWouldChange(db, plan)) return true;
+  if (legacyClaudeImportWouldChange(db, plan)) return true;
+  if (legacySnapshotSourcesWouldChange(db, plan)) return true;
+  if (legacySnapshotEventsWouldChange(db, plan)) return true;
   const daily = db.prepare(`
     SELECT 1 FROM daily_usage
     WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
@@ -370,7 +401,7 @@ function tokenFields(row) {
     cacheReadTokens,
     cachedInputTokens: 0,
     reasoningOutputTokens,
-    totalTokens: explicitTotal || computedTotal
+    totalTokens: Math.max(explicitTotal, computedTotal)
   };
 }
 
@@ -392,7 +423,136 @@ function hasTokenField(row) {
 
 function sourceFromRow(row) {
   const source = cleanText(row.source || row.tool || row.instance || row.provider || row.agent, 80);
-  return source?.toLowerCase() === 'codex' ? GENERIC_CODEX_SOURCE : source || 'ccusage';
+  const normalized = source?.toLowerCase();
+  if (normalized === 'codex') return GENERIC_CODEX_SOURCE;
+  if (normalized === LEGACY_CLAUDE_SOURCE) return CLAUDE_CODE_SOURCE;
+  return source || 'ccusage';
+}
+
+function migrateLegacyClaudeImport(db, plan) {
+  const legacyEvents = new Map(plan.tokenEvents
+    .filter(row => row.source === CLAUDE_CODE_SOURCE)
+    .map(row => [legacyClaudeEventId(row.eventId), row.eventId]));
+  if (!legacyEvents.size) return;
+
+  const rows = db.prepare(`
+    SELECT event_id AS eventId
+    FROM token_events
+    WHERE device = ? AND source = ? AND event_id LIKE 'ccusage:%:%:%'
+  `).all(plan.device, LEGACY_CLAUDE_SOURCE);
+  for (const { eventId } of rows) {
+    const canonicalEventId = legacyEvents.get(eventId);
+    if (!canonicalEventId) continue;
+    const current = db.prepare('SELECT device, source FROM token_events WHERE event_id = ?').get(canonicalEventId);
+    if (current?.device === plan.device && current?.source === CLAUDE_CODE_SOURCE) {
+      db.prepare('DELETE FROM token_events WHERE event_id = ?').run(eventId);
+      continue;
+    }
+    if (!current) {
+      db.prepare(`UPDATE token_events SET event_id = ?, source = ? WHERE event_id = ? AND device = ? AND source = ?`)
+        .run(canonicalEventId, CLAUDE_CODE_SOURCE, eventId, plan.device, LEGACY_CLAUDE_SOURCE);
+    }
+  }
+
+  for (const row of plan.daily.filter(row => row.source === CLAUDE_CODE_SOURCE)) {
+    moveImportedDailySource(db, CLAUDE_CODE_SOURCE, row.device, LEGACY_CLAUDE_SOURCE, row.usageDate, row.model);
+  }
+  for (const row of plan.sessions.filter(row => row.source === CLAUDE_CODE_SOURCE)) {
+    moveImportedSessionSource(db, CLAUDE_CODE_SOURCE, row.device, LEGACY_CLAUDE_SOURCE, row.sessionId);
+  }
+}
+
+function legacyClaudeImportWouldChange(db, plan) {
+  const legacyEvent = db.prepare(`
+    SELECT 1 FROM token_events
+    WHERE device = ? AND source = ? AND event_id = ?
+    LIMIT 1
+  `);
+  const legacyDaily = db.prepare(`
+    SELECT 1 FROM daily_usage
+    WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
+    LIMIT 1
+  `);
+  const legacySession = db.prepare(`
+    SELECT 1 FROM session_usage
+    WHERE device = ? AND source = ? AND session_id = ?
+    LIMIT 1
+  `);
+  return plan.tokenEvents
+    .filter(row => row.source === CLAUDE_CODE_SOURCE)
+    .some(row => legacyEvent.get(row.device, LEGACY_CLAUDE_SOURCE, legacyClaudeEventId(row.eventId)))
+    || plan.daily
+      .filter(row => row.source === CLAUDE_CODE_SOURCE)
+      .some(row => legacyDaily.get(row.device, LEGACY_CLAUDE_SOURCE, row.usageDate, row.model))
+    || plan.sessions
+      .filter(row => row.source === CLAUDE_CODE_SOURCE)
+      .some(row => legacySession.get(row.device, LEGACY_CLAUDE_SOURCE, row.sessionId));
+}
+
+function migrateLegacySnapshotEvents(db, plan) {
+  const remove = db.prepare(`
+    DELETE FROM token_events
+    WHERE device = ? AND source = ? AND session_id = ? AND model = ?
+      AND event_id LIKE 'ccusage:%' AND event_id NOT LIKE '%::%' AND event_id != ?
+  `);
+  for (const row of plan.tokenEvents) {
+    remove.run(row.device, row.source, row.sessionId, row.model, row.eventId);
+  }
+}
+
+function migrateLegacySnapshotSources(db, plan) {
+  const legacyEvents = db.prepare(`
+    SELECT event_id AS eventId
+    FROM token_events
+    WHERE device = ? AND source = ? AND session_id = ? AND model = ?
+      AND event_id LIKE 'ccusage:%'
+  `);
+  const current = db.prepare('SELECT device, source FROM token_events WHERE event_id = ?');
+  const move = db.prepare('UPDATE token_events SET source = ? WHERE event_id = ? AND device = ? AND source = ?');
+  const remove = db.prepare('DELETE FROM token_events WHERE event_id = ? AND device = ? AND source = ?');
+
+  for (const row of plan.tokenEvents) {
+    for (const legacySource of legacySourcesFor(row.source)) {
+      for (const { eventId } of legacyEvents.all(row.device, legacySource, row.sessionId, row.model)) {
+        const owner = current.get(row.eventId);
+        if (owner && !(owner.device === row.device && owner.source === legacySource && eventId === row.eventId)) {
+          remove.run(eventId, row.device, legacySource);
+        } else {
+          move.run(row.source, eventId, row.device, legacySource);
+        }
+      }
+    }
+  }
+}
+
+function legacySnapshotSourcesWouldChange(db, plan) {
+  const legacy = db.prepare(`
+    SELECT 1 FROM token_events
+    WHERE device = ? AND source = ? AND session_id = ? AND model = ?
+      AND event_id LIKE 'ccusage:%'
+    LIMIT 1
+  `);
+  return plan.tokenEvents.some(row => legacySourcesFor(row.source).some(source =>
+    legacy.get(row.device, source, row.sessionId, row.model)
+  ));
+}
+
+function legacySourcesFor(source) {
+  if (source === GENERIC_CODEX_SOURCE) return ['codex', LEGACY_UNKNOWN_CODEX_SOURCE];
+  if (source === CLAUDE_CODE_SOURCE) return [LEGACY_CLAUDE_SOURCE];
+  return [];
+}
+
+function legacySnapshotEventsWouldChange(db, plan) {
+  const legacy = db.prepare(`
+    SELECT 1 FROM token_events
+    WHERE device = ? AND source = ? AND session_id = ? AND model = ?
+      AND event_id LIKE 'ccusage:%' AND event_id NOT LIKE '%::%' AND event_id != ?
+    LIMIT 1
+  `);
+  return plan.tokenEvents.some(row => legacy.get(
+    row.device, row.source, row.sessionId, row.model, row.eventId
+  ));
 }
 
 function migrateLegacyGenericCodexImport(db, plan) {
@@ -432,29 +592,29 @@ function migrateLegacyGenericCodexImport(db, plan) {
 
   for (const row of plan.daily.filter(row => row.source === GENERIC_CODEX_SOURCE)) {
     for (const source of ['codex', LEGACY_UNKNOWN_CODEX_SOURCE]) {
-      moveImportedDailySource(db, row.device, source, row.usageDate, row.model);
+      moveImportedDailySource(db, GENERIC_CODEX_SOURCE, row.device, source, row.usageDate, row.model);
     }
   }
   for (const row of plan.sessions.filter(row => row.source === GENERIC_CODEX_SOURCE)) {
     for (const source of ['codex', LEGACY_UNKNOWN_CODEX_SOURCE]) {
-      moveImportedSessionSource(db, row.device, source, row.sessionId);
+      moveImportedSessionSource(db, GENERIC_CODEX_SOURCE, row.device, source, row.sessionId);
     }
   }
 
 }
 
-function moveImportedDailySource(db, device, source, usageDate, model) {
+function moveImportedDailySource(db, targetSource, device, source, usageDate, model) {
   const target = db.prepare(`
     SELECT 1 FROM daily_usage
     WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
-  `).get(device, GENERIC_CODEX_SOURCE, usageDate, model);
+  `).get(device, targetSource, usageDate, model);
   if (target) {
     db.prepare(`DELETE FROM daily_usage WHERE device = ? AND source = ? AND usage_date = ? AND model = ?`)
       .run(device, source, usageDate, model);
     return;
   }
   db.prepare(`UPDATE daily_usage SET source = ? WHERE device = ? AND source = ? AND usage_date = ? AND model = ?`)
-    .run(GENERIC_CODEX_SOURCE, device, source, usageDate, model);
+    .run(targetSource, device, source, usageDate, model);
 }
 
 function removeAppliedLegacyCodexEvent(db, row, appliedEventId) {
@@ -473,8 +633,15 @@ function removeAppliedLegacyCodexEvent(db, row, appliedEventId) {
   );
 }
 
-function moveImportedSessionSource(db, device, source, sessionId) {
-  if (source === GENERIC_CODEX_SOURCE) return;
+function removeAppliedLegacyClaudeEvent(db, row, appliedEventId) {
+  db.prepare(`
+    DELETE FROM token_events
+    WHERE device = ? AND source = ? AND event_id = ? AND event_id != ?
+  `).run(row.device, LEGACY_CLAUDE_SOURCE, legacyClaudeEventId(row.eventId), appliedEventId);
+}
+
+function moveImportedSessionSource(db, targetSource, device, source, sessionId) {
+  if (source === targetSource) return;
   db.prepare(`
     INSERT OR IGNORE INTO session_usage (
       device, source, session_id, last_activity, project_path, model, input_tokens,
@@ -484,35 +651,39 @@ function moveImportedSessionSource(db, device, source, sessionId) {
       output_tokens, cache_creation_tokens, cache_read_tokens, cached_input_tokens,
       reasoning_output_tokens, total_tokens, cost_usd, updated_at
     FROM session_usage WHERE device = ? AND source = ? AND session_id = ?
-  `).run(GENERIC_CODEX_SOURCE, device, source, sessionId);
+  `).run(targetSource, device, source, sessionId);
   for (const table of ['session_annotations', 'session_outputs']) {
     db.prepare(`
       DELETE FROM ${table} WHERE device = ? AND source = ? AND session_id = ?
         AND EXISTS (SELECT 1 FROM ${table} AS current
           WHERE current.device = ? AND current.source = ? AND current.session_id = ?
             AND COALESCE(julianday(current.updated_at), 0) >= COALESCE(julianday(${table}.updated_at), 0))
-    `).run(device, source, sessionId, device, GENERIC_CODEX_SOURCE, sessionId);
+    `).run(device, source, sessionId, device, targetSource, sessionId);
     db.prepare(`
       DELETE FROM ${table} WHERE device = ? AND source = ? AND session_id = ?
         AND EXISTS (SELECT 1 FROM ${table} AS legacy
           WHERE legacy.device = ? AND legacy.source = ? AND legacy.session_id = ?
             AND COALESCE(julianday(legacy.updated_at), 0) > COALESCE(julianday(${table}.updated_at), 0))
-    `).run(device, GENERIC_CODEX_SOURCE, sessionId, device, source, sessionId);
+    `).run(device, targetSource, sessionId, device, source, sessionId);
     db.prepare(`UPDATE ${table} SET source = ? WHERE device = ? AND source = ? AND session_id = ?`)
-      .run(GENERIC_CODEX_SOURCE, device, source, sessionId);
+      .run(targetSource, device, source, sessionId);
   }
   db.prepare(`
     DELETE FROM work_item_sessions WHERE device = ? AND source = ? AND session_id = ?
       AND EXISTS (SELECT 1 FROM work_item_sessions AS current WHERE current.work_item_id = work_item_sessions.work_item_id AND current.device = ? AND current.source = ? AND current.session_id = ?)
-  `).run(device, source, sessionId, device, GENERIC_CODEX_SOURCE, sessionId);
+  `).run(device, source, sessionId, device, targetSource, sessionId);
   db.prepare(`UPDATE work_item_sessions SET source = ? WHERE device = ? AND source = ? AND session_id = ?`)
-    .run(GENERIC_CODEX_SOURCE, device, source, sessionId);
+    .run(targetSource, device, source, sessionId);
   db.prepare(`DELETE FROM session_usage WHERE device = ? AND source = ? AND session_id = ?`)
     .run(device, source, sessionId);
 }
 
 function legacyGenericCodexEventId(eventId) {
   return String(eventId).replace(/^(ccusage:[^:]+:)[^:]+:/, '$1codex:');
+}
+
+function legacyClaudeEventId(eventId) {
+  return String(eventId).replace(/^(ccusage:[^:]+:)[^:]+:/, '$1claude:');
 }
 
 function usageDateFromRow(row) {
@@ -535,15 +706,13 @@ function sessionIdFromRow(row, shape, usageDate, model, projectPath) {
   return `ccusage:${shape}:${project}:${usageDate}:${hashable(model)}`;
 }
 
-function eventIdFor({ detectedShape, source, usageDate, sessionId, model, timestamp }) {
+function eventIdFor({ detectedShape, source, sessionId, model }) {
   return [
     'ccusage',
     detectedShape,
     hashable(source),
-    usageDate,
     hashable(sessionId),
-    hashable(model),
-    timestamp
+    hashable(model)
   ].join(':');
 }
 

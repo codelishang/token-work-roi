@@ -2,7 +2,7 @@
    Main App — real data from /api/data
    ============================================================= */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { U } from '../shared/utils.ts';
 import {
   attachAutoSuggestions,
@@ -71,6 +71,8 @@ export function App({ routeMode = 'dashboard' }) {
   const [collectionCoverage, setCollectionCoverage] = useState(null);
   const [coverageLoading, setCoverageLoading] = useState(false);
   const [coverageError, setCoverageError] = useState(null);
+  const lastCompletedCollectionRef = useRef(null);
+  const waitingForCollectionRef = useRef(false);
 
   // ───── Load data from API ─────
   const loadData = useCallback(() => {
@@ -133,7 +135,7 @@ export function App({ routeMode = 'dashboard' }) {
     if (M?.meta?.demoMode) loadCollectionCoverage();
   }, [M?.meta?.demoMode, loadCollectionCoverage]);
 
-  const syncCollectStatus = useCallback((options: { refreshOnDone?: boolean } = {}) => {
+  const syncCollectStatus = useCallback((options: { refreshOnDone?: boolean; refreshCoverage?: boolean } = {}) => {
     return fetch('/api/collect/status')
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -146,8 +148,14 @@ export function App({ routeMode = 'dashboard' }) {
         } else if (data.status === 'ok') {
           setCollecting(false);
           setCollectStatus({ type: 'ok', message: summarizeCollectOutput(data.stdout) });
-          if (options.refreshOnDone) {
+          const collectionFinishedAt = data.finishedAt || null;
+          const hasNewCollection = collectionFinishedAt
+            && collectionFinishedAt !== lastCompletedCollectionRef.current;
+          if (hasNewCollection) lastCompletedCollectionRef.current = collectionFinishedAt;
+          if (options.refreshOnDone && hasNewCollection) {
             loadData();
+          }
+          if (options.refreshCoverage && hasNewCollection) {
             loadCollectionCoverage();
           }
         } else if (data.status === 'error') {
@@ -160,22 +168,35 @@ export function App({ routeMode = 'dashboard' }) {
       });
   }, [loadData, loadCollectionCoverage]);
 
-  const waitForCollectDone = useCallback(async () => {
-    for (;;) {
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      const data = await syncCollectStatus({ refreshOnDone: true });
-      if (data.status !== 'running') return data;
+  const waitForCollectDone = useCallback(async ({ refreshCoverage = false } = {}) => {
+    if (waitingForCollectionRef.current) return null;
+    waitingForCollectionRef.current = true;
+    try {
+      for (;;) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        const data = await syncCollectStatus({ refreshOnDone: true, refreshCoverage });
+        if (data.status !== 'running') return data;
+      }
+    } finally {
+      waitingForCollectionRef.current = false;
     }
   }, [syncCollectStatus]);
 
   useEffect(() => {
     let cancelled = false;
-    syncCollectStatus()
-      .then(data => {
-        if (!cancelled && data.status === 'running') waitForCollectDone();
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
+    const inspectCollection = () => {
+      syncCollectStatus({ refreshOnDone: true })
+        .then(data => {
+          if (!cancelled && data.status === 'running') waitForCollectDone();
+        })
+        .catch(() => {});
+    };
+    inspectCollection();
+    const timer = setInterval(inspectCollection, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, [syncCollectStatus, waitForCollectDone]);
 
   const runCollect = useCallback(() => {
@@ -184,7 +205,7 @@ export function App({ routeMode = 'dashboard' }) {
     fetch('/api/collect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: '{}'
+      body: JSON.stringify({ reason: 'live-refresh' })
     })
       .then(async r => {
         const data = await r.json().catch(() => ({}));
@@ -192,7 +213,7 @@ export function App({ routeMode = 'dashboard' }) {
           throw new Error(data.error || data.stderr || `HTTP ${r.status}`);
         }
         setCollectStatus({ type: 'running', message: data.message || '正在采集本机用量…' });
-        return waitForCollectDone();
+        return waitForCollectDone({ refreshCoverage: true });
       })
       .catch(err => {
         setCollecting(false);
@@ -541,6 +562,8 @@ function Dashboard({
     models: new Set(),
     compare: true
   }));
+  const showImportedHistory = new URLSearchParams(window.location.search).get('imported') === '1';
+  const importedHistoryAppliedRef = useRef(false);
 
   const [trendMode, setTrendMode] = useState('stacked');
   const [drill, setDrill] = useState(null);
@@ -582,6 +605,19 @@ function Dashboard({
       endDate: dates[dates.length - 1] || U.daysAgo(0)
     };
   }, [M.daily]);
+
+  useEffect(() => {
+    if (!showImportedHistory || importedHistoryAppliedRef.current) return;
+    importedHistoryAppliedRef.current = true;
+    setFilters(current => ({
+      ...current,
+      rangeId: 'all',
+      startDate: availableRange.startDate,
+      endDate: availableRange.endDate,
+      startDateTime: `${availableRange.startDate}T00:00`,
+      endDateTime: `${availableRange.endDate}T23:59`
+    }));
+  }, [availableRange, showImportedHistory]);
   const taskTypes = M.meta?.taskTypes || ['未分类', '功能开发', '问题修复', '代码审查', '技术调研', '内容创作', '运维配置', '其他'];
   const outputStatuses = M.meta?.outputStatuses || ['未标注', '进行中', '已完成', '已发布', '已废弃'];
   const workPurposes = M.meta?.workPurposes || ['未说明', '需求澄清', '方案设计', '功能开发', '调试修复', '测试验证', '代码审查', '技术调研', '文档内容', '部署运维', '上下文整理', '其他'];
