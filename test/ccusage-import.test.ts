@@ -93,7 +93,7 @@ Ok to proceed? (y)
           "cacheReadTokens": 30
         }
       ],
-      "totalTokens": 155
+      "totalTokens": 150
     }
   ]
 }`);
@@ -108,6 +108,7 @@ Ok to proceed? (y)
   assert.equal(plan.daily[0].usageDate, '2026-06-01');
   assert.equal(plan.sessions[0].sessionId, '2026/05/22/rollout-test');
   assert.equal(plan.tokenEvents[0].reasoningTokens, 5);
+  assert.equal(plan.daily[0].totalTokens, 155);
 });
 
 test('ccusage apply is idempotent and dry-run plans do not write', () => {
@@ -128,6 +129,56 @@ test('ccusage apply is idempotent and dry-run plans do not write', () => {
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM token_events').get().count, 1);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM collection_runs WHERE source = ?').get('import:ccusage-json').count, 2);
   db.close();
+});
+
+test('ccusage session snapshots replace an older import instead of adding events', () => {
+  const db = tempDb();
+  const first = planCcusageImport({
+    type: 'session',
+    data: [{ agent: 'codex', session: 'growing-session', models: ['gpt-5.5'], inputTokens: 100, lastActivity: '2026-06-17T02:00:00Z' }]
+  }, { device: 'other-device' });
+  const second = planCcusageImport({
+    type: 'session',
+    data: [{ agent: 'codex', session: 'growing-session', models: ['gpt-5.5'], inputTokens: 150, lastActivity: '2026-06-17T03:00:00Z' }]
+  }, { device: 'other-device' });
+  const oldEventId = `ccusage:session:codex:2026-06-17:growing-session:gpt-5.5:2026-06-17T02:00:00.000Z`;
+  try {
+    applyCcusageImport(db, first);
+    db.prepare(`UPDATE token_events SET event_id = ?, source = 'codex' WHERE event_id = ?`)
+      .run(oldEventId, first.tokenEvents[0].eventId);
+
+    assert.equal(ccusageImportWouldChange(db, second), true);
+    applyCcusageImport(db, second);
+
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE device = 'other-device'`).get().count, 1);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE source = 'codex'`).get().count, 0);
+    assert.equal(db.prepare(`SELECT input_tokens AS inputTokens FROM token_events WHERE event_id = ?`)
+      .get(second.tokenEvents[0].eventId).inputTokens, 150);
+    assert.equal(db.prepare(`SELECT total_tokens AS totalTokens FROM daily_usage WHERE device = 'other-device'`)
+      .get().totalTokens, 150);
+    assert.equal(ccusageImportWouldChange(db, second), false);
+  } finally {
+    db.close();
+  }
+});
+
+test('ccusage import refuses to overwrite a native source on the same device', () => {
+  const db = tempDb();
+  const plan = planCcusageImport({
+    type: 'session',
+    data: [{ agent: 'claude', session: 'external-session', models: ['claude-sonnet-4'], inputTokens: 20, lastActivity: '2026-06-17T03:00:00Z' }]
+  }, { device: 'local-device' });
+  try {
+    db.prepare(`
+      INSERT INTO token_events (event_id, device, source, session_id, timestamp, model, input_tokens)
+      VALUES ('native-event', 'local-device', 'Claude Code', 'native-session', '2026-06-17T02:00:00.000Z', 'claude-sonnet-4', 10)
+    `).run();
+
+    assert.throws(() => applyCcusageImport(db, plan), /会覆盖设备“local-device”中的原生 Claude Code 数据/);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE device = 'local-device'`).get().count, 1);
+  } finally {
+    db.close();
+  }
 });
 
 test('ccusage migrates legacy generic Codex rows without duplicating imported usage', () => {
@@ -239,7 +290,7 @@ test('ccusage migration preserves labels attached to legacy unidentified session
   }
 });
 
-test('ccusage migration ignores non-Codex rows in mixed-source reports', () => {
+test('ccusage normalizes imported Claude rows without rewriting unrelated Codex rows', () => {
   const db = tempDb();
   const plan = planCcusageImport({
     type: 'session',
@@ -248,20 +299,32 @@ test('ccusage migration ignores non-Codex rows in mixed-source reports', () => {
       { agent: 'claude', session: 'claude-session', models: ['claude-sonnet-4'], inputTokens: 20, lastActivity: '2026-06-18T01:00:00Z' }
     ]
   }, { device: 'mixed-device' });
-  const claudeDaily = plan.daily.find(row => row.source === 'claude');
-  const claudeSession = plan.sessions.find(row => row.source === 'claude');
+  const claudeDaily = plan.daily.find(row => row.source === 'Claude Code');
+  const claudeSession = plan.sessions.find(row => row.source === 'Claude Code');
+  const claudeEvent = plan.tokenEvents.find(row => row.source === 'Claude Code');
   try {
     db.prepare(`INSERT INTO daily_usage (device, source, usage_date, model, total_tokens) VALUES (?, 'codex', ?, ?, 20)`)
       .run('mixed-device', claudeDaily.usageDate, claudeDaily.model);
     db.prepare(`INSERT INTO session_usage (device, source, session_id, model, total_tokens) VALUES (?, 'codex', ?, ?, 20)`)
       .run('mixed-device', claudeSession.sessionId, claudeSession.model);
+    db.prepare(`INSERT INTO daily_usage (device, source, usage_date, model, total_tokens) VALUES (?, 'claude', ?, ?, 20)`)
+      .run('mixed-device', claudeDaily.usageDate, claudeDaily.model);
+    db.prepare(`INSERT INTO session_usage (device, source, session_id, model, total_tokens) VALUES (?, 'claude', ?, ?, 20)`)
+      .run('mixed-device', claudeSession.sessionId, claudeSession.model);
+    db.prepare(`INSERT INTO token_events (event_id, device, source, session_id, timestamp, model, input_tokens) VALUES (?, ?, 'claude', ?, ?, ?, ?)`)
+      .run(claudeEvent.eventId.replace(':claude-code:', ':claude:'), 'mixed-device', claudeEvent.sessionId, claudeEvent.timestamp, claudeEvent.model, claudeEvent.inputTokens);
 
+    assert.equal(ccusageImportWouldChange(db, plan), true);
     applyCcusageImport(db, plan);
 
     assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM daily_usage WHERE device = 'mixed-device' AND source = 'codex' AND model = ?`)
       .get(claudeDaily.model).count, 1);
     assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM session_usage WHERE device = 'mixed-device' AND source = 'codex' AND session_id = ?`)
       .get(claudeSession.sessionId).count, 1);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM daily_usage WHERE device = 'mixed-device' AND source = 'claude'`).get().count, 0);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM session_usage WHERE device = 'mixed-device' AND source = 'claude'`).get().count, 0);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE device = 'mixed-device' AND source = 'claude'`).get().count, 0);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE device = 'mixed-device' AND source = 'Claude Code'`).get().count, 1);
   } finally {
     db.close();
   }

@@ -25,11 +25,11 @@ test('ccusage bridge command builder only emits explicit local CLI commands', ()
 test('ccusage JSON export command builder emits explicit saved JSON commands', () => {
   assert.equal(
     buildCcusageJsonExportCommand({ report: 'blocks' }),
-    'npx ccusage@latest blocks --json --no-cost > ccusage-blocks.json'
+    'npx --yes ccusage@latest blocks --json --no-cost > ccusage-blocks.json'
   );
   assert.equal(
     buildCcusageJsonExportCommand({ report: 'unknown' }),
-    'npx ccusage@latest session --json --no-cost > ccusage-session.json'
+    'npx --yes ccusage@latest session --json --no-cost > ccusage-session.json'
   );
 });
 

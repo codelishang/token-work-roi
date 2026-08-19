@@ -6,8 +6,8 @@ import { planCcusageImport } from '../src/ccusage-import.ts';
 test('ccusage bridge builds npx invocation with json and no-cost flags', () => {
   const invocation = ccusageInvocation({ report: 'daily' });
   assert.match(invocation.command, process.platform === 'win32' ? /npx\.cmd$/ : /npx$/);
-  assert.deepEqual(invocation.args, ['ccusage@latest', 'daily', '--json', '--no-cost']);
-  assert.equal(invocation.commandLabel, 'npx ccusage@latest daily --json --no-cost');
+  assert.deepEqual(invocation.args, ['--yes', 'ccusage@latest', 'daily', '--json', '--no-cost']);
+  assert.equal(invocation.commandLabel, 'npx --yes ccusage@latest daily --json --no-cost');
 });
 
 test('ccusage bridge accepts explicit binary and rejects unknown reports', () => {

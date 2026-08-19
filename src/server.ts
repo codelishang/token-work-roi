@@ -63,7 +63,7 @@ import { runPrivacyCheck } from './privacy-check.ts';
 import { buildModelPolicy, formatModelPolicyMarkdown } from './model-policy.ts';
 import { buildLiveSnapshot } from './live.ts';
 import { getUsdCnyExchangeRate } from './exchange-rate.ts';
-import { applyCcusageImport, parseCcusageJsonText, planCcusageImport } from './ccusage-import.ts';
+import { applyCcusageImport, assertCcusageImportCanApply, ccusageImportWouldChange, parseCcusageJsonText, planCcusageImport } from './ccusage-import.ts';
 import { buildSourceHealth } from './source-health.ts';
 import { buildProjectCoverage, buildReviewWorkflow } from './project-coverage.ts';
 import { buildCoverageBridge } from './coverage-bridge.ts';
@@ -1057,7 +1057,10 @@ async function handleImportCcusageJson(req, res) {
       run: plan.run
     };
     if (apply) {
-      const backup = createDbBackup({ reason: 'ccusage-import' });
+      assertCcusageImportCanApply(db, plan);
+      const backup = ccusageImportWouldChange(db, plan)
+        ? createDbBackup({ reason: 'ccusage-import' })
+        : null;
       summary.applied = applyCcusageImport(db, plan);
       summary.backup = backup;
     }
@@ -1202,9 +1205,9 @@ function startCollection({ reason = 'manual' } = {}) {
 
   child.on('close', complete);
   child.on('exit', code => {
-    // `close` normally follows `exit` immediately. Do not let an inherited
-    // stdio handle keep the scheduler blocked when a timed-out child is gone.
-    if (timedOut) setTimeout(() => complete(code), 250).unref?.();
+    // `close` normally follows `exit` immediately. An inherited stdio handle
+    // must not keep the collection state occupied after the child is gone.
+    setTimeout(() => complete(code), 250).unref?.();
   });
 
   return true;

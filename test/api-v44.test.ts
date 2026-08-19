@@ -91,11 +91,12 @@ test('ccusage import API dry-runs before explicit apply', async () => {
     assert.equal(after.daily.length, 1);
     assert.equal(after.sessions.length, 1);
 
-    await postJson(port, '/api/import/ccusage-json', {
+    const repeated = await postJson(port, '/api/import/ccusage-json', {
       payload,
       device: 'workstation-a',
       apply: true
     });
+    assert.equal(repeated.backup, null);
     const secondDevice = await postJson(port, '/api/import/ccusage-json', {
       payload,
       device: 'workstation-b',
@@ -130,4 +131,3 @@ async function postJson(port, path, body) {
   if (!response.ok) assert.fail(await response.text());
   return response.json();
 }
-
