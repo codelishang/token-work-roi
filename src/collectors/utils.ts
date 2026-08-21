@@ -51,6 +51,10 @@ export function normalizeModelForGrouping(modelId) {
     name = name.replace(/(?<=\d)\.(?=\d)/g, '-');
   }
 
+  if (['hy3-x', 'hy3_x', 'hunyuan-hy3-x', 'hunyuan_hy3_x'].includes(name)) {
+    return 'hy3';
+  }
+
   return name;
 }
 

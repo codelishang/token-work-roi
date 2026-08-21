@@ -53,7 +53,7 @@ const STABLE_ALIASES = new Map([
   ['qwen::qwen3-coder-flash', ['qwen3-coder-flash']],
   ['qwen::qwen-coder-plus', ['qwen-coder-plus']],
   ['qwen::qwen-coder-turbo', ['qwen-coder-turbo']],
-  ['tencent hunyuan::hy3', ['hy3', 'hy-3', 'hunyuan-hy3']]
+  ['tencent hunyuan::hy3', ['hy3', 'hy-3', 'hunyuan-hy3', 'hy3-x', 'hy3_x', 'hunyuan-hy3-x', 'hunyuan_hy3_x']]
 ]);
 const fetchedAt = new Date().toISOString();
 const previousModels = await readPreviousPricingModels(pricingCachePath);

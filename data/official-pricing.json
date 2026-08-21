@@ -727,7 +727,11 @@
       "aliases": [
         "hy3",
         "hy-3",
-        "hunyuan-hy3"
+        "hunyuan-hy3",
+        "hy3-x",
+        "hy3_x",
+        "hunyuan-hy3-x",
+        "hunyuan_hy3_x"
       ],
       "priced": true,
       "unavailableReason": null,

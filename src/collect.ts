@@ -331,9 +331,11 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
       && payload.sourceSummary.id === 'codex'
       && codexSourceMigrationWouldChange(db, payload));
     const deletesStoredUsage = storedUsageWouldBeDeleted(db, payloads);
-    const replacesWorkBuddyEvents = payloads.some(payload => workBuddyLegacyEventCopies(db, payload).length > 0);
+    const rebuildsWorkBuddyUsage = payloads.some(payload =>
+      workBuddyLegacyEventCopies(db, payload).length > 0 || workBuddyEventModelsWouldChange(db, payload)
+    );
     const protectedMutation = needsStoredUsageRepair || hasClaudePlaceholders
-      || hasCodexMigration || deletesStoredUsage || replacesWorkBuddyEvents;
+      || hasCodexMigration || deletesStoredUsage || rebuildsWorkBuddyUsage;
     const shouldBackup = protectedMutation || tokenUsageWouldChange(db, payloads);
     summary.backup = shouldBackup
       ? createSqliteBackup(db, dbPath, scheduled
@@ -391,6 +393,7 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
       });
       runInTransaction(db, () => {
         const removedWorkBuddyEvents = removeWorkBuddyLegacyEventCopies(db, payload);
+        const rebuildWorkBuddy = removedWorkBuddyEvents > 0 || workBuddyEventModelsWouldChange(db, payload);
         applyEventReconciliation(db, payload);
         dailyRows.forEach(row => upsertDaily(db, row));
         sessionRows.forEach(row => upsertSession(db, row));
@@ -404,7 +407,7 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
           }
           upsertTokenEvent(db, row);
         }
-        if (removedWorkBuddyEvents > 0) {
+        if (rebuildWorkBuddy) {
           rebuildWorkBuddyUsage(db, payload, pricingData);
         }
         recordCollectionRun(db, run, scheduled);
@@ -459,6 +462,19 @@ function workBuddyLegacyEventCopies(db, payload) {
     .filter(row => expectedByFingerprint.has(workBuddyEventFingerprint(row)))
     .filter(row => !expectedByFingerprint.get(workBuddyEventFingerprint(row)).has(row.eventId))
     .map(row => row.eventId);
+}
+
+function workBuddyEventModelsWouldChange(db, payload) {
+  if (payload.type !== 'data' || payload.sourceSummary.id !== 'workbuddy') return false;
+  const existing = db.prepare(`
+    SELECT model FROM token_events
+    WHERE event_id = ? AND device = ? AND source = ?
+    LIMIT 1
+  `);
+  return payload.eventRows.some(row => {
+    const stored = existing.get(row.eventId, row.device, row.source);
+    return stored && stored.model !== row.model;
+  });
 }
 
 function workBuddyEventFingerprint(row) {

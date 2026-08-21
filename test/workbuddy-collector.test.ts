@@ -203,6 +203,26 @@ test('WorkBuddy resolves auto mode from a unique trace model', async () => {
   }
 });
 
+test('WorkBuddy groups Hy3-X traces under Hy3', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'token-work-wb-hy3-'));
+  const tracesDir = join(baseDir, 'traces');
+  const sessionsDir = join(baseDir, 'sessions');
+  const { dir, configPath } = makeConfig(tracesDir, sessionsDir);
+  makeTraceFile(tracesDir, 12356, 'trace_hy3_001', [
+    makeGenerationSpan('span_hy3_001', null, 'hy3-x', { prompt_tokens: 100, completion_tokens: 20 })
+  ], null);
+
+  process.env.TOKEN_WORK_CONFIG = configPath;
+  resetConfigCache();
+  try {
+    assert.equal((await collect()).tokenEvents[0].model, 'hy3');
+  } finally {
+    delete process.env.TOKEN_WORK_CONFIG;
+    rmSync(baseDir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('WorkBuddy resolves auto mode from its local session metadata', async () => {
   const baseDir = mkdtempSync(join(tmpdir(), 'token-work-wb-db-model-'));
   const tracesDir = join(baseDir, 'traces');
