@@ -110,7 +110,7 @@ npx token-work import-usage --format=ccusage-json --file ccusage.json --device o
 npx token-work import-usage --format=ccusage-json --file ccusage.json --device other-computer --apply --yes
 ```
 
-`--device` 用于区分不同电脑，同一台电脑应始终使用相同名称。导入时忽略外部文件中的成本字段，统一按元衡的官方价格表重新计算。包含对话正文、prompt 或 response 的数据会被拒绝。
+`--device` 用于区分不同电脑，同一台电脑应始终使用相同名称。一个设备和来源只使用一种 ccusage 报告格式，建议使用 `session`；混用 `daily`、`session` 等汇总视图可能重复统计，软件会拒绝写入。导入时忽略外部文件中的成本字段，统一按元衡的官方价格表重新计算。包含对话正文、prompt 或 response 的数据会被拒绝。
 
 ## 桌面小窗
 

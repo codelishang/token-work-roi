@@ -67,6 +67,40 @@ test('ccusage import supports session, blocks and monthly reports', () => {
   }
 });
 
+test('ccusage model breakdowns do not repeat a session total for each model', () => {
+  const plan = planCcusageImport({
+    type: 'session',
+    data: [{
+      agent: 'codex',
+      session: 'multi-model',
+      modelsUsed: ['gpt-5.5', 'gpt-5.6'],
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 120,
+      lastActivity: '2026-06-17T02:00:00Z',
+      modelBreakdowns: [
+        { modelName: 'gpt-5.5', inputTokens: 50, outputTokens: 10 },
+        { modelName: 'gpt-5.6', inputTokens: 50, outputTokens: 10 }
+      ]
+    }]
+  }, { device: 'test-device' });
+
+  assert.equal(plan.daily.length, 2);
+  assert.deepEqual(plan.daily.map(row => row.totalTokens), [60, 60]);
+  assert.equal(plan.daily.reduce((sum, row) => sum + row.totalTokens, 0), 120);
+  assert.throws(() => planCcusageImport({
+    type: 'session',
+    data: [{
+      agent: 'codex', session: 'incomplete-breakdown', totalTokens: 121,
+      lastActivity: '2026-06-17T02:00:00Z',
+      modelBreakdowns: [
+        { modelName: 'gpt-5.5', inputTokens: 50, outputTokens: 10 },
+        { modelName: 'gpt-5.6', inputTokens: 50, outputTokens: 10 }
+      ]
+    }]
+  }, { device: 'test-device' }), /modelBreakdowns totals cannot be reconciled/);
+});
+
 test('ccusage import supports top-level session report with npx preamble', () => {
   const payload = parseCcusageJsonText(`[npm] notice
 Need to install the following packages:
@@ -157,6 +191,151 @@ test('ccusage session snapshots replace an older import instead of adding events
     assert.equal(db.prepare(`SELECT total_tokens AS totalTokens FROM daily_usage WHERE device = 'other-device'`)
       .get().totalTokens, 150);
     assert.equal(ccusageImportWouldChange(db, second), false);
+  } finally {
+    db.close();
+  }
+});
+
+test('ccusage session snapshots remove models absent from the latest breakdown', () => {
+  const db = tempDb();
+  const makePlan = (modelBreakdowns, totalTokens) => planCcusageImport({
+    type: 'session',
+    data: [{
+      agent: 'codex',
+      session: 'model-change',
+      inputTokens: totalTokens,
+      totalTokens,
+      lastActivity: '2026-06-17T02:00:00Z',
+      modelBreakdowns
+    }]
+  }, { device: 'other-device' });
+  const first = makePlan([
+    { modelName: 'gpt-5.5', inputTokens: 100 },
+    { modelName: 'gpt-5.6', inputTokens: 50 }
+  ], 150);
+  const second = makePlan([
+    { modelName: 'gpt-5.5', inputTokens: 120 }
+  ], 120);
+  try {
+    applyCcusageImport(db, first);
+    assert.equal(ccusageImportWouldChange(db, second), true);
+
+    applyCcusageImport(db, second);
+
+    assert.deepEqual(db.prepare(`
+      SELECT model FROM token_events
+      WHERE device = 'other-device' ORDER BY model
+    `).all().map(row => ({ ...row })), [{ model: 'gpt-5.5' }]);
+    assert.deepEqual(db.prepare(`
+      SELECT model, total_tokens AS totalTokens FROM daily_usage
+      WHERE device = 'other-device' ORDER BY model
+    `).all().map(row => ({ ...row })), [{ model: 'gpt-5.5', totalTokens: 120 }]);
+    assert.equal(ccusageImportWouldChange(db, second), false);
+  } finally {
+    db.close();
+  }
+});
+
+test('ccusage snapshot cleanup keeps another China Standard Time daily contribution', () => {
+  const db = tempDb();
+  const first = planCcusageImport({
+    type: 'session',
+    data: [
+      {
+        agent: 'codex', session: 'replaced-session', models: ['gpt-5.5'],
+        inputTokens: 100, lastActivity: '2026-06-17T20:30:00.000Z'
+      },
+      {
+        agent: 'codex', session: 'retained-session', models: ['gpt-5.5'],
+        inputTokens: 40, lastActivity: '2026-06-17T20:45:00.000Z'
+      }
+    ]
+  }, { device: 'other-device' });
+  const refreshed = planCcusageImport({
+    type: 'session',
+    data: [{
+      agent: 'codex', session: 'replaced-session', models: ['gpt-5.6'],
+      inputTokens: 80, lastActivity: '2026-06-17T20:50:00.000Z'
+    }]
+  }, { device: 'other-device' });
+
+  try {
+    applyCcusageImport(db, first);
+    applyCcusageImport(db, refreshed);
+
+    assert.deepEqual(db.prepare(`
+      SELECT model, total_tokens AS totalTokens
+      FROM daily_usage
+      WHERE device = 'other-device' AND usage_date = '2026-06-18'
+      ORDER BY model
+    `).all().map(row => ({ ...row })), [
+      { model: 'gpt-5.5', totalTokens: 40 },
+      { model: 'gpt-5.6', totalTokens: 80 }
+    ]);
+  } finally {
+    db.close();
+  }
+});
+
+test('ccusage imports use China Standard Time and migrate legacy UTC daily rows', () => {
+  const db = tempDb();
+  const plan = planCcusageImport({
+    type: 'session',
+    data: [{
+      agent: 'codex',
+      session: 'cst-boundary',
+      models: ['gpt-5.5'],
+      inputTokens: 10,
+      lastActivity: '2026-06-17T20:30:00.000Z'
+    }]
+  }, { device: 'other-device' });
+  const event = plan.tokenEvents[0];
+  try {
+    assert.equal(plan.daily[0].usageDate, '2026-06-18');
+    db.prepare(`
+      INSERT INTO daily_usage (device, source, usage_date, model, input_tokens, total_tokens)
+      VALUES (?, ?, '2026-06-17', ?, 10, 10)
+    `).run(event.device, event.source, event.model);
+    db.prepare(`
+      INSERT INTO token_events (
+        event_id, device, source, session_id, timestamp, model, input_tokens,
+        tool_category, privacy_level
+      ) VALUES (?, ?, ?, ?, ?, ?, 10, ?, 'safe')
+    `).run(
+      event.eventId, event.device, event.source, event.sessionId,
+      event.timestamp, event.model, event.toolCategory
+    );
+
+    applyCcusageImport(db, plan);
+
+    assert.deepEqual(db.prepare(`
+      SELECT usage_date AS usageDate, total_tokens AS totalTokens
+      FROM daily_usage WHERE device = 'other-device' ORDER BY usage_date
+    `).all().map(row => ({ ...row })), [{ usageDate: '2026-06-18', totalTokens: 10 }]);
+    assert.equal(ccusageImportWouldChange(db, plan), false);
+  } finally {
+    db.close();
+  }
+});
+
+test('ccusage import rejects a second report shape for the same source and device', () => {
+  const db = tempDb();
+  const daily = planCcusageImport({
+    daily: [{ date: '2026-06-17', agent: 'codex', models: ['gpt-5.5'], inputTokens: 100 }]
+  }, { device: 'other-device' });
+  const session = planCcusageImport({
+    type: 'session',
+    data: [{ agent: 'codex', session: 'same-usage', models: ['gpt-5.5'], inputTokens: 100, lastActivity: '2026-06-17T02:00:00Z' }]
+  }, { device: 'other-device' });
+  try {
+    applyCcusageImport(db, daily);
+
+    assert.throws(
+      () => applyCcusageImport(db, session),
+      /混合报告格式可能重复统计/
+    );
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE device = 'other-device'`).get().count, 1);
+    assert.equal(db.prepare(`SELECT total_tokens AS totalTokens FROM daily_usage WHERE device = 'other-device'`).get().totalTokens, 100);
   } finally {
     db.close();
   }

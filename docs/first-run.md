@@ -72,7 +72,7 @@ npx token-work import-usage --format=ccusage-json --file ccusage.json --device o
 npx token-work import-usage --format=ccusage-json --file ccusage.json --device other-computer --apply --yes
 ```
 
-`--device` 用于区分来源电脑，同一台电脑重复导入时应使用相同名称。导入使用 `device + source + session_id` 去重。外部成本字段会被忽略，费用由元衡重新计算。
+`--device` 用于区分来源电脑，同一台电脑重复导入时应使用相同名称。导入使用 `device + source + session_id` 去重。一个设备和来源只使用一种 ccusage 报告格式，建议使用 `session`；混用 `daily`、`session` 等汇总视图可能重复统计，软件会拒绝写入。外部成本字段会被忽略，费用由元衡重新计算。
 
 ## 5. 设置预算
 

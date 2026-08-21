@@ -91,6 +91,8 @@ test('scheduled pricing refresh reuses the main pricing files on test', () => {
   assert.match(workflow, /update-pricing-test:[\s\S]+needs: update-pricing-main/);
   assert.match(workflow, /git fetch origin main --depth=1/);
   assert.match(workflow, /git checkout FETCH_HEAD -- src\/pricing\.ts data\/official-pricing\.json test\/official-pricing\.test\.ts/);
+  const pricingCommitPattern = /file_pattern: "src\/pricing\.ts data\/official-pricing\.json test\/official-pricing\.test\.ts"/g;
+  assert.equal([...workflow.matchAll(pricingCommitPattern)].length, 2);
   assert.match(workflow, /if: github\.event_name == 'workflow_dispatch'[\s\S]+run: npm run pricing:update/);
   assert.match(workflow, /concurrency:[\s\S]+group: update-pricing[\s\S]+cancel-in-progress: false/);
   assert.match(workflow, /run: npm run test:pricing/);

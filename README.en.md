@@ -110,7 +110,7 @@ After checking the source, date, and token totals, apply it:
 npx token-work import-usage --format=ccusage-json --file ccusage.json --device other-computer --apply --yes
 ```
 
-Use one stable `--device` name per computer so records remain separate. Imported cost fields are ignored. Token Work ROI recalculates cost from its official pricing table. Data containing conversation text, prompts, or responses is rejected.
+Use one stable `--device` name per computer so records remain separate. Use one ccusage report shape per device and source; `session` is recommended. Mixing aggregate views such as `daily` and `session` can double-count usage, so Token Work ROI rejects it. Imported cost fields are ignored. Token Work ROI recalculates cost from its official pricing table. Data containing conversation text, prompts, or responses is rejected.
 
 ## Desktop Window
 
