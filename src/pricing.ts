@@ -511,7 +511,7 @@ export const OFFICIAL_PRICE_TABLE = [
   officialRate({
     provider: "Tencent Hunyuan",
     model: "hy3",
-    aliases: ["hy3", "hy-3", "hunyuan-hy3"],
+    aliases: ["hy3", "hy-3", "hunyuan-hy3", "hy3-x", "hy3_x", "hunyuan-hy3-x", "hunyuan_hy3_x"],
     input: 0.14807908844882414,
     cachedInput: 0.037019772112206036,
     cacheWrite5m: 0.14807908844882414,

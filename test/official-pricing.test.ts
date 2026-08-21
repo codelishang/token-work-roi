@@ -273,6 +273,7 @@ test('calculates Tencent TokenHub Hy3 price from official RMB rates', () => {
     cacheWrite1h: 1
   });
   assert.ok(Math.abs(cost.totalUSD - (1 + 0.25 + 4) / rate.officialRatesPerMTok.exchangeRate) < 1e-12);
+  assert.equal(calculateOfficialCost('hy3-x', {}, { pricingData: pricingCache }).resolvedModel, 'hy3');
 });
 
 test('calculates Alibaba Cloud official prices for Qwen3.8 and MiniMax-M3', () => {

@@ -168,6 +168,37 @@ test('collect replaces transient WorkBuddy event identities without adding token
   }
 });
 
+test('WorkBuddy model correction rebuilds the affected daily usage', async () => {
+  const fixture = createWorkBuddyIdentityFixture();
+  try {
+    const first = await runNode([
+      'src/collect.ts', '--sources=workbuddy', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], fixture.env);
+    assert.equal(first.code, 0, first.stderr);
+
+    const trace = JSON.parse(readFileSync(fixture.tracePath, 'utf8'));
+    trace.trace.modelInfo.models = ['hy3-x'];
+    writeFileSync(fixture.tracePath, JSON.stringify(trace), 'utf8');
+
+    const refreshed = await runNode([
+      'src/collect.ts', '--sources=workbuddy', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], { ...fixture.env, TOKEN_WORK_COLLECT_REASON: 'scheduled', TOKEN_WORK_SCHEDULED_INCREMENTAL: '1' });
+    assert.equal(refreshed.code, 0, refreshed.stderr);
+
+    const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+    try {
+      assert.deepEqual(db.prepare(`
+        SELECT model, total_tokens AS totalTokens FROM daily_usage
+        WHERE source = 'WorkBuddy'
+      `).all().map(row => ({ ...row })), [{ model: 'hy3', totalTokens: 120 }]);
+    } finally {
+      db.close();
+    }
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
 test('scheduled WorkBuddy collection updates only changed traces without losing a similarly named trace', async () => {
   const fixture = createWorkBuddyIdentityFixture();
   try {
