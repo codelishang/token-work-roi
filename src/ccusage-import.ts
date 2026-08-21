@@ -20,6 +20,7 @@ const GENERIC_CODEX_SOURCE = 'Codex';
 const LEGACY_UNKNOWN_CODEX_SOURCE = 'Codex (unidentified client)';
 const CLAUDE_CODE_SOURCE = 'Claude Code';
 const LEGACY_CLAUDE_SOURCE = 'claude';
+const CHINA_TIME_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 interface ImportOptions {
   device?: string;
@@ -75,6 +76,7 @@ export function planCcusageImport(payload, options: ImportOptions = {}) {
 
   for (const row of rows) {
     const parts = expandModelBreakdowns(row);
+    assertBreakdownTotals(row, parts);
     for (const part of parts) {
       const source = sourceFromRow(part);
       const usageDate = usageDateFromRow(part);
@@ -137,6 +139,8 @@ export function planCcusageImport(payload, options: ImportOptions = {}) {
         cacheReadTokens: tokens.cacheReadTokens,
         cacheCreationTokens: tokens.cacheCreationTokens,
         reasoningTokens: tokens.reasoningOutputTokens,
+        totalTokens: tokens.totalTokens,
+        costUSD: cost.totalUSD,
         toolCategory,
         privacyLevel: 'safe'
       };
@@ -170,6 +174,8 @@ export function applyCcusageImport(db, plan) {
     migrateLegacyClaudeImport(db, plan);
     migrateLegacySnapshotSources(db, plan);
     migrateLegacySnapshotEvents(db, plan);
+    migrateLegacyCcusageUtcDailyUsage(db, plan);
+    const staleSnapshotEvents = removeStaleCcusageSnapshotEvents(db, plan);
     for (const row of plan.daily) upsertDaily(db, row);
     for (const row of plan.sessions) upsertSession(db, row);
     for (const row of plan.tokenEvents) {
@@ -181,6 +187,7 @@ export function applyCcusageImport(db, plan) {
         removeAppliedLegacyClaudeEvent(db, row, applied.eventId);
       }
     }
+    removeStaleCcusageDailyUsage(db, plan, staleSnapshotEvents);
     recordRun(db, plan.run);
     db.exec('COMMIT');
   } catch (error) {
@@ -209,8 +216,27 @@ export function assertCcusageImportCanApply(db, plan) {
   const targets = new Set<string>(plan.tokenEvents.map(row => `${row.device}\0${row.source}`));
   for (const target of targets) {
     const [device, source] = target.split('\0');
-    if (!nativeRun.get(device, source) && !nativeEvent.get(device, source)) continue;
-    throw new Error(`ccusage 导入会覆盖设备“${device}”中的原生 ${source} 数据；请为外部电脑使用不同的 --device 名称。`);
+    if (nativeRun.get(device, source) || nativeEvent.get(device, source)) {
+      throw new Error(`ccusage 导入会覆盖设备“${device}”中的原生 ${source} 数据；请为外部电脑使用不同的 --device 名称。`);
+    }
+    assertCcusageReportShapeIsConsistent(db, plan.detectedShape, device, source);
+  }
+}
+
+function assertCcusageReportShapeIsConsistent(db, shape, device, source) {
+  const sources = [source, ...legacySourcesFor(source)];
+  const placeholders = sources.map(() => '?').join(', ');
+  const rows = db.prepare(`
+    SELECT event_id AS eventId
+    FROM token_events
+    WHERE device = ? AND source IN (${placeholders}) AND event_id LIKE 'ccusage:%'
+  `).all(device, ...sources);
+  const existing = new Set(rows
+    .map(row => /^ccusage:([^:]+):/.exec(row.eventId)?.[1])
+    .filter(Boolean));
+  const conflicting = [...existing].filter(existingShape => existingShape !== shape);
+  if (conflicting.length) {
+    throw new Error(`设备“${device}”中的 ${source} 已导入 ${conflicting.join('、')} 格式的 ccusage 快照；混合报告格式可能重复统计。请继续使用同一种报告格式，或指定新的 --device 名称。`);
   }
 }
 
@@ -219,6 +245,7 @@ export function ccusageImportWouldChange(db, plan) {
   if (legacyClaudeImportWouldChange(db, plan)) return true;
   if (legacySnapshotSourcesWouldChange(db, plan)) return true;
   if (legacySnapshotEventsWouldChange(db, plan)) return true;
+  if (hasStaleCcusageSnapshotEvents(db, plan)) return true;
   const daily = db.prepare(`
     SELECT 1 FROM daily_usage
     WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
@@ -337,25 +364,54 @@ function expandModelBreakdowns(row) {
   if (Array.isArray(breakdown)) {
     const usable = breakdown.filter(item => item && typeof item === 'object' && hasTokenField(item));
     if (!usable.length) return [{ ...row, model: primaryModel(row) }];
-    return usable.map((item, index) => ({
-      ...row,
-      ...inputRecord(item),
-      model: item.model || item.modelName || primaryModel(row, index)
-    }));
+    return usable.map((item, index) => breakdownPart(row, item, primaryModel(row, index), usable.length > 1));
   }
 
   if (typeof breakdown === 'object') {
     const usable = Object.entries(breakdown)
       .filter(([, item]) => item && typeof item === 'object' && hasTokenField(item));
     if (!usable.length) return [{ ...row, model: primaryModel(row) }];
-    return usable.map(([model, item]) => ({
-      ...row,
-      ...inputRecord(item),
-      model
-    }));
+    return usable.map(([model, item]) => breakdownPart(row, item, model, usable.length > 1));
   }
 
   return [{ ...row, model: primaryModel(row) }];
+}
+
+function breakdownPart(row, item, fallbackModel, removeAggregateTokens) {
+  const shared = removeAggregateTokens ? withoutAggregateTokenFields(row) : row;
+  return {
+    ...shared,
+    ...inputRecord(item),
+    model: item.model || item.modelName || fallbackModel
+  };
+}
+
+function withoutAggregateTokenFields(row) {
+  const copy = { ...row };
+  for (const key of [
+    'inputTokens', 'input_tokens', 'input',
+    'outputTokens', 'output_tokens', 'output',
+    'cacheCreationTokens', 'cacheCreationInputTokens', 'cache_creation_tokens', 'cacheWriteTokens',
+    'cacheReadTokens', 'cacheReadInputTokens', 'cache_read_tokens', 'cachedInputTokens',
+    'reasoningTokens', 'reasoningOutputTokens', 'reasoning_output_tokens',
+    'totalTokens', 'total_tokens'
+  ]) {
+    delete copy[key];
+  }
+  const metadata = inputRecord(copy.metadata);
+  delete metadata.reasoningTokens;
+  delete metadata.reasoningOutputTokens;
+  copy.metadata = metadata;
+  return copy;
+}
+
+function assertBreakdownTotals(row, parts) {
+  if (parts.length < 2) return;
+  const parent = tokenFields(row).totalTokens;
+  const breakdown = parts.reduce((sum, part) => sum + tokenFields(part).totalTokens, 0);
+  if (parent !== breakdown) {
+    throw new Error('ccusage modelBreakdowns totals cannot be reconciled; export a report with complete per-model token fields.');
+  }
 }
 
 function inputRecord(value: unknown): Record<string, unknown> {
@@ -415,7 +471,12 @@ function hasTokenField(row) {
     'cacheCreationInputTokens',
     'cacheReadTokens',
     'cacheReadInputTokens',
+    'cachedInputTokens',
+    'cached_input_tokens',
+    'cacheWriteTokens',
     'reasoningTokens',
+    'reasoningOutputTokens',
+    'reasoning_output_tokens',
     'totalTokens',
     'total_tokens'
   ].some(key => row[key] != null);
@@ -497,6 +558,219 @@ function migrateLegacySnapshotEvents(db, plan) {
   `);
   for (const row of plan.tokenEvents) {
     remove.run(row.device, row.source, row.sessionId, row.model, row.eventId);
+  }
+}
+
+function migrateLegacyCcusageUtcDailyUsage(db, plan) {
+  const dailyByKey = new Map<string, any>(plan.daily.map(row => [
+    `${row.device}\0${row.source}\0${row.usageDate}\0${row.model}`,
+    row
+  ]));
+  const storedEvent = db.prepare(`
+    SELECT input_tokens AS inputTokens, output_tokens AS outputTokens,
+      cache_read_tokens AS cacheReadTokens, cache_creation_tokens AS cacheCreationTokens,
+      reasoning_tokens AS reasoningTokens
+    FROM token_events
+    WHERE device = ? AND source = ? AND session_id = ? AND model = ?
+      AND event_id LIKE 'ccusage:%'
+    LIMIT 1
+  `);
+  const matchingDaily = db.prepare(`
+    SELECT 1 FROM daily_usage
+    WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
+      AND input_tokens = ? AND output_tokens = ?
+      AND cache_creation_tokens = ? AND cache_read_tokens = ?
+      AND cached_input_tokens = ? AND reasoning_output_tokens = ?
+      AND total_tokens = ? AND cost_usd = ?
+  `);
+  const legacyByDaily = new Map();
+
+  for (const row of plan.tokenEvents) {
+    const oldUsageDate = formatUtcDate(new Date(row.timestamp));
+    const newUsageDate = formatDate(new Date(row.timestamp));
+    if (oldUsageDate === newUsageDate) continue;
+    const planned = dailyByKey.get(`${row.device}\0${row.source}\0${newUsageDate}\0${row.model}`);
+    if (!planned || matchingDaily.get(
+      planned.device, planned.source, planned.usageDate, planned.model,
+      planned.inputTokens, planned.outputTokens, planned.cacheCreationTokens, planned.cacheReadTokens,
+      planned.cachedInputTokens || 0, planned.reasoningOutputTokens, planned.totalTokens, planned.costUSD
+    )) continue;
+
+    const stored = storedEvent.get(row.device, row.source, row.sessionId, row.model);
+    if (!stored) continue;
+    const key = `${row.device}\0${row.source}\0${oldUsageDate}\0${row.model}`;
+    const legacy = legacyByDaily.get(key) || {
+      device: row.device,
+      source: row.source,
+      usageDate: oldUsageDate,
+      model: row.model,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      reasoningOutputTokens: 0,
+      costUSD: 0
+    };
+    legacy.inputTokens += stored.inputTokens || 0;
+    legacy.outputTokens += stored.outputTokens || 0;
+    legacy.cacheCreationTokens += stored.cacheCreationTokens || 0;
+    legacy.cacheReadTokens += stored.cacheReadTokens || 0;
+    legacy.reasoningOutputTokens += stored.reasoningTokens || 0;
+    legacy.costUSD += calculateOfficialCost(row.model, {
+      input: stored.inputTokens,
+      output: stored.outputTokens,
+      cacheRead: stored.cacheReadTokens,
+      cacheWrite: stored.cacheCreationTokens,
+      reasoning: stored.reasoningTokens
+    }, { provider: providerFromSource(row.source) }).totalUSD;
+    legacyByDaily.set(key, legacy);
+  }
+
+  subtractDailyUsage(db, [...legacyByDaily.values()]);
+}
+
+function removeStaleCcusageSnapshotEvents(db, plan) {
+  if (plan.detectedShape !== 'session') return [];
+  const currentModelsBySession = new Map();
+  for (const row of plan.tokenEvents) {
+    const key = `${row.device}\0${row.source}\0${row.sessionId}`;
+    const models = currentModelsBySession.get(key) || new Set();
+    models.add(row.model);
+    currentModelsBySession.set(key, models);
+  }
+
+  const find = db.prepare(`
+    SELECT event_id AS eventId, device, source, session_id AS sessionId, timestamp, model,
+      input_tokens AS inputTokens, output_tokens AS outputTokens,
+      cache_read_tokens AS cacheReadTokens, cache_creation_tokens AS cacheCreationTokens,
+      reasoning_tokens AS reasoningTokens
+    FROM token_events
+    WHERE device = ? AND source = ? AND session_id = ?
+      AND event_id LIKE 'ccusage:session:%'
+  `);
+  const remove = db.prepare(`
+    DELETE FROM token_events
+    WHERE event_id = ? AND device = ? AND source = ?
+  `);
+  const stale = [];
+  for (const [key, models] of currentModelsBySession) {
+    const [device, source, sessionId] = key.split('\0');
+    for (const row of find.all(device, source, sessionId)) {
+      if (models.has(row.model)) continue;
+      remove.run(row.eventId, row.device, row.source);
+      stale.push(row);
+    }
+  }
+  return stale;
+}
+
+function hasStaleCcusageSnapshotEvents(db, plan) {
+  if (plan.detectedShape !== 'session') return false;
+  const currentModelsBySession = new Map();
+  for (const row of plan.tokenEvents) {
+    const key = `${row.device}\0${row.source}\0${row.sessionId}`;
+    const models = currentModelsBySession.get(key) || new Set();
+    models.add(row.model);
+    currentModelsBySession.set(key, models);
+  }
+  const find = db.prepare(`
+    SELECT model
+    FROM token_events
+    WHERE device = ? AND source = ? AND session_id = ?
+      AND event_id LIKE 'ccusage:session:%'
+  `);
+  for (const [key, models] of currentModelsBySession) {
+    const [device, source, sessionId] = key.split('\0');
+    if (find.all(device, source, sessionId).some(row => !models.has(row.model))) return true;
+  }
+  return false;
+}
+
+function removeStaleCcusageDailyUsage(db, plan, staleEvents) {
+  if (!staleEvents.length) return;
+  const plannedDaily = new Set(plan.daily.map(row => `${row.device}\0${row.source}\0${row.usageDate}\0${row.model}`));
+  const staleByDaily = new Map();
+  for (const row of staleEvents) {
+    const usageDate = formatDate(new Date(row.timestamp));
+    const key = `${row.device}\0${row.source}\0${usageDate}\0${row.model}`;
+    const existing = staleByDaily.get(key) || {
+      device: row.device,
+      source: row.source,
+      usageDate,
+      model: row.model,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      reasoningOutputTokens: 0,
+      costUSD: 0
+    };
+    existing.inputTokens += row.inputTokens || 0;
+    existing.outputTokens += row.outputTokens || 0;
+    existing.cacheCreationTokens += row.cacheCreationTokens || 0;
+    existing.cacheReadTokens += row.cacheReadTokens || 0;
+    existing.reasoningOutputTokens += row.reasoningTokens || 0;
+    existing.costUSD += calculateOfficialCost(row.model, {
+      input: row.inputTokens,
+      output: row.outputTokens,
+      cacheRead: row.cacheReadTokens,
+      cacheWrite: row.cacheCreationTokens,
+      reasoning: row.reasoningTokens
+    }, { provider: providerFromSource(row.source) }).totalUSD;
+    staleByDaily.set(key, existing);
+  }
+
+  const remaining = db.prepare(`
+    SELECT 1 FROM token_events
+    WHERE device = ? AND source = ? AND model = ? AND date(timestamp) = ?
+    LIMIT 1
+  `);
+  const remove = db.prepare(`
+    DELETE FROM daily_usage
+    WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
+  `);
+  const subtractRows = [];
+  for (const [key, row] of staleByDaily) {
+    if (plannedDaily.has(key)) continue;
+    if (!remaining.get(row.device, row.source, row.model, row.usageDate)) {
+      remove.run(row.device, row.source, row.usageDate, row.model);
+      continue;
+    }
+    subtractRows.push(row);
+  }
+  subtractDailyUsage(db, subtractRows);
+}
+
+function subtractDailyUsage(db, rows) {
+  const subtract = db.prepare(`
+    UPDATE daily_usage
+    SET input_tokens = MAX(0, input_tokens - ?),
+      output_tokens = MAX(0, output_tokens - ?),
+      cache_creation_tokens = MAX(0, cache_creation_tokens - ?),
+      cache_read_tokens = MAX(0, cache_read_tokens - ?),
+      reasoning_output_tokens = MAX(0, reasoning_output_tokens - ?),
+      total_tokens = MAX(0, total_tokens - ?),
+      cost_usd = MAX(0, cost_usd - ?),
+      updated_at = datetime('now')
+    WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
+  `);
+  const removeEmpty = db.prepare(`
+    DELETE FROM daily_usage
+    WHERE device = ? AND source = ? AND usage_date = ? AND model = ?
+      AND input_tokens = 0 AND output_tokens = 0
+      AND cache_creation_tokens = 0 AND cache_read_tokens = 0
+      AND cached_input_tokens = 0 AND reasoning_output_tokens = 0
+      AND total_tokens = 0
+  `);
+  for (const row of rows) {
+    const totalTokens = row.inputTokens + row.outputTokens + row.cacheCreationTokens
+      + row.cacheReadTokens + row.reasoningOutputTokens;
+    subtract.run(
+      row.inputTokens, row.outputTokens, row.cacheCreationTokens, row.cacheReadTokens,
+      row.reasoningOutputTokens, totalTokens, row.costUSD || 0,
+      row.device, row.source, row.usageDate, row.model
+    );
+    removeEmpty.run(row.device, row.source, row.usageDate, row.model);
   }
 }
 
@@ -776,6 +1050,10 @@ function parseDate(value) {
 }
 
 function formatDate(date) {
+  return formatUtcDate(new Date(date.getTime() + CHINA_TIME_OFFSET_MS));
+}
+
+function formatUtcDate(date) {
   return [
     date.getUTCFullYear(),
     String(date.getUTCMonth() + 1).padStart(2, '0'),

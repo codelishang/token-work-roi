@@ -52,7 +52,7 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v6
         with:
           commit_message: "chore: refresh official model pricing"
-          file_pattern: "src/pricing.ts data/official-pricing.json"
+          file_pattern: "src/pricing.ts data/official-pricing.json test/official-pricing.test.ts"
 
   update-pricing-test:
     name: Refresh official model pricing (test)
@@ -96,4 +96,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v6
         with:
           commit_message: "chore: refresh official model pricing"
-          file_pattern: "src/pricing.ts data/official-pricing.json"
+          file_pattern: "src/pricing.ts data/official-pricing.json test/official-pricing.test.ts"
