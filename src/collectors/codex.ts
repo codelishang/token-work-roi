@@ -198,7 +198,7 @@ async function parseSessionFile(filePath, sessionId, inheritedTotal = null, mini
     const lines = tailBytes > 0 ? text.split('\n') : streamSessionLines(filePath);
     for await (const raw of lines) {
       const line = raw.trim();
-      if (!line) continue;
+      if (!isRelevantSessionLine(line)) continue;
 
       let entry;
       try { entry = JSON.parse(line); } catch { continue; }
@@ -299,8 +299,14 @@ async function parseSessionFile(filePath, sessionId, inheritedTotal = null, mini
   return events;
 }
 
+function isRelevantSessionLine(line) {
+  if (!line) return false;
+  if (line.includes('"session_meta"') || line.includes('"turn_context"')) return true;
+  return line.includes('"event_msg"') && line.includes('"token_count"');
+}
+
 async function* streamSessionLines(filePath) {
-  const stream = createReadStream(filePath, { encoding: 'utf8' });
+  const stream = createReadStream(filePath, { encoding: 'utf8', highWaterMark: 1024 * 1024 });
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
   try {
     for await (const line of lines) yield line;
@@ -416,13 +422,11 @@ function collectFromSessionFiles(sessionFiles, pricingData, metadataSourcePrefix
           workspaceLabel: decodeWorkspace(workspaceKey),
           model,
           ...zero(),
-          cost: 0,
           lastActivity: timestamp || null
         });
       }
       const sessionAgg = sessionMap.get(sessionKey);
       addInto(sessionAgg, tokens);
-      sessionAgg.cost += calculateCost(model, tokens, pricingData);
       if (timestamp && (!sessionAgg.lastActivity || timestamp > sessionAgg.lastActivity)) {
         sessionAgg.lastActivity = timestamp;
       }
@@ -483,6 +487,7 @@ async function parseSessionFiles({ changedAfterMs = null, metadataSessionPrefixe
     });
   }
   const bySessionId = new Map();
+  const usageTimelines = new Map();
   for (const file of files) {
     const matches = bySessionId.get(file.lineage.sessionId) || [];
     matches.push(file);
@@ -497,7 +502,7 @@ async function parseSessionFiles({ changedAfterMs = null, metadataSessionPrefixe
     const baselines = [];
     for (const parent of parents) {
       const baseline = file.lineage.forkedAt
-        ? await totalUsageAt(parent.filePath, file.lineage.forkedAt)
+        ? await totalUsageAt(parent.filePath, file.lineage.forkedAt, usageTimelines)
         : null;
       if (baseline) baselines.push(baseline);
     }
@@ -584,6 +589,7 @@ async function readSessionHeader(filePath) {
 function sessionLineageFromText(text, fallbackSessionId) {
   if (text == null) return null;
   for (const raw of text.split('\n')) {
+    if (!raw.includes('"session_meta"')) continue;
     let entry;
     try { entry = JSON.parse(raw); } catch { continue; }
     if (entry.type !== 'session_meta') continue;
@@ -609,8 +615,13 @@ function unknownLineage(fallbackSessionId) {
   };
 }
 
-async function totalUsageAt(filePath, timestamp) {
-  const usageTimeline = await usageTimelineFor(filePath);
+async function totalUsageAt(filePath, timestamp, cache = null) {
+  let pending = cache?.get(filePath);
+  if (!pending) {
+    pending = usageTimelineFor(filePath);
+    cache?.set(filePath, pending);
+  }
+  const usageTimeline = await pending;
   if (!usageTimeline.length) return null;
   const forkTime = new Date(timestamp).getTime();
   if (!Number.isFinite(forkTime)) return null;
@@ -664,17 +675,20 @@ async function usageTimelineFor(filePath) {
 }
 
 async function buildUsageTimeline(filePath) {
-  const text = await readSessionText(filePath);
-  if (text == null) return [];
   const timeline = [];
-  for (const raw of text.split('\n')) {
-    let entry;
-    try { entry = JSON.parse(raw); } catch { continue; }
-    if (entry.type !== 'event_msg' || entry.payload?.type !== 'token_count') continue;
-    const timestamp = new Date(entry.timestamp).getTime();
-    const total = entry.payload?.info?.total_token_usage;
-    if (!Number.isFinite(timestamp) || !total) continue;
-    timeline.push({ timestamp, summary: usageSummary(total) });
+  try {
+    for await (const raw of streamSessionLines(filePath)) {
+      if (!raw.includes('"event_msg"') || !raw.includes('"token_count"')) continue;
+      let entry;
+      try { entry = JSON.parse(raw); } catch { continue; }
+      if (entry.type !== 'event_msg' || entry.payload?.type !== 'token_count') continue;
+      const timestamp = new Date(entry.timestamp).getTime();
+      const total = entry.payload?.info?.total_token_usage;
+      if (!Number.isFinite(timestamp) || !total) continue;
+      timeline.push({ timestamp, summary: usageSummary(total) });
+    }
+  } catch {
+    return [];
   }
   timeline.sort((left, right) => left.timestamp - right.timestamp);
   return timeline;
@@ -766,7 +780,7 @@ function buildOutput(dailyMap, sessionMap, tokenEvents, pricingData) {
       lastActivity:    wm.lastActivity,
       model:          wm.model,
       ...tokens,
-      cost: wm.cost,
+      cost: calculateCost(wm.model, tokens, pricingData),
     };
   });
 

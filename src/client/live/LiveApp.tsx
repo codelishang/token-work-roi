@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { U } from '../shared/utils.ts';
+import { cachedLiveSnapshot, loadLiveSnapshot } from '../shared/runtime-data.ts';
 import './styles.css';
 
 const REFRESH_MS = 15000;
 const PULSE_WINDOW_MINUTES = 1440;
 
 export function LiveApp() {
-  const [snapshot, setSnapshot] = useState(null);
+  const [snapshot, setSnapshot] = useState(() => cachedLiveSnapshot(PULSE_WINDOW_MINUTES));
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -37,11 +38,11 @@ export function LiveApp() {
         setExchangeRateVersion(version => version + 1);
       }
     });
-    async function load() {
+    async function load(force = false) {
       if (loading) return;
       loading = true;
       try {
-        const data = await fetchLiveSnapshot(PULSE_WINDOW_MINUTES);
+        const data = await loadLiveSnapshot(PULSE_WINDOW_MINUTES, { force });
         if (alive) {
           setSnapshot(data);
           setError(null);
@@ -52,8 +53,8 @@ export function LiveApp() {
         loading = false;
       }
     }
-    load();
-    const timer = setInterval(load, REFRESH_MS);
+    load(Boolean(cachedLiveSnapshot(PULSE_WINDOW_MINUTES)));
+    const timer = setInterval(() => load(true), REFRESH_MS);
     return () => {
       alive = false;
       stopExchangeRateRefresh();
@@ -129,7 +130,7 @@ export function LiveApp() {
       if (state.status !== 'ok') {
         throw new Error(state.stderr || state.message || '采集失败');
       }
-      setSnapshot(await fetchLiveSnapshot(PULSE_WINDOW_MINUTES));
+      setSnapshot(await loadLiveSnapshot(PULSE_WINDOW_MINUTES, { force: true }));
       return;
     }
   }
@@ -206,12 +207,6 @@ export function LiveApp() {
       </footer>
     </main>
   );
-}
-
-async function fetchLiveSnapshot(windowMinutes) {
-  const response = await fetch(`/api/live?windowMinutes=${encodeURIComponent(windowMinutes)}`);
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json();
 }
 
 function delay(milliseconds) {

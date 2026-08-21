@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { U } from '../shared/utils.ts';
+import { cachedAppData, loadAppData } from '../shared/runtime-data.ts';
 import { RU } from './utils.ts';
 import { HeroSection, ProjectSection, CalendarSection } from './sections-1.tsx';
 import { ToolsSection, EfficiencySection, ClosureProgressSection, EvidenceFlywheelSection, RoiEvidenceSection, SavingsSimulatorSection, RoiAdvisorSection, AdvisorActionSummarySection, ModelStrategySection, InsightsSection, ReviewTrustBanner } from './sections-2.tsx';
@@ -82,21 +83,20 @@ async function copyText(text) {
 }
 
 export function ReviewApp() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(() => cachedAppData());
+  const [loading, setLoading] = useState(() => !cachedAppData());
   const [error, setError] = useState(null);
   const [, setExchangeRateVersion] = useState(0);
 
-  const loadData = useCallback(() => {
+  const loadData = useCallback((force = true) => {
     setError(null);
-    return fetch('/api/data')
-      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    return loadAppData({ force })
       .then(d => { setData(d); setLoading(false); })
       .catch(e => { setError(e.message); setLoading(false); });
   }, []);
 
   useEffect(() => {
-    loadData();
+    loadData(false);
   }, [loadData]);
 
   useEffect(() => {

@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { U } from '../shared/utils.ts';
+import { cachedAppData, loadAppData } from '../shared/runtime-data.ts';
 import {
   attachAutoSuggestions,
   autoAttributionIdentity,
@@ -48,6 +49,25 @@ function formatApiConnectionError(error, action = '请求') {
   return message || `${action}失败`;
 }
 
+function dashboardModel(data) {
+  if (!data) return null;
+  const sourceNames = [...new Set(data.daily.map(row => row.source))];
+  const SOURCES = sourceNames.map(name => ({ name, color: U.getSourceColor(name) }));
+  const rawHourly = [
+    0.005, 0.003, 0.002, 0.001, 0.001, 0.003,
+    0.008, 0.025, 0.045, 0.075, 0.092, 0.082,
+    0.055, 0.078, 0.092, 0.088, 0.080, 0.060,
+    0.045, 0.038, 0.045, 0.040, 0.025, 0.012
+  ];
+  const total = rawHourly.reduce((sum, value) => sum + value, 0);
+  return {
+    ...data,
+    SOURCES,
+    HOURLY: rawHourly.map(value => value / total),
+    today: U.daysAgo(0)
+  };
+}
+
 function periodLabelForFilters(filters: PeriodRange = {}) {
   const start = (filters.startDateTime || `${filters.startDate || ''}T00:00`).replace('T', ' ');
   const end = (filters.endDateTime || `${filters.endDate || ''}T23:59`).replace('T', ' ');
@@ -62,7 +82,7 @@ function summarizeCollectOutput(stdout) {
 }
 
 export function App({ routeMode = 'dashboard' }) {
-  const [M, setM] = useState(null);
+  const [M, setM] = useState(() => dashboardModel(cachedAppData()));
   const [loadError, setLoadError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [collecting, setCollecting] = useState(false);
@@ -75,44 +95,18 @@ export function App({ routeMode = 'dashboard' }) {
   const waitingForCollectionRef = useRef(false);
 
   // ───── Load data from API ─────
-  const loadData = useCallback(() => {
+  const loadData = useCallback((force = true) => {
     setRefreshing(true);
-    return fetch('/api/data')
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
+    return loadAppData({ force })
       .then(data => {
-        // Assign colors to sources dynamically
-        const sourceNames = [...new Set(data.daily.map(r => r.source))];
-        const SOURCES = sourceNames.map((name, i) => ({
-          name,
-          color: U.getSourceColor(name)
-        }));
-
-        // Standard hourly pattern (normalized)
-        const rawHourly = [
-          0.005, 0.003, 0.002, 0.001, 0.001, 0.003,
-          0.008, 0.025, 0.045, 0.075, 0.092, 0.082,
-          0.055, 0.078, 0.092, 0.088, 0.080, 0.060,
-          0.045, 0.038, 0.045, 0.040, 0.025, 0.012
-        ];
-        const hsum = rawHourly.reduce((a, b) => a + b, 0);
-        const HOURLY = rawHourly.map(v => v / hsum);
-
-        setM({
-          ...data,
-          SOURCES,
-          HOURLY,
-          today: U.daysAgo(0)
-        });
+        setM(dashboardModel(data));
         setLoadError(null);
       })
       .catch(err => setLoadError(err.message))
       .finally(() => setRefreshing(false));
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { loadData(false); }, [loadData]);
 
   const loadCollectionCoverage = useCallback(() => {
     setCoverageLoading(true);
@@ -456,7 +450,7 @@ export function App({ routeMode = 'dashboard' }) {
           <path d="M20 12v10M20 28v2" stroke="oklch(0.65 0.16 25)" strokeWidth="2.5" strokeLinecap="round"/>
         </svg>
         <p style={{fontSize: 15, margin: 0}}>加载失败：{loadError}</p>
-        <button className="btn btn-primary" onClick={loadData}>重试</button>
+        <button className="btn btn-primary" onClick={() => loadData()}>重试</button>
       </div>
     );
   }

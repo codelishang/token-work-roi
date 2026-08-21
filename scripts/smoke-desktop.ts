@@ -14,7 +14,7 @@ assert.equal(existsSync(viteConfig), true, 'vite.config.ts must exist');
 
 const source = readFileSync(desktopMain, 'utf8');
 const viteSource = readFileSync(viteConfig, 'utf8');
-const httpReferences = source.match(/https?:\/\/[^`'"\s)]+/g) || [];
+const httpReferences: string[] = source.match(/https?:\/\/[^`'"\s)]+/g) || [];
 assert.match(source, /127\.0\.0\.1/, 'desktop must bind to local loopback URLs');
 assert.doesNotMatch(source, /collect\s+--apply/, 'desktop must not auto-run real collect');
 assert.doesNotMatch(source, /SCHEDULED_COLLECT_ENABLED:\s*process\.env\.SCHEDULED_COLLECT_ENABLED\s*\|\|\s*'0'/, 'desktop must not force startup collection off');

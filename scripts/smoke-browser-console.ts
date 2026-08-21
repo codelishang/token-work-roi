@@ -150,6 +150,7 @@ async function runBrowserConsoleCheck(url) {
       await cdp.send('Page.enable');
       await cdp.send('Page.navigate', { url });
       await waitForDashboardReady(cdp, messages);
+      await verifyReviewNavigation(cdp);
     } finally {
       cdp.close();
     }
@@ -165,6 +166,39 @@ async function runBrowserConsoleCheck(url) {
     await stopChild(chrome);
     await cleanupTempDir(profileDir);
   }
+}
+
+async function verifyReviewNavigation(cdp: CdpConnection) {
+  const before = await cdp.send('Runtime.evaluate', {
+    expression: 'performance.getEntriesByType("navigation").length',
+    returnByValue: true
+  });
+  await cdp.send('Runtime.evaluate', {
+    expression: 'document.querySelector(\'a[href="/review"]\')?.click()',
+    returnByValue: true
+  });
+
+  const started = Date.now();
+  while (Date.now() - started < 5000) {
+    const state = await cdp.send('Runtime.evaluate', {
+      expression: `(() => ({
+        reviewReady: Boolean(document.querySelector('.review-nav')),
+        loading: document.body.innerText.includes('加载数据中'),
+        navigationCount: performance.getEntriesByType('navigation').length
+      }))()`,
+      returnByValue: true
+    });
+    const value = state.result?.result?.value || {};
+    if (value.reviewReady) {
+      if (value.loading) throw new Error('review navigation showed a loading screen despite cached data');
+      if (value.navigationCount !== before.result?.result?.value) {
+        throw new Error('review navigation performed a full page reload');
+      }
+      return;
+    }
+    await sleep(100);
+  }
+  throw new Error('review navigation did not render');
 }
 
 async function waitForDashboardReady(cdp: CdpConnection, messages) {

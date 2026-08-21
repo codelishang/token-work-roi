@@ -722,7 +722,7 @@ function removeStaleCcusageDailyUsage(db, plan, staleEvents) {
 
   const remaining = db.prepare(`
     SELECT 1 FROM token_events
-    WHERE device = ? AND source = ? AND model = ? AND date(timestamp) = ?
+    WHERE device = ? AND source = ? AND model = ? AND date(timestamp, '+8 hours') = ?
     LIMIT 1
   `);
   const remove = db.prepare(`
