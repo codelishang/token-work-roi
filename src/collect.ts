@@ -1451,7 +1451,7 @@ function isScheduledCollection() {
 }
 
 function isIncrementalMetadataRefresh() {
-  return ['scheduled', 'live-refresh'].includes(process.env.TOKEN_WORK_COLLECT_REASON)
+  return ['scheduled', 'live-refresh', 'manual'].includes(process.env.TOKEN_WORK_COLLECT_REASON)
     && process.env.TOKEN_WORK_SCHEDULED_INCREMENTAL === '1';
 }
 

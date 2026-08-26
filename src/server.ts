@@ -104,6 +104,7 @@ const packageVersion = readPackageVersion();
 const SPA_ROUTES = new Set(['/', '/review', '/live', '/trust']);
 const MAX_INGEST_ROWS = 50_000;
 const COLLECTION_TIMEOUT_MS = 90_000;
+const COLLECTION_STOP_GRACE_MS = 1_500;
 const db = openDb(dbPath);
 let activeCollection = null;
 let lastCoverageGate = null;
@@ -1092,6 +1093,9 @@ async function handleCollect(req, res) {
 }
 
 function startCollection({ reason = 'manual' } = {}) {
+  if (activeCollection && (activeCollection.exitCode != null || activeCollection.signalCode != null)) {
+    activeCollection = null;
+  }
   if (shuttingDown || activeCollection) {
     return false;
   }
@@ -1109,7 +1113,9 @@ function startCollection({ reason = 'manual' } = {}) {
       TOKEN_WORK_COLLECTORS: sources,
       TOKEN_WORK_COLLECT_CONFIRMED: '1',
       TOKEN_WORK_COLLECT_REASON: reason,
-      TOKEN_WORK_SCHEDULED_INCREMENTAL: ['scheduled', 'live-refresh'].includes(reason) ? '1' : ''
+      // The server refreshes an existing database. A first run has no prior
+      // collection record and therefore still falls back to a full scan.
+      TOKEN_WORK_SCHEDULED_INCREMENTAL: '1'
     },
     detached: process.platform !== 'win32',
     windowsHide: true
@@ -1120,6 +1126,7 @@ function startCollection({ reason = 'manual' } = {}) {
   let stderr = '';
   let timedOut = false;
   let completed = false;
+  let forceStopTimer = null;
   const startedAt = new Date().toISOString();
   collectionState = {
     status: 'running',
@@ -1142,9 +1149,14 @@ function startCollection({ reason = 'manual' } = {}) {
     if (activeCollection !== child || child.exitCode != null) return;
     timedOut = true;
     stopCollection(child);
-    setTimeout(() => {
-      if (activeCollection === child && child.exitCode == null) stopCollection(child, { force: true });
-    }, 5000).unref?.();
+    forceStopTimer = setTimeout(() => {
+      if (activeCollection !== child || completed) return;
+      stopCollection(child, { force: true });
+      // Do not leave the interface in "collecting" when a child keeps its
+      // stdio handles open after it has been terminated.
+      complete(null);
+    }, COLLECTION_STOP_GRACE_MS);
+    forceStopTimer.unref?.();
   }, COLLECTION_TIMEOUT_MS);
   timeout.unref?.();
 
@@ -1152,6 +1164,7 @@ function startCollection({ reason = 'manual' } = {}) {
     if (completed || activeCollection !== child) return;
     completed = true;
     clearTimeout(timeout);
+    clearTimeout(forceStopTimer);
     activeCollection = null;
     if (collectionAlreadyRunning(stderr)) {
       collectionState = {
@@ -1191,6 +1204,7 @@ function startCollection({ reason = 'manual' } = {}) {
     if (completed || activeCollection !== child) return;
     completed = true;
     clearTimeout(timeout);
+    clearTimeout(forceStopTimer);
     activeCollection = null;
     collectionState = {
       ...collectionState,
@@ -1237,20 +1251,32 @@ function startScheduledCollect() {
 
   console.log(`[collect:schedule] enabled interval=${schedule.intervalSeconds}s runOnStart=${schedule.runOnStart}`);
 
+  const nextDelay = Math.min(schedule.intervalSeconds * 1000, 30_000);
+  const scheduleNext = (delay = schedule.intervalSeconds * 1000) => {
+    const timer = setTimeout(run, delay);
+    timer.unref?.();
+  };
   const run = () => {
-    try {
-      const started = startCollection({ reason: 'scheduled' });
-      if (!started) console.log('[collect:schedule] skipped because a collection is already running');
-    } catch (error) {
-      console.log(`[collect:schedule] skipped: ${error.message}`);
+    if (shuttingDown) return;
+    if (activeCollection) {
+      // A manual refresh owns the collector. Try again later without creating
+      // another child process or emitting a misleading scheduling failure.
+      scheduleNext(nextDelay);
+      return;
     }
+    try {
+      startCollection({ reason: 'scheduled' });
+    } catch (error) {
+      console.log(`[collect:schedule] ${error.message}`);
+    }
+    scheduleNext();
   };
 
   if (schedule.runOnStart) {
-    setTimeout(run, 1000);
+    scheduleNext(1000);
+  } else {
+    scheduleNext();
   }
-
-  setInterval(run, schedule.intervalSeconds * 1000);
 }
 
 function scheduledCollectConfig() {
