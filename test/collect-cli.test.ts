@@ -783,7 +783,7 @@ test('scheduled Codex collection repairs known historical client metadata withou
   }
 });
 
-test('scheduled Codex collection reads only the changed tail of a large session', async () => {
+test('incremental Codex refresh reads only the changed tail of a large session', async () => {
   const fixture = createCollectorFixture();
   try {
     const sessionPath = join(fixture.codexHome, 'sessions', '2026', '06', '17', 'tail-session.jsonl');
@@ -801,7 +801,7 @@ test('scheduled Codex collection reads only the changed tail of a large session'
 
     const initial = await runNode([
       'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
-    ], { ...fixture.env, TOKEN_WORK_COLLECT_REASON: 'scheduled', TOKEN_WORK_SCHEDULED_INCREMENTAL: '1' });
+    ], { ...fixture.env, TOKEN_WORK_COLLECT_REASON: 'manual', TOKEN_WORK_SCHEDULED_INCREMENTAL: '1' });
     assert.equal(initial.code, 0, initial.stderr);
 
     const refreshedAt = new Date(Date.now() + 1_000).toISOString();
@@ -817,7 +817,7 @@ test('scheduled Codex collection reads only the changed tail of a large session'
 
     const refreshed = await runNode([
       'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
-    ], { ...fixture.env, TOKEN_WORK_COLLECT_REASON: 'scheduled', TOKEN_WORK_SCHEDULED_INCREMENTAL: '1' });
+    ], { ...fixture.env, TOKEN_WORK_COLLECT_REASON: 'manual', TOKEN_WORK_SCHEDULED_INCREMENTAL: '1' });
     assert.equal(refreshed.code, 0, refreshed.stderr);
     assert.equal(JSON.parse(refreshed.stdout).sources[0].tokenEvents, 1);
 
