@@ -41,6 +41,8 @@ const STABLE_ALIASES = new Map([
   ['xai::grok-4-6', ['grok-4.6', 'grok-4-6']],
   ['gemini::gemini-3-7-flash', ['gemini-3.7-flash', 'gemini-3-7-flash']],
   ['xiaomi::mimo-v2.5-pro', ['mimo-v2.5-pro', 'mimo-v2-pro']],
+  ['zhipu glm::glm-5-3', ['glm-5.3', 'glm-5-3']],
+  ['zhipu glm::glm-5-3-flash', ['glm-5.3-flash', 'glm-5-3-flash']],
   ['zhipu glm::glm-5.2', ['glm-5.2', 'glm-5-2']],
   ['zhipu glm::glm-5.1', ['glm-5.1', 'glm-5-1']],
   ['zhipu glm::glm-4.5-air', ['glm-4.5-air', 'glm-4-5-air']],
@@ -53,7 +55,8 @@ const STABLE_ALIASES = new Map([
   ['qwen::qwen3-coder-flash', ['qwen3-coder-flash']],
   ['qwen::qwen-coder-plus', ['qwen-coder-plus']],
   ['qwen::qwen-coder-turbo', ['qwen-coder-turbo']],
-  ['tencent hunyuan::hy3', ['hy3', 'hy-3', 'hunyuan-hy3', 'hy3-x', 'hy3_x', 'hunyuan-hy3-x', 'hunyuan_hy3_x']]
+  ['tencent hunyuan::hy3', ['hy3', 'hy-3', 'hunyuan-hy3', 'hy3-x', 'hy3_x', 'hunyuan-hy3-x', 'hunyuan_hy3_x']],
+  ['tencent hunyuan::hy4-preview', ['hy4-preview', 'hy-4-preview', 'hunyuan-hy4-preview', 'hunyuan-hy-4-preview']]
 ]);
 const fetchedAt = new Date().toISOString();
 const previousModels = await readPreviousPricingModels(pricingCachePath);
@@ -603,6 +606,8 @@ function parseDeepSeekModels(body) {
 
 function parseZaiModels(body, exchangeRate) {
   const pairs = [
+    ['glm-5.3', 'GLM-5.3'],
+    ['glm-5.3-flash', 'GLM-5.3-Flash'],
     ['glm-5.2', 'GLM-5.2'],
     ['glm-5.1', 'GLM-5.1'],
     ['glm-5v-turbo', 'GLM-5V-Turbo'],
@@ -797,29 +802,28 @@ function parseKimiModels(body, exchangeRate) {
 
 function parseTencentHunyuanModels(body, exchangeRate) {
   const text = tableText(body);
-  const match = text.match(
-    /Hy3\s*\|+\s*-\s*\|+\s*-\s*\|+\s*([0-9]+(?:\.[0-9]+)?)\s*\|+\s*([0-9]+(?:\.[0-9]+)?)\s*\|+\s*([0-9]+(?:\.[0-9]+)?)/i
-  );
-  if (!match) return [];
-
-  const [input, output, cachedInput] = match.slice(1).map(Number);
-  const cnyRates = {
-    input,
-    output,
-    cachedInput,
-    cacheWrite5m: input,
-    cacheWrite1h: input
-  };
-  const rates = cnyToUsdRates(cnyRates, exchangeRate);
-  if (!rates) return [];
-
-  return [rateModel('Tencent Hunyuan', 'hy3', rates, 'Tencent Hunyuan', 'official-page', {
-    currency: 'CNY',
-    unit: '1M tokens',
-    ratesPerMTok: cnyRates,
-    exchangeRate: exchangeRate.rate,
-    sourceUnit: '元 / 1M tokens'
-  }, 'Official Tencent TokenHub Hy3 RMB rate converted to USD at the last verified refresh rate.')];
+  const models: Array<[string, RegExp]> = [
+    ['hy3', /Hy3/i],
+    ['hy4-preview', /Hy4\s*-?\s*Preview/i]
+  ];
+  return models.map(([model, label]) => {
+    const match = text.match(new RegExp(
+      `${label.source}\\s*\\|+\\s*-\\s*\\|+\\s*-\\s*\\|+\\s*([0-9]+(?:\\.[0-9]+)?)\\s*\\|+\\s*([0-9]+(?:\\.[0-9]+)?)\\s*\\|+\\s*([0-9]+(?:\\.[0-9]+)?)`,
+      'i'
+    ));
+    if (!match) return null;
+    const [input, output, cachedInput] = match.slice(1).map(Number);
+    const cnyRates = { input, output, cachedInput, cacheWrite5m: input, cacheWrite1h: input };
+    const rates = cnyToUsdRates(cnyRates, exchangeRate);
+    if (!rates) return null;
+    return rateModel('Tencent Hunyuan', model, rates, 'Tencent Hunyuan', 'official-page', {
+      currency: 'CNY',
+      unit: '1M tokens',
+      ratesPerMTok: cnyRates,
+      exchangeRate: exchangeRate.rate,
+      sourceUnit: '元 / 1M tokens'
+    }, `Official Tencent TokenHub ${model} RMB rate converted to USD at the last verified refresh rate.`);
+  }).filter(Boolean);
 }
 
 function parseQwenModels(body, exchangeRate) {

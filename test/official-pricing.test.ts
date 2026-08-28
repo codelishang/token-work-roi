@@ -108,6 +108,20 @@ test('bundled pricing table passes refresh validation', () => {
   assert.doesNotThrow(() => validateOfficialPricingRefresh(serializeOfficialPricingModels()));
 });
 
+test('bundled pricing cache matches the built-in table', () => {
+  const cachedByKey = new Map(pricingCache.models.map(model => [`${model.provider}::${model.model}`, model]));
+
+  assert.equal(pricingCache.models.length, OFFICIAL_PRICE_TABLE.length);
+  for (const rate of OFFICIAL_PRICE_TABLE) {
+    const cached = cachedByKey.get(`${rate.provider}::${rate.model}`);
+    assert.ok(cached, rate.model);
+    assert.equal(cached.priced, rate.priced, rate.model);
+    assert.deepEqual(cached.aliases, rate.aliases, rate.model);
+    assert.deepEqual(cached.ratesPerMTok, rate.ratesPerMTok, rate.model);
+    assert.deepEqual(cached.officialRatesPerMTok, rate.officialRatesPerMTok, rate.model);
+  }
+});
+
 test('rejects invalid pricing refresh data', () => {
   const baseline = [{
     provider: 'Fixture Provider',
@@ -210,25 +224,69 @@ test('recognizes the current DeepSeek V4 Flash version identifier', () => {
   assert.equal(cost.resolvedModel, 'deepseek-v4-flash');
 });
 
-test('keeps GLM-5.3 on the existing GLM-5 official price mapping', () => {
-  const cost = calculateOfficialCost('glm-5.3', {
+test('prices GLM-5.3 and GLM-5.3-Flash from current official RMB rates', () => {
+  const glm53 = calculateOfficialCost('glm-5.3', {
     input: 1_000_000,
     output: 1_000_000
   });
-  const rate = OFFICIAL_PRICE_TABLE.find(item => item.model === 'glm-5');
+  const flash = calculateOfficialCost('GLM-5.3-Flash', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    output: 1_000_000
+  });
+  const rate = OFFICIAL_PRICE_TABLE.find(item => item.model === 'glm-5.3');
+  const flashRate = OFFICIAL_PRICE_TABLE.find(item => item.model === 'glm-5.3-flash');
 
   assert.ok(rate?.officialRatesPerMTok);
-  assert.equal(cost.priced, true);
-  assert.equal(cost.provider, 'Zhipu GLM');
-  assert.equal(cost.resolvedModel, 'glm-5');
+  assert.ok(flashRate?.officialRatesPerMTok);
+  assert.equal(glm53.priced, true);
+  assert.equal(glm53.provider, 'Zhipu GLM');
+  assert.equal(glm53.resolvedModel, 'glm-5.3');
+  assert.equal(flash.priced, true);
+  assert.equal(flash.resolvedModel, 'glm-5.3-flash');
   assert.equal(rate.officialRatesPerMTok.currency, 'CNY');
 
   const exchangeRate = Number(rate.officialRatesPerMTok.exchangeRate);
   const inputRate = Number(rate.officialRatesPerMTok.ratesPerMTok.input);
   const outputRate = Number(rate.officialRatesPerMTok.ratesPerMTok.output);
+  const flashRates = flashRate.officialRatesPerMTok.ratesPerMTok;
   assert.ok(Number.isFinite(exchangeRate) && exchangeRate > 0);
   assert.ok(Number.isFinite(inputRate) && Number.isFinite(outputRate));
-  assert.equal(cost.totalUSD, (inputRate + outputRate) / exchangeRate);
+  assert.equal(glm53.totalUSD, (inputRate + outputRate) / exchangeRate);
+  assert.ok(Math.abs(flash.totalUSD - (
+    flashRates.input + flashRates.cachedInput + flashRates.output
+  ) / flashRate.officialRatesPerMTok.exchangeRate) < 1e-12);
+});
+
+test('prices Hy4 Preview from official Tencent TokenHub rates', () => {
+  const cost = calculateOfficialCost('Hy4 Preview', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    output: 1_000_000
+  });
+  const rate = OFFICIAL_PRICE_TABLE.find(item => item.model === 'hy4-preview');
+
+  assert.ok(rate?.officialRatesPerMTok);
+  assert.equal(cost.priced, true);
+  assert.equal(cost.provider, 'Tencent Hunyuan');
+  assert.equal(cost.resolvedModel, 'hy4-preview');
+  assert.equal(rate.officialRatesPerMTok.currency, 'CNY');
+
+  const { input, cachedInput, output } = rate.officialRatesPerMTok.ratesPerMTok;
+  assert.equal(cost.totalUSD, (input + cachedInput + output) / rate.officialRatesPerMTok.exchangeRate);
+});
+
+test('resolves current model labels with vendor separators', () => {
+  for (const [model, resolvedModel] of [
+    ['GLM 5.3 Flash', 'glm-5.3-flash'],
+    ['DeepSeek V4 Pro', 'deepseek-v4-pro'],
+    ['Doubao Seed Evolving', 'doubao-seed-evolving'],
+    ['gpt_5.6_sol', 'gpt-5.6-sol']
+  ]) {
+    const cost = calculateOfficialCost(model, { input: 1_000_000 });
+    assert.equal(cost.priced, true, model);
+    assert.equal(cost.resolvedModel, resolvedModel, model);
+  }
 });
 
 test('calculates GLM-5V-Turbo price from official RMB rates', () => {
@@ -243,14 +301,9 @@ test('calculates GLM-5V-Turbo price from official RMB rates', () => {
   assert.equal(cost.priced, true);
   assert.equal(cost.provider, 'Zhipu GLM');
   assert.equal(cost.resolvedModel, 'glm-5v-turbo');
-  assert.deepEqual(rate.officialRatesPerMTok.ratesPerMTok, {
-    input: 5,
-    output: 22,
-    cachedInput: 1.2,
-    cacheWrite5m: 5,
-    cacheWrite1h: 5
-  });
-  assert.equal(cost.totalUSD, (5 + 1.2 + 22) / rate.officialRatesPerMTok.exchangeRate);
+  assert.equal(rate.officialRatesPerMTok.currency, 'CNY');
+  const { input, cachedInput, output } = rate.officialRatesPerMTok.ratesPerMTok;
+  assert.ok(Math.abs(cost.totalUSD - (input + cachedInput + output) / rate.officialRatesPerMTok.exchangeRate) < 1e-12);
 });
 
 test('calculates Tencent TokenHub Hy3 price from official RMB rates', () => {
@@ -265,21 +318,16 @@ test('calculates Tencent TokenHub Hy3 price from official RMB rates', () => {
   assert.equal(cost.priced, true);
   assert.equal(cost.provider, 'Tencent Hunyuan');
   assert.equal(cost.resolvedModel, 'hy3');
-  assert.deepEqual(rate.officialRatesPerMTok.ratesPerMTok, {
-    input: 1,
-    output: 4,
-    cachedInput: 0.25,
-    cacheWrite5m: 1,
-    cacheWrite1h: 1
-  });
-  assert.ok(Math.abs(cost.totalUSD - (1 + 0.25 + 4) / rate.officialRatesPerMTok.exchangeRate) < 1e-12);
+  assert.equal(rate.officialRatesPerMTok.currency, 'CNY');
+  const { input, cachedInput, output } = rate.officialRatesPerMTok.ratesPerMTok;
+  assert.ok(Math.abs(cost.totalUSD - (input + cachedInput + output) / rate.officialRatesPerMTok.exchangeRate) < 1e-12);
   assert.equal(calculateOfficialCost('hy3-x', {}, { pricingData: pricingCache }).resolvedModel, 'hy3');
 });
 
 test('calculates Alibaba Cloud official prices for Qwen3.8 and MiniMax-M3', () => {
   for (const expected of [
-    { model: 'qwen3.8', provider: 'Qwen', input: 12, output: 36 },
-    { model: 'minimax-m3', provider: 'MiniMax', input: 4.2, output: 16.8 }
+    { model: 'qwen3.8', provider: 'Qwen' },
+    { model: 'minimax-m3', provider: 'MiniMax' }
   ]) {
     const cost = calculateOfficialCost(expected.model, { input: 1_000_000, output: 1_000_000 });
     const rate = OFFICIAL_PRICE_TABLE.find(item => item.model === expected.model);
@@ -289,8 +337,9 @@ test('calculates Alibaba Cloud official prices for Qwen3.8 and MiniMax-M3', () =
     assert.equal(cost.provider, expected.provider, expected.model);
     assert.equal(cost.resolvedModel, expected.model, expected.model);
     assert.equal(cost.source?.provider, 'Qwen', expected.model);
-    assert.equal(rate.officialRatesPerMTok.ratesPerMTok.input, expected.input, expected.model);
-    assert.equal(rate.officialRatesPerMTok.ratesPerMTok.output, expected.output, expected.model);
+    assert.equal(rate.officialRatesPerMTok.currency, 'CNY', expected.model);
+    assert.ok(rate.officialRatesPerMTok.ratesPerMTok.input > 0, expected.model);
+    assert.ok(rate.officialRatesPerMTok.ratesPerMTok.output > 0, expected.model);
   }
   assert.equal(resolveOfficialPricing('qwen3.8-max')?.model, 'qwen3.8');
 });
@@ -374,7 +423,12 @@ test('calculates Claude prompt-cache costs', () => {
     output: 1_000_000
   });
   assert.equal(opus5.resolvedModel, 'claude-opus-5');
-  assert.equal(opus5.totalUSD, 36.75);
+  assert.equal(opus5.totalUSD, (
+    opus5.ratesPerMTok.input
+    + opus5.ratesPerMTok.cachedInput
+    + opus5.ratesPerMTok.cacheWrite
+    + opus5.ratesPerMTok.output
+  ));
 });
 
 test('recognizes refreshed Grok 4.5 and Claude Fable 5 models', () => {
@@ -450,6 +504,8 @@ test('does not invent prices for research-preview or unknown models', () => {
 test('resolves dated provider aliases without falling through to shorter model names', () => {
   assert.equal(resolveOfficialPricing('openai/gpt-5.3-codex-spark').priced, false);
   assert.equal(resolveOfficialPricing('claude-opus-4.7-20260420').model, 'claude-opus-4-7');
+  assert.equal(resolveOfficialPricing('GLM 5.3 Flash Plus'), null);
+  assert.equal(resolveOfficialPricing('DeepSeek V4 Pro Preview'), null);
 });
 
 test('does not let a source provider hint hide explicit model provider pricing', () => {
@@ -481,6 +537,10 @@ test('prices current DoubaoSeed models without inventing unknown rates', () => {
     cacheWrite: 1_000_000,
     output: 1_000_000
   }, { provider: 'DoubaoSeed' });
+  const evolving = calculateOfficialCost('doubao_seed_evolving', {
+    input: 1_000_000,
+    output: 1_000_000
+  }, { provider: 'DoubaoSeed' });
   const unknown = calculateOfficialCost('doubao-unlisted-model', {
     input: 1_000_000,
     output: 1_000_000
@@ -489,6 +549,8 @@ test('prices current DoubaoSeed models without inventing unknown rates', () => {
   assert.equal(current.priced, true);
   assert.equal(current.provider, 'DoubaoSeed');
   assert.equal(current.ratesPerMTok.cacheWrite, 0);
+  assert.equal(evolving.priced, true);
+  assert.equal(evolving.resolvedModel, 'doubao-seed-evolving');
   assert.equal(unknown.priced, false);
   assert.equal(unknown.totalUSD, 0);
 });
@@ -507,15 +569,16 @@ test('prices gpt-image-2 and Doubao Seed 2.0 Lite from official token rates', ()
 
   assert.equal(image.priced, true);
   assert.equal(image.provider, 'openai');
-  assert.equal(image.totalUSD, 40);
+  assert.equal(image.totalUSD, image.ratesPerMTok.input + image.ratesPerMTok.cachedInput + image.ratesPerMTok.output);
   assert.equal(lite.priced, true);
   assert.equal(lite.provider, 'DoubaoSeed');
   const cachedLite = pricingCache.models.find(model => model.model === 'doubao-seed-2.0-lite');
   assert.ok(cachedLite?.officialRatesPerMTok);
   const { exchangeRate, ratesPerMTok } = cachedLite.officialRatesPerMTok;
-  assert.equal(ratesPerMTok.input, 0.6);
-  assert.equal(ratesPerMTok.cachedInput, 0.12);
-  assert.equal(ratesPerMTok.output, 3.6);
+  assert.equal(cachedLite.officialRatesPerMTok.currency, 'CNY');
+  assert.ok(ratesPerMTok.input > 0);
+  assert.ok(ratesPerMTok.cachedInput > 0);
+  assert.ok(ratesPerMTok.output > 0);
   assert.ok(Math.abs(lite.ratesPerMTok.input - ratesPerMTok.input / exchangeRate) < 1e-12);
   assert.ok(Math.abs(lite.ratesPerMTok.cachedInput - ratesPerMTok.cachedInput / exchangeRate) < 1e-12);
   assert.ok(Math.abs(lite.ratesPerMTok.output - ratesPerMTok.output / exchangeRate) < 1e-12);

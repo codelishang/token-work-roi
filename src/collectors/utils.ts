@@ -55,6 +55,10 @@ export function normalizeModelForGrouping(modelId) {
     return 'hy3';
   }
 
+  // WorkBuddy recorded this release label for the Kimi K3 model. Keep the
+  // canonical model name stable without treating later K3 variants as K3.
+  if (name === 'kimi-k3-1') return 'kimi-k3';
+
   return name;
 }
 
