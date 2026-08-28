@@ -168,7 +168,7 @@ test('collect replaces transient WorkBuddy event identities without adding token
   }
 });
 
-test('WorkBuddy model correction rebuilds the affected daily usage', async () => {
+test('WorkBuddy model correction rebuilds event, session, and daily usage', async () => {
   const fixture = createWorkBuddyIdentityFixture();
   try {
     const first = await runNode([
@@ -177,7 +177,7 @@ test('WorkBuddy model correction rebuilds the affected daily usage', async () =>
     assert.equal(first.code, 0, first.stderr);
 
     const trace = JSON.parse(readFileSync(fixture.tracePath, 'utf8'));
-    trace.trace.modelInfo.models = ['hy3-x'];
+    trace.trace.modelInfo.models = ['kimi-k3-1'];
     writeFileSync(fixture.tracePath, JSON.stringify(trace), 'utf8');
 
     const refreshed = await runNode([
@@ -188,9 +188,17 @@ test('WorkBuddy model correction rebuilds the affected daily usage', async () =>
     const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
       assert.deepEqual(db.prepare(`
+        SELECT model, input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens AS totalTokens
+        FROM token_events WHERE source = 'WorkBuddy'
+      `).all().map(row => ({ ...row })), [{ model: 'kimi-k3', totalTokens: 120 }]);
+      assert.deepEqual(db.prepare(`
+        SELECT model, total_tokens AS totalTokens FROM session_usage
+        WHERE source = 'WorkBuddy'
+      `).all().map(row => ({ ...row })), [{ model: 'kimi-k3', totalTokens: 120 }]);
+      assert.deepEqual(db.prepare(`
         SELECT model, total_tokens AS totalTokens FROM daily_usage
         WHERE source = 'WorkBuddy'
-      `).all().map(row => ({ ...row })), [{ model: 'hy3', totalTokens: 120 }]);
+      `).all().map(row => ({ ...row })), [{ model: 'kimi-k3', totalTokens: 120 }]);
     } finally {
       db.close();
     }
