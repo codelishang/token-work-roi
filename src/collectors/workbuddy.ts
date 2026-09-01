@@ -103,6 +103,23 @@ function traceModel(trace) {
   return uniqueModels.length === 1 ? uniqueModels[0] : null;
 }
 
+function traceSessionId(trace) {
+  return sanitizeSmallText(trace?.sessionId, 160);
+}
+
+function sessionModelForTrace(trace, sessionInfo, dbSessionMap) {
+  const persistedSessionId = traceSessionId(trace);
+  const metadataSessionId = persistedSessionId || sessionInfo?.sessionId || null;
+  const persistedModel = actualModel(metadataSessionId ? dbSessionMap.get(metadataSessionId)?.model : null);
+  if (persistedModel) return persistedModel;
+
+  // A PID can be reused after a trace completes. Its in-memory metadata only
+  // proves a model when the trace has no session ID or both IDs agree.
+  return !persistedSessionId || sessionInfo?.sessionId === persistedSessionId
+    ? sessionInfo?.model || null
+    : null;
+}
+
 async function safeReaddir(dir: string, opts?: { withFileTypes?: boolean }): Promise<Dirent[] | string[]> {
   try {
     return await readdir(dir, opts as any);
@@ -135,10 +152,12 @@ async function loadSessionMap() {
     if (!text) continue;
     try {
       const data = JSON.parse(text);
-      if (data.sessionId || data.cwd) {
+      const model = actualModel(data.model);
+      if (data.sessionId || data.cwd || model) {
         map.set(pid, {
           sessionId: data.sessionId || `workbuddy:${pid}`,
-          cwd: data.cwd || null
+          cwd: data.cwd || null,
+          model
         });
       }
     } catch {
@@ -168,17 +187,13 @@ async function loadDbSessionMetadata() {
   const map = new Map();
   try {
     const rows = db.prepare(`
-      SELECT id, cwd, model, created_at, updated_at, last_activity_at
+      SELECT id, cwd, model
       FROM sessions
-      WHERE deleted_at IS NULL
     `).all();
     for (const row of rows) {
       map.set(row.id, {
         cwd: row.cwd || null,
-        model: row.model || null,
-        createdAt: row.created_at || null,
-        updatedAt: row.updated_at || null,
-        lastActivityAt: row.last_activity_at || null
+        model: row.model || null
       });
     }
   } catch {
@@ -216,11 +231,10 @@ function parseTraceFile(traceJson, sessionMap, dbSessionMap, audit, inheritedTra
   // PID session metadata is transient. The trace ID remains available after
   // WorkBuddy removes that file, so use it for stable storage identity.
   const sessionInfo = workerPid ? sessionMap.get(workerPid) : null;
-  const metadataSessionId = sessionInfo?.sessionId || null;
   const sessionId = `workbuddy:${traceId}`;
   const cwd = sessionInfo?.cwd || null;
-  const dbMeta = metadataSessionId ? dbSessionMap.get(metadataSessionId) : null;
-  const sessionModel = actualModel(dbMeta?.model);
+  const dbMeta = dbSessionMap.get(traceSessionId(trace) || sessionInfo?.sessionId);
+  const sessionModel = sessionModelForTrace(trace, sessionInfo, dbSessionMap);
 
   // Try to get workspace label from DB session metadata
   let workspaceLabel = null;
@@ -428,8 +442,8 @@ function needsInheritedModel(traceJson, sessionMap, dbSessionMap) {
   const trace = traceJson?.trace;
   if (!trace || traceModel(trace)) return false;
   const workerPid = trace.workerPid == null ? null : String(trace.workerPid);
-  const metadataSessionId = workerPid ? sessionMap.get(workerPid)?.sessionId : null;
-  if (actualModel(metadataSessionId ? dbSessionMap.get(metadataSessionId)?.model : null)) return false;
+  const sessionInfo = workerPid ? sessionMap.get(workerPid) : null;
+  if (sessionModelForTrace(trace, sessionInfo, dbSessionMap)) return false;
 
   return (Array.isArray(traceJson?.spans) ? traceJson.spans : []).some(span => {
     if (!span || span.type !== 'generation' || typeof span.toolOutput !== 'string') return false;
