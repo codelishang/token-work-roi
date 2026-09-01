@@ -55,11 +55,11 @@ Public screenshots should not contain real databases, local AI log paths, `.env`
 ## 4. 演示边界 / Demo Boundary
 
 - 演示数据不代表真实采集成功。
-- 默认入口会定时采集通过可信门槛的 Claude Code 和 Codex 事件；手动采集或导入需要明确确认。
+- 默认入口会定时采集通过可信门槛的 Claude Code、Codex、WorkBuddy 和 CodeBuddy 事件；手动采集或导入需要明确确认。
 - 元衡只保存结构化用量字段，不保存对话正文。
 - 费用是官方公开单价换算，不是服务商账单。
 
 - Demo data does not prove real collection works on a user's machine.
-- The default entrypoint schedules trusted Claude Code and Codex event collection. Manual collection and imports require explicit confirmation.
+- The default entrypoint schedules trusted Claude Code, Codex, WorkBuddy, and CodeBuddy event collection. Manual collection and imports require explicit confirmation.
 - Yuanheng stores structured usage fields only, not conversation content.
 - Cost is official public price conversion, not a provider invoice.

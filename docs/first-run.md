@@ -10,7 +10,7 @@
 npx token-work
 ```
 
-默认入口先打开浏览器，再每 5 分钟在后台采集 Claude Code、Codex 和 WorkBuddy 的可信事件级记录。Codex 会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex；WorkBuddy 的 `auto` 模式只在 trace、同一 worker 的重叠 trace 或 session 元数据能确定唯一实际模型时按该模型记录。采集通过可信门槛后，元衡会更新本地 SQLite。
+默认入口先打开浏览器，再每 5 分钟在后台采集 Claude Code、Codex、WorkBuddy 和 CodeBuddy 的可信事件级记录。Codex 会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex；WorkBuddy 的 `auto` 模式只在 trace、同一 worker 的重叠 trace 或 session 元数据能确定唯一实际模型时按该模型记录。CodeBuddy 只将同一 BaseAgent 的模型初始化记录关联到随后的一个完成用量，无法关联时才标为 `unknown`。采集通过可信门槛后，元衡会更新本地 SQLite。
 普通定时写入最多每 24 小时创建一份完整备份；数据修复前会单独备份。新的受管备份创建成功后只保留最新一份。
 
 只想熟悉界面：
@@ -25,7 +25,7 @@ npx token-work demo
 npx token-work --dry-run-only
 ```
 
-需要检查来源覆盖时运行 `npx token-work coverage --sources=claude,codex,workbuddy,cursor`。
+需要检查来源覆盖时运行 `npx token-work coverage --sources=claude,codex,workbuddy,codebuddy,cursor`。
 
 不扫描本机 AI 工具记录：
 

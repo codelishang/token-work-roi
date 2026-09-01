@@ -252,7 +252,7 @@ test('prices GLM-5.3 and GLM-5.3-Flash from current official RMB rates', () => {
   const flashRates = flashRate.officialRatesPerMTok.ratesPerMTok;
   assert.ok(Number.isFinite(exchangeRate) && exchangeRate > 0);
   assert.ok(Number.isFinite(inputRate) && Number.isFinite(outputRate));
-  assert.equal(glm53.totalUSD, (inputRate + outputRate) / exchangeRate);
+  assert.ok(Math.abs(glm53.totalUSD - (inputRate + outputRate) / exchangeRate) < 1e-12);
   assert.ok(Math.abs(flash.totalUSD - (
     flashRates.input + flashRates.cachedInput + flashRates.output
   ) / flashRate.officialRatesPerMTok.exchangeRate) < 1e-12);
@@ -273,7 +273,9 @@ test('prices Hy4 Preview from official Tencent TokenHub rates', () => {
   assert.equal(rate.officialRatesPerMTok.currency, 'CNY');
 
   const { input, cachedInput, output } = rate.officialRatesPerMTok.ratesPerMTok;
-  assert.equal(cost.totalUSD, (input + cachedInput + output) / rate.officialRatesPerMTok.exchangeRate);
+  assert.ok(Math.abs(cost.totalUSD - (
+    input + cachedInput + output
+  ) / rate.officialRatesPerMTok.exchangeRate) < 1e-12);
 });
 
 test('resolves current model labels with vendor separators', () => {

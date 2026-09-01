@@ -15,12 +15,13 @@ Yuanheng collectors extract structured usage metadata only. They do not store or
 - OpenClaw
 - Hermes Agent
 - WorkBuddy
+- CodeBuddy
 
 这些来源在本机存在可靠元数据时，可以生成 `daily_usage`、`session_usage` 和 `token_events`。稳定采集不等于快速启动时全部自动写入。
 
-快速启动的定时采集处理 Claude Code、Codex 和 WorkBuddy；Codex 记录会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex。其他稳定采集器和实验来源需要通过 `coverage --sources` 或 `collect --sources` 明确选择。
+快速启动的定时采集处理 Claude Code、Codex、WorkBuddy 和 CodeBuddy；Codex 记录会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex。其他稳定采集器和实验来源需要通过 `coverage --sources` 或 `collect --sources` 明确选择。
 
-These collectors can produce structured usage when reliable local metadata exists. Quick-start scheduled collection handles Claude Code, Codex, and WorkBuddy. Codex records are labeled as Codex CLI, Codex Desktop, or Codex according to available client metadata. Select other stable or experimental collectors explicitly with `coverage --sources` or `collect --sources`.
+These collectors can produce structured usage when reliable local metadata exists. Quick-start scheduled collection handles Claude Code, Codex, WorkBuddy, and CodeBuddy. Codex records are labeled as Codex CLI, Codex Desktop, or Codex according to available client metadata. Select other stable or experimental collectors explicitly with `coverage --sources` or `collect --sources`.
 
 ## 实验来源 / Experimental Sources
 
@@ -57,6 +58,17 @@ Only `prompt_tokens`, `completion_tokens`, `cached_tokens`, and `reasoning_token
 
 `prompt_tokens` is cache-inclusive (OpenAI convention); the collector subtracts `cached_tokens` to derive net input tokens. Scheduled collection rereads only traces changed since the previous run. A trace larger than 32 MiB is skipped and reported in the collection result so an abnormal log cannot keep consuming resources.
 
+## CodeBuddy 说明 / CodeBuddy Note
+
+CodeBuddy 采集器扫描 CodeBuddy（含 CodeBuddy CN）日志目录中腾讯云代码助手扩展的 `.log` 文件，提取 `notifyStepEnd` 行的 `usage` JSON，并匹配 `ModelProvider initialized` 行确定模型。它只保存 token 字段和哈希后的事件、会话标识，不保存 prompt、response、请求对象、工作区路径或会话数据库。
+
+日志中的 `inputTokens` 包含 cache token，`thinkingTokens` 包含在输出 token 中，因此采集器会分别保存净输入、缓存读写、普通输出和推理 token。`requestId` 只用于本地哈希去重。采集器只接受同一 `BaseAgent` 的 `ModelProvider initialized` 具体模型，并且只关联到随后的一个完成记录；没有对应初始化记录时才记为 `unknown`，不会从可选模型列表、全局配置或错误日志推测模型和成本。定时采集只重读有变化的日志；单个超过 32 MiB 的日志会跳过。
+
+```bash
+node src/cli.ts collect --dry-run --sources=codebuddy
+node src/cli.ts collect --apply --yes --sources=codebuddy
+```
+
 ## 常用命令 / Commands
 
 从源码运行时使用：
@@ -65,9 +77,9 @@ Only `prompt_tokens`, `completion_tokens`, `cached_tokens`, and `reasoning_token
 node src/cli.ts
 node src/cli.ts --no-collect
 node src/cli.ts --dry-run-only
-node src/cli.ts coverage --sources=claude,codex,workbuddy,cursor --json
-node src/cli.ts collect --dry-run --sources=claude,codex,workbuddy,cursor
-node src/cli.ts collect --apply --yes --sources=claude,codex,workbuddy
+node src/cli.ts coverage --sources=claude,codex,workbuddy,codebuddy,cursor --json
+node src/cli.ts collect --dry-run --sources=claude,codex,workbuddy,codebuddy,cursor
+node src/cli.ts collect --apply --yes --sources=claude,codex,workbuddy,codebuddy
 node src/cli.ts compare-ccusage --report=session --json --yes
 ```
 
@@ -81,7 +93,7 @@ v2 源码入口使用 TypeScript 文件。旧的 `.mjs` 源码直跑路径不再
 
 | 命令 | 作用 |
 |---|---|
-| `node src/cli.ts` | 默认入口，先打开浏览器，再在后台采集可信 Claude Code、Codex 和 WorkBuddy 事件级记录 |
+| `node src/cli.ts` | 默认入口，先打开浏览器，再在后台采集可信 Claude Code、Codex、WorkBuddy 和 CodeBuddy 事件级记录 |
 | `--no-collect` | 不扫描本机日志，也不写入采集结果 |
 | `--dry-run-only` | 禁用定时采集并打开界面，不写入采集结果 |
 | `coverage` | 查看每个来源是否有可靠词元字段，以及 daily/session/event 是否能对上 |

@@ -6,7 +6,8 @@
     "opencode",
     "openclaw",
     "hermes",
-    "workbuddy"
+    "workbuddy",
+    "codebuddy"
   ],
   "scheduledCollect": {
     "enabled": false,
@@ -55,6 +56,16 @@
       "tracesDir": "~/.workbuddy/traces",
       "sessionsDir": "~/.workbuddy/sessions",
       "root": "~/.workbuddy"
+    },
+    "codebuddy": {
+      "logsRoots": [
+        "~/Library/Application Support/CodeBuddy CN/logs",
+        "~/Library/Application Support/CodeBuddy/logs",
+        "${APPDATA}/CodeBuddy CN/logs",
+        "${APPDATA}/CodeBuddy/logs",
+        "~/.config/CodeBuddy CN/logs",
+        "~/.config/CodeBuddy/logs"
+      ]
     }
   }
 }
