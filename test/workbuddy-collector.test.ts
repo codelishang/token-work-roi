@@ -236,11 +236,7 @@ test('WorkBuddy resolves auto mode from its local session metadata', async () =>
       CREATE TABLE sessions (
         id TEXT PRIMARY KEY,
         cwd TEXT,
-        model TEXT,
-        created_at TEXT,
-        updated_at TEXT,
-        last_activity_at TEXT,
-        deleted_at TEXT
+        model TEXT
       )
     `);
     db.prepare('INSERT INTO sessions (id, cwd, model) VALUES (?, ?, ?)')
@@ -261,6 +257,79 @@ test('WorkBuddy resolves auto mode from its local session metadata', async () =>
     assert.equal(result.tokenEvents[0].model, 'glm-5.2');
   } finally {
     delete process.env.TOKEN_WORK_CONFIG;
+    rmSync(baseDir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('WorkBuddy resolves auto mode from the trace session after PID metadata is removed', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'token-work-wb-trace-session-model-'));
+  const tracesDir = join(baseDir, 'traces');
+  const sessionsDir = join(baseDir, 'sessions');
+  const { dir, configPath } = makeConfig(tracesDir, sessionsDir);
+  const db = new DatabaseSync(join(dir, 'workbuddy.db'));
+  try {
+    db.exec(`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        cwd TEXT,
+        model TEXT,
+        created_at TEXT,
+        updated_at TEXT,
+        last_activity_at TEXT,
+        deleted_at TEXT
+      )
+    `);
+    db.prepare('INSERT INTO sessions (id, model) VALUES (?, ?)').run('completed-session', 'glm-5.3');
+  } finally {
+    db.close();
+  }
+  const filePath = makeTraceFile(tracesDir, 12351, 'trace_completed_session', [
+    makeGenerationSpan('span_completed_session', null, 'auto', { prompt_tokens: 100, completion_tokens: 20 })
+  ], null);
+  const trace = JSON.parse(readFileSync(filePath, 'utf8'));
+  trace.trace.sessionId = 'completed-session';
+  writeFileSync(filePath, JSON.stringify(trace), 'utf8');
+
+  process.env.TOKEN_WORK_CONFIG = configPath;
+  resetConfigCache();
+  try {
+    const result = await collect();
+    assert.equal(result.tokenEvents.length, 1);
+    assert.equal(result.tokenEvents[0].model, 'glm-5.3');
+  } finally {
+    delete process.env.TOKEN_WORK_CONFIG;
+    resetConfigCache();
+    rmSync(baseDir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('WorkBuddy does not use a reused PID model for a different trace session', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'token-work-wb-reused-pid-'));
+  const tracesDir = join(baseDir, 'traces');
+  const sessionsDir = join(baseDir, 'sessions');
+  const { dir, configPath } = makeConfig(tracesDir, sessionsDir);
+  makeSessionFile(sessionsDir, 12352, 'current-session', '/tmp/workbuddy-project');
+  const session = JSON.parse(readFileSync(join(sessionsDir, '12352.json'), 'utf8'));
+  session.model = 'deepseek-v4-flash';
+  writeFileSync(join(sessionsDir, '12352.json'), JSON.stringify(session), 'utf8');
+  const filePath = makeTraceFile(tracesDir, 12352, 'trace_old_session', [
+    makeGenerationSpan('span_old_session', null, 'auto', { prompt_tokens: 100, completion_tokens: 20 })
+  ], null);
+  const trace = JSON.parse(readFileSync(filePath, 'utf8'));
+  trace.trace.sessionId = 'completed-session-without-model';
+  writeFileSync(filePath, JSON.stringify(trace), 'utf8');
+
+  process.env.TOKEN_WORK_CONFIG = configPath;
+  resetConfigCache();
+  try {
+    const result = await collect();
+    assert.equal(result.tokenEvents.length, 0);
+    assert.equal(result.audit.skippedUnresolvedModel, 1);
+  } finally {
+    delete process.env.TOKEN_WORK_CONFIG;
+    resetConfigCache();
     rmSync(baseDir, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
   }
