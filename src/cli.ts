@@ -148,7 +148,7 @@ async function autoCommand({ route = '/', defaultOpenBrowser = true } = {}) {
     return;
   }
 
-  console.log('[token-work] Starting local UI. Trusted Claude, Codex, and WorkBuddy collection will run in the background.');
+  console.log('[token-work] Starting local UI. Trusted Claude, Codex, WorkBuddy, and CodeBuddy collection will run in the background.');
   await startCommand({ demo: false, dbPath, route, openBrowser, liveCollect: true });
 }
 
@@ -211,7 +211,7 @@ async function startCommand({ demo = false, dbPath = null, route = '/', openBrow
     console.log(`[token-work] API http://127.0.0.1:${apiPort}`);
     if (process.send) process.send({ type: 'ready', apiPort, uiPort });
     if (liveCollect && !demo) {
-      console.log(`[token-work] live collect refresh enabled every ${envLiveCollectIntervalSeconds()}s for Claude, Codex, and WorkBuddy.`);
+      console.log(`[token-work] live collect refresh enabled every ${envLiveCollectIntervalSeconds()}s for Claude, Codex, WorkBuddy, and CodeBuddy.`);
     }
     if (openBrowser) {
       setTimeout(() => openUrl(uiUrl), 900).unref?.();
@@ -339,7 +339,7 @@ function envLiveCollectIntervalSeconds() {
 }
 
 async function collectCommand() {
-  const sources = args.sources || args.collectors || 'claude,codex,workbuddy';
+  const sources = args.sources || args.collectors || 'claude,codex,workbuddy,codebuddy';
   if (args.apply && args.dryRun) {
     throw new Error('Choose either --apply or --dry-run, not both.');
   }
@@ -379,7 +379,7 @@ async function collectCommand() {
 }
 
 async function coverageCommand() {
-  const sources = args.sources || args.collectors || 'claude,codex,workbuddy,cursor';
+  const sources = args.sources || args.collectors || 'claude,codex,workbuddy,codebuddy,cursor';
   const summary = await runCollectDryRun({ sources, dbPath: args.db });
   if (args.json) {
     console.log(JSON.stringify(summary, null, 2));
@@ -823,7 +823,7 @@ function runCollectDryRun({ sources, dbPath }: { sources?: string; dbPath?: stri
     resolve(SOURCE_DIR, 'collect.ts'),
     '--dry-run',
     '--sources',
-    sources || 'claude,codex,workbuddy,cursor',
+    sources || 'claude,codex,workbuddy,codebuddy,cursor',
     '--json'
   ];
   if (dbPath) collectArgs.push('--db', dbPath);
@@ -832,7 +832,7 @@ function runCollectDryRun({ sources, dbPath }: { sources?: string; dbPath?: stri
       cwd: PACKAGE_ROOT,
       env: {
         ...process.env,
-        TOKEN_WORK_COLLECTORS: sources || 'claude,codex,workbuddy,cursor'
+        TOKEN_WORK_COLLECTORS: sources || 'claude,codex,workbuddy,codebuddy,cursor'
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true
@@ -1059,7 +1059,7 @@ function printHelp() {
     '',
     'Commands:',
     '  token-work [--db data/usage.sqlite] [--no-collect|--dry-run-only]',
-    '    Default real entry: UI starts first; trusted Claude, Codex, and WorkBuddy collection runs in the background every 300s.',
+    '    Default real entry: UI starts first; trusted Claude, Codex, WorkBuddy, and CodeBuddy collection runs in the background every 300s.',
     '  token-work demo [--seed-only] [--db data/demo.sqlite]',
     '  token-work start [--db data/usage.sqlite] [--api-port 4173|0] [--ui-port 5173|0] [--no-collect|--dry-run-only]',
     '  token-work open [--db data/usage.sqlite] [--api-port 4173|0] [--ui-port 5173|0] [--no-collect|--dry-run-only]',
@@ -1068,15 +1068,15 @@ function printHelp() {
     '  token-work statusline [--db data/usage.sqlite] [--window-minutes 15] [--format text|json]',
     '  token-work collectors [--json]',
     '  token-work collectors --audit [--json]',
-    '  token-work coverage --sources claude,codex,workbuddy,cursor [--json]',
+    '  token-work coverage --sources claude,codex,workbuddy,codebuddy,cursor [--json]',
     '  token-work compare-ccusage --report=session --json --yes',
     '  token-work import-usage --format=ccusage-json --file <path|-> [--device <name>] [--dry-run|--apply] [--yes]',
     '  token-work import-usage --format=ccusage-cli --report=<daily|weekly|monthly|session|blocks> [--dry-run|--apply] [--yes]',
     '  token-work budget list|set|delete',
     '  token-work report --period=week --format=table|markdown|json',
     '  token-work policy --format=markdown|claude-md|agents-md',
-    '  token-work collect --dry-run --sources claude,codex,workbuddy,cursor',
-    '  token-work collect --apply --yes --sources claude,codex,workbuddy',
+    '  token-work collect --dry-run --sources claude,codex,workbuddy,codebuddy,cursor',
+    '  token-work collect --apply --yes --sources claude,codex,workbuddy,codebuddy',
     '  token-work doctor',
     '  token-work privacy-check [--include-untracked]'
   ].join('\n'));

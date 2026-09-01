@@ -104,7 +104,7 @@ export function LiveApp() {
           ...current,
           collectionState: state,
           dataFreshness: 'collecting',
-          staleReason: '正在刷新本机 Claude/Codex 结构化 token 日志。'
+          staleReason: '正在刷新本机可信来源的结构化 token 日志。'
         } : current);
       }
       await waitForCollection();
@@ -583,7 +583,7 @@ function freshnessTitle(value) {
 }
 
 function freshnessMessage(snapshot) {
-  if (snapshot.dataFreshness === 'collecting') return '正在把本地 Claude/Codex 结构化 token 元数据刷新进 SQLite。';
+  if (snapshot.dataFreshness === 'collecting') return '正在把本机可信来源的结构化 token 元数据刷新进 SQLite。';
   if (snapshot.dataFreshness === 'stale') return snapshot.staleReason || '最近窗口没有事件，且后台刷新可能过期。';
   if (snapshot.dataFreshness === 'error') return snapshot.staleReason || '最近一次刷新失败，请打开 /trust 查看采集状态。';
   if (snapshot.dataFreshness === 'empty') return snapshot.staleReason || '当前 SQLite 没有 event 级 token 数据。';

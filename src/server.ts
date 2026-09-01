@@ -103,7 +103,6 @@ const pricingCachePath = process.env.TOKEN_WORK_PRICING_CACHE
 const packageVersion = readPackageVersion();
 const SPA_ROUTES = new Set(['/', '/review', '/live', '/trust']);
 const MAX_INGEST_ROWS = 50_000;
-const COLLECTION_TIMEOUT_MS = 90_000;
 const COLLECTION_STOP_GRACE_MS = 1_500;
 const db = openDb(dbPath);
 let activeCollection = null;
@@ -199,7 +198,7 @@ function stopCollectionAndWait(child) {
       clearTimeout(giveUp);
       resolveStop();
     };
-    const forceKill = setTimeout(() => stopCollection(child, { force: true }), 1500);
+    const forceKill = setTimeout(() => stopCollection(child, { force: true }), COLLECTION_STOP_GRACE_MS);
     const giveUp = setTimeout(done, 2500);
     forceKill.unref?.();
     giveUp.unref?.();
@@ -539,7 +538,7 @@ async function handleApi(req, url, res) {
       return;
     }
     const coverage = await collectionCoverageDryRun({
-      sources: url.searchParams.get('sources') || 'claude,codex,workbuddy,cursor'
+      sources: url.searchParams.get('sources') || 'claude,codex,workbuddy,codebuddy,cursor'
     });
     lastCoverageGate = summarizeCoverageGate(inputRecord(coverage));
     sendJson(res, coverage);
@@ -1100,7 +1099,7 @@ function startCollection({ reason = 'manual' } = {}) {
     return false;
   }
 
-  const sources = 'claude,codex,workbuddy';
+  const sources = 'claude,codex,workbuddy,codebuddy';
   const args = ['src/collect.ts', '--apply', '--yes', '--sources', sources, '--json'];
   const device = collectionDevice();
   if (device) args.push('--device', device);
@@ -1124,9 +1123,7 @@ function startCollection({ reason = 'manual' } = {}) {
   activeCollection = child;
   let stdout = '';
   let stderr = '';
-  let timedOut = false;
   let completed = false;
-  let forceStopTimer = null;
   const startedAt = new Date().toISOString();
   collectionState = {
     status: 'running',
@@ -1145,26 +1142,9 @@ function startCollection({ reason = 'manual' } = {}) {
   child.stdout.on('data', chunk => { stdout += chunk; });
   child.stderr.on('data', chunk => { stderr += chunk; });
 
-  const timeout = setTimeout(() => {
-    if (activeCollection !== child || child.exitCode != null) return;
-    timedOut = true;
-    stopCollection(child);
-    forceStopTimer = setTimeout(() => {
-      if (activeCollection !== child || completed) return;
-      stopCollection(child, { force: true });
-      // Do not leave the interface in "collecting" when a child keeps its
-      // stdio handles open after it has been terminated.
-      complete(null);
-    }, COLLECTION_STOP_GRACE_MS);
-    forceStopTimer.unref?.();
-  }, COLLECTION_TIMEOUT_MS);
-  timeout.unref?.();
-
   const complete = code => {
     if (completed || activeCollection !== child) return;
     completed = true;
-    clearTimeout(timeout);
-    clearTimeout(forceStopTimer);
     activeCollection = null;
     if (collectionAlreadyRunning(stderr)) {
       collectionState = {
@@ -1185,8 +1165,8 @@ function startCollection({ reason = 'manual' } = {}) {
       lastCoverageGate = summarizeCoverageGate(parsedSummary);
     }
     collectionState = {
-      status: !timedOut && code === 0 ? 'ok' : 'error',
-      message: collectionResultMessage({ timedOut, code, stderr }),
+      status: code === 0 ? 'ok' : 'error',
+      message: collectionResultMessage({ code, stderr }),
       exitCode: code,
       startedAt,
       finishedAt: new Date().toISOString(),
@@ -1203,8 +1183,6 @@ function startCollection({ reason = 'manual' } = {}) {
   child.on('error', error => {
     if (completed || activeCollection !== child) return;
     completed = true;
-    clearTimeout(timeout);
-    clearTimeout(forceStopTimer);
     activeCollection = null;
     collectionState = {
       ...collectionState,
@@ -1227,8 +1205,7 @@ function startCollection({ reason = 'manual' } = {}) {
   return true;
 }
 
-function collectionResultMessage({ timedOut, code, stderr }) {
-  if (timedOut) return '采集超过 90 秒，已停止。请稍后重试。';
+function collectionResultMessage({ code, stderr }) {
   if (code === 0) return '采集完成';
   const detail = String(stderr || '')
     .split(/\r?\n/)
@@ -1744,7 +1721,7 @@ function summarizeCollectState(summary) {
   };
 }
 
-function collectionCoverageDryRun({ sources = 'claude,codex,workbuddy,cursor' } = {}) {
+function collectionCoverageDryRun({ sources = 'claude,codex,workbuddy,codebuddy,cursor' } = {}) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [
       resolve(process.cwd(), 'src', 'collect.ts'),

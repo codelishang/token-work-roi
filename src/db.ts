@@ -995,9 +995,17 @@ export function normalizeTokenEvent(row: InputRecord = {}) {
   };
 }
 
-export function upsertTokenEvent(db, row: InputRecord = {}) {
-  const event = normalizeTokenEvent(row);
-  const upsert = db.prepare(`
+const tokenEventStatements = new WeakMap<DatabaseSync, {
+  upsert: ReturnType<DatabaseSync['prepare']>;
+  owner: ReturnType<DatabaseSync['prepare']>;
+}>();
+
+function tokenEventStatementsFor(db: DatabaseSync) {
+  const cached = tokenEventStatements.get(db);
+  if (cached) return cached;
+
+  const statements = {
+    upsert: db.prepare(`
     INSERT INTO token_events (
       event_id, device, source, session_id, timestamp, model,
       input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
@@ -1036,24 +1044,33 @@ export function upsertTokenEvent(db, row: InputRecord = {}) {
         OR token_events.repo_path_hash IS NOT excluded.repo_path_hash
         OR token_events.privacy_level != excluded.privacy_level
       )
-  `);
-  let result = runTokenEventUpsert(upsert, event);
+  `),
+    owner: db.prepare(`
+      SELECT 1 FROM token_events
+      WHERE event_id = ? AND device = ? AND source = ?
+    `)
+  };
+  tokenEventStatements.set(db, statements);
+  return statements;
+}
+
+export function upsertTokenEvent(db: DatabaseSync, row: InputRecord = {}) {
+  const event = normalizeTokenEvent(row);
+  const statements = tokenEventStatementsFor(db);
+  let result = runTokenEventUpsert(statements.upsert, event);
   if (result.changes === 0) {
-    if (tokenEventHasOwner(db, event)) return event;
+    if (tokenEventHasOwner(statements.owner, event)) return event;
     event.eventId = scopedTokenEventId(event);
-    result = runTokenEventUpsert(upsert, event);
-    if (result.changes === 0 && !tokenEventHasOwner(db, event)) {
+    result = runTokenEventUpsert(statements.upsert, event);
+    if (result.changes === 0 && !tokenEventHasOwner(statements.owner, event)) {
       throw new Error('token event id collision could not be resolved');
     }
   }
   return event;
 }
 
-function tokenEventHasOwner(db, event) {
-  return Boolean(db.prepare(`
-    SELECT 1 FROM token_events
-    WHERE event_id = ? AND device = ? AND source = ?
-  `).get(event.eventId, event.device, event.source));
+function tokenEventHasOwner(statement: ReturnType<DatabaseSync['prepare']>, event: ReturnType<typeof normalizeTokenEvent>) {
+  return Boolean(statement.get(event.eventId, event.device, event.source));
 }
 
 function runTokenEventUpsert(statement, event) {

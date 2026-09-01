@@ -103,6 +103,17 @@ export const COLLECTOR_REGISTRY = [
     privacyLevel: 'metadata-only',
     roots: () => [configuredPath('workbuddy', 'tracesDir', '~/.workbuddy/traces')]
   }),
+  stableCollector('codebuddy', 'CodeBuddy', './collectors/codebuddy.ts', {
+    privacyLevel: 'metadata-only',
+    roots: () => configuredPaths('codebuddy', 'logsRoots', [
+      '~/Library/Application Support/CodeBuddy CN/logs',
+      '~/Library/Application Support/CodeBuddy/logs',
+      '${APPDATA}/CodeBuddy CN/logs',
+      '${APPDATA}/CodeBuddy/logs',
+      '~/.config/CodeBuddy CN/logs',
+      '~/.config/CodeBuddy/logs'
+    ])
+  }),
   importOnlyCollector('ccusage', 'ccusage Import Bridge', {
     roots: () => configuredPaths('ccusage', 'roots', []),
     note: 'Import-only: use token-work import-usage --format=ccusage-json for saved JSON or --format=ccusage-cli for an explicit ccusage CLI bridge.'

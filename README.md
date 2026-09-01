@@ -52,7 +52,7 @@
 npx token-work
 ```
 
-默认入口会先打开浏览器页面，再每 5 分钟在后台采集 Claude Code、Codex 和 WorkBuddy 的可信事件级记录。Codex 会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex；WorkBuddy 的 `auto` 模式只在本机 trace 或 session 元数据能确定唯一实际模型时写入。采集通过可信门槛后，元衡会更新本地 SQLite。
+默认入口会先打开浏览器页面，再每 5 分钟在后台采集 Claude Code、Codex、WorkBuddy 和 CodeBuddy 的可信事件级记录。Codex 会根据客户端元数据标为 Codex CLI、Codex Desktop 或 Codex；WorkBuddy 的 `auto` 模式只在本机 trace 或 session 元数据能确定唯一实际模型时写入。CodeBuddy 只将同一 BaseAgent 的模型初始化记录关联到随后的一个完成用量；没有对应记录时才标为 `unknown`，不猜测成本。采集通过可信门槛后，元衡会更新本地 SQLite。
 普通定时写入最多每 24 小时创建一份完整备份；数据修复前会单独备份。新的受管备份创建成功后只保留最新一份，避免高频写盘和长期堆积。
 
 首次使用只想看界面，可以选择以下方式：
@@ -90,7 +90,7 @@ node src/cli.ts
 
 | 类型 | 来源 |
 |---|---|
-| 稳定采集 | Claude Code、Codex（CLI、Desktop 或未识别客户端）、Gemini CLI、OpenCode、OpenClaw、Hermes Agent、WorkBuddy |
+| 稳定采集 | Claude Code、Codex（CLI、Desktop 或未识别客户端）、Gemini CLI、OpenCode、OpenClaw、Hermes Agent、WorkBuddy、CodeBuddy |
 | 实验采集 | Cursor、GitHub Copilot CLI、Qwen Code、Kimi、Goose |
 | 外部导入 | ccusage JSON、ccusage CLI 以及兼容的结构化 JSON |
 

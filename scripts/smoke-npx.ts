@@ -107,9 +107,13 @@ function createCollectorFixture(root) {
   const claudeProject = join(root, 'claude', 'projects', 'token-work');
   const codexHome = join(root, 'codex');
   const cursorRoot = join(root, 'cursor');
+  const workBuddyRoot = join(root, 'workbuddy');
+  const codeBuddyRoot = join(root, 'codebuddy');
   mkdirSync(claudeProject, { recursive: true });
   mkdirSync(join(codexHome, 'sessions'), { recursive: true });
   mkdirSync(cursorRoot, { recursive: true });
+  mkdirSync(workBuddyRoot, { recursive: true });
+  mkdirSync(codeBuddyRoot, { recursive: true });
   writeFileSync(join(claudeProject, 'claude-session.jsonl'), [
     JSON.stringify({
       type: 'assistant',
@@ -132,7 +136,9 @@ function createCollectorFixture(root) {
     collectors: {
       claude: { roots: [join(root, 'claude')], includeDesktopLocalAgent: false },
       codex: { homes: [codexHome], sessionSubdirs: ['sessions'] },
-      cursor: { roots: [cursorRoot] }
+      cursor: { roots: [cursorRoot] },
+      workbuddy: { tracesDir: workBuddyRoot },
+      codebuddy: { logsRoots: [codeBuddyRoot] }
     }
   }), 'utf8');
 }

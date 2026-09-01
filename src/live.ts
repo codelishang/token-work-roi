@@ -184,7 +184,7 @@ export function buildLiveDataFreshness({
   if (collectionStatus === 'running') {
     return {
       dataFreshness: 'collecting',
-      staleReason: '正在刷新本地 Claude/Codex 结构化 token 日志。'
+      staleReason: '正在刷新本机可信来源的结构化 token 日志。'
     };
   }
   if (collectionStatus === 'error') {

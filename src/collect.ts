@@ -312,7 +312,9 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
     payloads.push({
       type: 'data', device, source: label, sourceSummary, label, module,
       dailyRows, sessionRows, eventRows, reconciliation,
-      incremental: incrementalRefresh
+      // CodeBuddy logs are append-only and may rotate. Its stable event IDs
+      // must be merged without treating a missing old line as a deletion.
+      incremental: incrementalRefresh || id === 'codebuddy'
     });
   }
 
@@ -331,11 +333,13 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
       && payload.sourceSummary.id === 'codex'
       && codexSourceMigrationWouldChange(db, payload));
     const deletesStoredUsage = storedUsageWouldBeDeleted(db, payloads);
-    const rebuildsWorkBuddyUsage = payloads.some(payload =>
-      workBuddyLegacyEventCopies(db, payload).length > 0 || workBuddyEventModelsWouldChange(db, payload)
+    const rebuildsEventUsage = payloads.some(payload =>
+      workBuddyLegacyEventCopies(db, payload).length > 0
+      || workBuddyEventModelsWouldChange(db, payload)
+      || codeBuddyEventModelsWouldChange(db, payload)
     );
     const protectedMutation = needsStoredUsageRepair || hasClaudePlaceholders
-      || hasCodexMigration || deletesStoredUsage || rebuildsWorkBuddyUsage;
+      || hasCodexMigration || deletesStoredUsage || rebuildsEventUsage;
     const shouldBackup = protectedMutation || tokenUsageWouldChange(db, payloads);
     summary.backup = shouldBackup
       ? createSqliteBackup(db, dbPath, scheduled
@@ -394,6 +398,7 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
       runInTransaction(db, () => {
         const removedWorkBuddyEvents = removeWorkBuddyLegacyEventCopies(db, payload);
         const rebuildWorkBuddy = removedWorkBuddyEvents > 0 || workBuddyEventModelsWouldChange(db, payload);
+        const rebuildCodeBuddy = codeBuddyEventModelsWouldChange(db, payload);
         applyEventReconciliation(db, payload);
         dailyRows.forEach(row => upsertDaily(db, row));
         sessionRows.forEach(row => upsertSession(db, row));
@@ -407,8 +412,8 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
           }
           upsertTokenEvent(db, row);
         }
-        if (rebuildWorkBuddy) {
-          rebuildWorkBuddyUsage(db, payload, pricingData);
+        if (rebuildWorkBuddy || rebuildCodeBuddy) {
+          rebuildNativeEventUsage(db, payload, pricingData);
         }
         recordCollectionRun(db, run, scheduled);
       });
@@ -477,6 +482,19 @@ function workBuddyEventModelsWouldChange(db, payload) {
   });
 }
 
+function codeBuddyEventModelsWouldChange(db, payload) {
+  if (payload.type !== 'data' || payload.sourceSummary.id !== 'codebuddy') return false;
+  const existing = db.prepare(`
+    SELECT model FROM token_events
+    WHERE event_id = ? AND device = ? AND source = ?
+    LIMIT 1
+  `);
+  return payload.eventRows.some(row => {
+    const stored = existing.get(row.eventId, row.device, row.source);
+    return stored && stored.model !== row.model;
+  });
+}
+
 function workBuddyEventFingerprint(row) {
   return JSON.stringify([
     row.timestamp,
@@ -501,7 +519,7 @@ function removeWorkBuddyLegacyEventCopies(db, payload) {
   return eventIds.length;
 }
 
-function rebuildWorkBuddyUsage(db, payload, pricingData) {
+function rebuildNativeEventUsage(db, payload, pricingData) {
   const source = payload.label;
   const dailyRows = db.prepare(`
     SELECT date(timestamp, '+8 hours') AS usageDate, model,
@@ -1192,7 +1210,7 @@ function mergeHistoricalEventUsage(db, payload, pricingData) {
       ])]
     : payloadSources(payload);
   for (const source of sources) {
-    if (payload.incremental && ['codex', 'workbuddy'].includes(payload.sourceSummary.id)) {
+    if (payload.incremental && ['codex', 'workbuddy', 'codebuddy'].includes(payload.sourceSummary.id)) {
       rebuildIncrementalEventUsage(db, payload, source, pricingData);
       continue;
     }

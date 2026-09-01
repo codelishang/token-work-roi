@@ -11,7 +11,7 @@ npm run build
 npm run privacy:check
 npm run pricing:update
 node src/cli.ts privacy-check --include-untracked
-node src/cli.ts coverage --sources=claude,codex,workbuddy,cursor --json
+node src/cli.ts coverage --sources=claude,codex,workbuddy,codebuddy,cursor --json
 npm view token-work version
 npm audit --audit-level=low --registry=https://registry.npmjs.org
 npm run smoke:npx
@@ -63,7 +63,7 @@ TOKEN_WORK_CAPTURE_REAL=1 node scripts/capture-real-screenshots.ts
 - Fallback package name if unavailable: `tokenroi`.
 - Primary one-command real-data path: `npx token-work`.
 - Demo-only path: `npx token-work demo`.
-- Troubleshooting paths: use `npx token-work coverage --sources=claude,codex,workbuddy,cursor` to inspect source coverage, or `npx token-work --no-collect` to open the current SQLite without collection.
+- Troubleshooting paths: use `npx token-work coverage --sources=claude,codex,workbuddy,codebuddy,cursor` to inspect source coverage, or `npx token-work --no-collect` to open the current SQLite without collection.
 - Do not publish until `npm pack --dry-run` shows no SQLite databases, logs, `.env`, `.claude`, `.codex`, or `node_modules`; the built `dist/` directory is required.
 - `prepack` builds `dist/` and generates `dist-runtime/` for the tarball. Both remain ignored by Git; Docker builds its own copies.
 - Do not publish until the tarball includes `data/official-pricing.json`, `docs/demo-data/token-work-demo.json`, `LICENSE`, `COMMERCIAL-LICENSE.md`, `NOTICE.md`, `PRIVACY.md`, and no deprecated pricing cache files.
