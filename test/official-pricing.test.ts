@@ -433,20 +433,20 @@ test('calculates Claude prompt-cache costs', () => {
   ));
 });
 
-test('recognizes refreshed Grok 4.5 and Claude Fable 5 models', () => {
+test('prices Claude Fable 5.1 with the official cache read and write rates', () => {
   const grok = calculateOfficialCost('xai/grok-4-5', {
     input: 1_000_000,
     cacheRead: 1_000_000,
     cacheWrite: 1_000_000,
     output: 1_000_000
   });
-  const fable = calculateOfficialCost('claude-fable-5', {
+  const fable = calculateOfficialCost('claude-fable-5.1', {
     input: 1_000_000,
     cacheRead: 1_000_000,
     cacheWrite: 1_000_000,
     output: 1_000_000
   });
-  const fableHour = calculateOfficialCost('claude-fable-5', {
+  const fableHour = calculateOfficialCost('claude-fable-5.1', {
     cacheWrite: 1_000_000
   }, { anthropicCacheWriteTtl: '1h' });
 
@@ -455,21 +455,24 @@ test('recognizes refreshed Grok 4.5 and Claude Fable 5 models', () => {
   assert.equal(grok.resolvedModel, 'grok-4.5');
   assert.equal(fable.priced, true);
   assert.equal(fable.provider, 'anthropic');
-  assert.equal(fable.resolvedModel, 'claude-fable-5');
-  assert.ok(fableHour.ratesPerMTok.cacheWrite > 0);
+  assert.equal(fable.resolvedModel, 'claude-fable-5.1');
+  assert.equal(fable.ratesPerMTok.cachedInput, 0.25);
+  assert.equal(fable.ratesPerMTok.cacheWrite, 12.5);
+  assert.equal(fableHour.ratesPerMTok.cacheWrite, 20);
 });
 
-test('calculates Claude Mythos 5 official price', () => {
-  const cost = calculateOfficialCost('anthropic/claude-mythos-5', {
+test('prices Claude Mythos 5.1 without inventing cache discounts', () => {
+  const cost = calculateOfficialCost('anthropic/claude-mythos-5.1', {
     input: 1_000_000,
     cacheRead: 1_000_000,
     output: 1_000_000
   });
 
   assert.equal(cost.priced, true);
-  assert.equal(cost.resolvedModel, 'claude-mythos-5');
+  assert.equal(cost.resolvedModel, 'claude-mythos-5.1');
   assert.equal(cost.provider, 'anthropic');
   assert.equal(cost.source.url, 'https://www.anthropic.com/claude/mythos');
+  assert.equal(cost.ratesPerMTok.cachedInput, 10);
 });
 
 test('supports official DeepSeek and Xiaomi cache-hit pricing', () => {

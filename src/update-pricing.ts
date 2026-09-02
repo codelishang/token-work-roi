@@ -530,20 +530,20 @@ function parseAnthropicModels(body) {
       label: tableText(card).toLowerCase(),
       input: values[0],
       output: values[1],
-      cacheWrite5m: values[2],
+      cachedInput: values[2],
+      cacheWrite5m: values[3],
       cacheWrite1h: values[0] * 2,
-      cachedInput: values[3]
     };
   }).filter(Boolean);
 
   const opus = rates.find(rate => rate.label.includes('opus 4.8'));
   const opus5 = rates.find(rate => /opus\s+5(?![.-]\d)/.test(rate.label));
-  const fable = rates.find(rate => rate.label.includes('fable 5'));
+  const fable51 = rates.find(rate => rate.label.includes('fable 5.1'));
   const sonnet5 = rates.find(rate => rate.label.includes('sonnet 5'));
   const sonnet = rates.find(rate => rate.label.includes('sonnet 4.6'));
   const haiku = rates.find(rate => rate.label.includes('haiku 4.5'));
   return [
-    rateModel('anthropic', 'claude-fable-5', fable, 'anthropic', 'official-page', null, 'First-party Claude Fable 5 pricing; cache write defaults to 5-minute prompt caching.'),
+    rateModel('anthropic', 'claude-fable-5.1', fable51, 'anthropic', 'official-page', null, 'First-party Claude Fable 5.1 pricing; cache write defaults to 5-minute prompt caching.'),
     rateModel('anthropic', 'claude-opus-5', opus5, 'anthropic'),
     ...['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6'].map(model => rateModel('anthropic', model, opus, 'anthropic')),
     rateModel('anthropic', 'claude-sonnet-5', sonnet5, 'anthropic', 'official-page', null, 'Claude Sonnet 5 introductory pricing through August 31, 2026; standard pricing is USD 3/15 per MTok afterward.'),
@@ -555,17 +555,17 @@ function parseAnthropicModels(body) {
 function parseAnthropicMythosModels(body) {
   const text = tableText(body).replace(/\|/g, ' ').replace(/\s+/g, ' ');
   const match = text.match(
-    /Pricing for Claude Mythos 5 starts at \s*\$\s*([0-9.]+) per million input tokens and \s*\$\s*([0-9.]+) per million output tokens/i
+    /Pricing for Claude Mythos 5\.1 starts at \s*\$\s*([0-9.]+) per million input tokens and \s*\$\s*([0-9.]+) per million output tokens/i
   );
   if (!match) return [];
   const input = Number(match[1]);
-  return [rateModel('anthropic', 'claude-mythos-5', {
+  return [rateModel('anthropic', 'claude-mythos-5.1', {
     input,
     cachedInput: input,
     cacheWrite5m: input,
     cacheWrite1h: input,
     output: Number(match[2])
-  }, 'anthropic-mythos', 'official-page', null, 'Claude Mythos 5 is limited to vetted trusted-access partners; separate prompt-cache rates are not published.')];
+  }, 'anthropic-mythos', 'official-page', null, 'Claude Mythos 5.1 is limited to vetted trusted-access partners; separate prompt-cache rates are not published.')];
 }
 
 function parseXaiModels(body) {
