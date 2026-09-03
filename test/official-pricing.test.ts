@@ -348,6 +348,7 @@ test('calculates Alibaba Cloud official prices for Qwen3.8 and MiniMax-M3', () =
 
 test('recognizes other current cross-provider model ids without inventing prices', () => {
   const cases = [
+    ['gemini-3.8-flash', 'Gemini'],
     ['gemini-3.7-flash', 'Gemini'],
     ['grok-4.6', 'xai']
   ];

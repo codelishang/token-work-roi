@@ -39,6 +39,7 @@ const STABLE_ALIASES = new Map([
   ['deepseek::deepseek-v4-flash', ['deepseek-v4-flash', 'deepseek-v4-flash-0731', 'deepseek-chat', 'deepseek-reasoner']],
   ['minimax::minimax-m3', ['minimax-m3', 'minimax-m-3']],
   ['xai::grok-4-6', ['grok-4.6', 'grok-4-6']],
+  ['gemini::gemini-3-8-flash', ['gemini-3.8-flash', 'gemini-3-8-flash']],
   ['gemini::gemini-3-7-flash', ['gemini-3.7-flash', 'gemini-3-7-flash']],
   ['xiaomi::mimo-v2.5-pro', ['mimo-v2.5-pro', 'mimo-v2-pro']],
   ['zhipu glm::glm-5-3', ['glm-5.3', 'glm-5-3']],
@@ -722,6 +723,7 @@ function volcengineApiPrice(rows, chargeKind) {
 
 function parseGeminiModels(body) {
   const models = [
+    ['gemini-3.8-flash', 'gemini-3.8-flash', 0],
     ['gemini-3.7-flash', 'gemini-3.7-flash', 0],
     ['gemini-3.5-flash', 'gemini-3.5-flash', 0],
     ['gemini-3.1-flash-lite', 'gemini-3.1-flash-lite', 0],
