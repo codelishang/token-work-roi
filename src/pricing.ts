@@ -765,6 +765,14 @@ export const OFFICIAL_PRICE_TABLE = [
   }),
   officialRate({
     provider: "Gemini",
+    model: "gemini-3.8-flash",
+    aliases: ["gemini-3-8-flash"],
+    source: "Gemini",
+    unavailableReason: "Gemini 3.8 Flash is recognized, but its official API rate has not been synchronized to the local price cache. This does not mean the model is free or has no price.",
+    note: "Costs remain uncalculated until the official Gemini API rate is refreshed."
+  }),
+  officialRate({
+    provider: "Gemini",
     model: "gemini-3.7-flash",
     aliases: ["gemini-3-7-flash"],
     source: "Gemini",
