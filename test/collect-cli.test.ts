@@ -291,6 +291,31 @@ test('scheduled WorkBuddy collection updates only changed traces without losing 
   }
 });
 
+test('manual WorkBuddy refresh rereads an unchanged trace without widening scheduled scans', async () => {
+  const fixture = createWorkBuddyIdentityFixture();
+  try {
+    const first = await runNode([
+      'src/collect.ts', '--sources=workbuddy', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], fixture.env);
+    assert.equal(first.code, 0, first.stderr);
+
+    const oldTime = new Date(Date.now() - 60_000);
+    utimesSync(fixture.tracePath, oldTime, oldTime);
+    const refreshed = await runNode([
+      'src/collect.ts', '--sources=workbuddy', '--db', fixture.dbPath, '--apply', '--yes', '--json'
+    ], {
+      ...fixture.env,
+      TOKEN_WORK_COLLECT_REASON: 'live-refresh',
+      TOKEN_WORK_SCHEDULED_INCREMENTAL: '1',
+      TOKEN_WORK_FULL_REFRESH_SOURCES: 'workbuddy'
+    });
+    assert.equal(refreshed.code, 0, refreshed.stderr);
+    assert.equal(JSON.parse(refreshed.stdout).sources[0].tokenEvents, 1);
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
 test('collect does not recount token history copied into a forked Codex session', async () => {
   const fixture = createForkedCodexFixture();
   try {
