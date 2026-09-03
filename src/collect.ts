@@ -55,6 +55,7 @@ async function main() {
   const enabled = enabledCollectors(args);
   const scheduled = isScheduledCollection();
   const incrementalRefresh = isIncrementalMetadataRefresh();
+  const fullRefreshSources = forcedFullRefreshSources();
   const includeExperimental = Boolean(args.sources || args.collectors || args.experimental);
   const collectors = collectableCollectors({ includeExperimental }).filter(({ id }) => enabled.has(id));
   const exportPayload = {
@@ -120,7 +121,8 @@ async function main() {
       exportPayload,
       summary,
       scheduled,
-      incrementalRefresh
+      incrementalRefresh,
+      fullRefreshSources
     });
     if (args.push) {
       if (mode !== 'apply') throw new Error('--push is only available with --apply.');
@@ -218,7 +220,7 @@ function releaseCollectionLock(lockPath) {
   }
 }
 
-async function collectLocal({ collectors, mode, db, dbPath, pricingData, device, collectedAt, exportPayload, summary, scheduled, incrementalRefresh }) {
+async function collectLocal({ collectors, mode, db, dbPath, pricingData, device, collectedAt, exportPayload, summary, scheduled, incrementalRefresh, fullRefreshSources }) {
   if (!collectors.length) return;
 
   const payloads = [];
@@ -258,7 +260,7 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
 
     try {
       const collectorModule = await import(module);
-      const changedAfterMs = incrementalRefresh && db
+      const changedAfterMs = incrementalRefresh && db && !fullRefreshSources.has(id)
         ? metadataRefreshSince(db, device, label)
         : null;
       const metadataSessionPrefixes = incrementalRefresh && db && id === 'codex'
@@ -1471,6 +1473,15 @@ function isScheduledCollection() {
 function isIncrementalMetadataRefresh() {
   return ['scheduled', 'live-refresh', 'manual'].includes(process.env.TOKEN_WORK_COLLECT_REASON)
     && process.env.TOKEN_WORK_SCHEDULED_INCREMENTAL === '1';
+}
+
+function forcedFullRefreshSources() {
+  return new Set(
+    String(process.env.TOKEN_WORK_FULL_REFRESH_SOURCES || '')
+      .split(',')
+      .map(value => value.trim())
+      .filter(Boolean)
+  );
 }
 
 function metadataRefreshSince(db, device, source) {

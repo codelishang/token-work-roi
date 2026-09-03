@@ -1114,7 +1114,12 @@ function startCollection({ reason = 'manual' } = {}) {
       TOKEN_WORK_COLLECT_REASON: reason,
       // The server refreshes an existing database. A first run has no prior
       // collection record and therefore still falls back to a full scan.
-      TOKEN_WORK_SCHEDULED_INCREMENTAL: '1'
+      TOKEN_WORK_SCHEDULED_INCREMENTAL: '1',
+      // WorkBuddy may keep a trace open without advancing its file mtime.
+      // A user-requested refresh must still reread its structured usage.
+      TOKEN_WORK_FULL_REFRESH_SOURCES: reason === 'live-refresh' || reason === 'manual'
+        ? 'workbuddy'
+        : ''
     },
     detached: process.platform !== 'win32',
     windowsHide: true
