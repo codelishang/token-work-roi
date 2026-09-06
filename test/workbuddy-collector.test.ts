@@ -93,6 +93,107 @@ test('WorkBuddy collector exports correct constants', () => {
   assert.equal(SOURCE_LABEL, 'WorkBuddy');
 });
 
+test('WorkBuddy reads in-progress responses for any actual model and deduplicates message snapshots', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'token-work-wb-project-'));
+  const { dir, configPath } = makeConfig(join(baseDir, 'traces'), join(baseDir, 'sessions'));
+  const projects = join(dir, 'projects', 'workspace', 'session', 'subagents');
+  mkdirSync(projects, { recursive: true });
+  const models = ['glm-5.3-flash', 'hy4-preview', 'deepseek-v4-pro', 'claude-opus-5', 'gemini-3.8-flash', 'gpt-6-astra', 'future-provider-model'];
+  const rows = models.map((model, i) => ({
+    id: `row-${i}`, type: i % 2 ? 'function_call' : 'message', role: 'assistant',
+    timestamp: Date.parse('2026-09-05T15:24:00Z'), sessionId: 'auto-session',
+    content: 'private response', arguments: 'private arguments',
+    providerData: {
+      messageId: `response-${i}`, model, requestModelId: 'auto',
+      rawUsage: { prompt_tokens: 100, completion_tokens: 20, prompt_cache_hit_tokens: 60, prompt_cache_write_tokens: 10, completion_thinking_tokens: 5 }
+    },
+    message: { usage: { input_tokens: 100, output_tokens: 20 } }
+  }));
+  // SDK response_done and persisted providerData.usage use this schema.
+  for (const i of [1, 3, 5]) {
+    const sdkUsage = {
+      requests: 1, inputTokens: 100, outputTokens: 20, totalTokens: 120,
+      inputTokensDetails: i === 1 ? { cached_tokens: 60 } : [{ cached_tokens: 60 }],
+      outputTokensDetails: i === 1 ? { reasoning_tokens: 5 } : [{ reasoning_tokens: 5 }],
+      cacheCreationInputTokens: 10
+    };
+    const provider = rows[i].providerData as Record<string, unknown>;
+    if (i === 5) {
+      delete provider.rawUsage;
+      provider.usage = sdkUsage;
+      rows[i].type = 'reasoning';
+    } else provider.rawUsage = sdkUsage;
+  }
+  writeFileSync(join(projects, 'agent.jsonl'), [
+    { ...rows[0], timestamp: 1e20 },
+    ...rows, ...rows,
+    { ...rows[0], type: 'function_call_result', providerData: { ...rows[0].providerData, messageId: 'tool-result' } },
+    { ...rows[0], providerData: { ...rows[0].providerData, model: 'auto', messageId: 'unresolved' } },
+    { ...rows[0], providerData: { ...rows[0].providerData, messageId: 'invalid', rawUsage: { prompt_tokens: 10, completion_tokens: 2, prompt_cache_hit_tokens: 20 } } }
+  ].map(row => JSON.stringify(row)).join('\r\n') + '\r\n{"unfinished":');
+  process.env.TOKEN_WORK_CONFIG = configPath;
+  resetConfigCache();
+  try {
+    const result = await collect();
+    assert.deepEqual(result.tokenEvents.map(event => event.model), models);
+    for (const event of result.tokenEvents) {
+      assert.deepEqual([event.inputTokens, event.outputTokens, event.cacheReadTokens, event.cacheCreationTokens, event.reasoningTokens], [30, 15, 60, 10, 5]);
+    }
+    assert.equal(result.audit.usableTokenRecords, models.length);
+    assert.equal(result.modelsJson.entries.length, 1);
+    const session = result.modelsJson.entries[0];
+    assert.equal(session.input + session.output + session.cacheRead + session.cacheWrite + session.reasoning, models.length * 120);
+    assert.equal(result.audit.skippedUnresolvedModel, 1);
+    assert.equal(result.audit.parseErrors, 3);
+    assert.doesNotMatch(JSON.stringify(result), /private response|private arguments/);
+    assert.equal((await collect(null, { changedAfterMs: Date.now() + 60_000 })).tokenEvents.length, 0);
+  } finally {
+    delete process.env.TOKEN_WORK_CONFIG;
+    resetConfigCache();
+    rmSync(baseDir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('WorkBuddy keeps the actual response model and complete usage when a partial auto trace arrives', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'token-work-wb-stream-'));
+  const tracesDir = join(baseDir, 'traces');
+  const { dir, configPath } = makeConfig(tracesDir, join(baseDir, 'sessions'));
+  const projectDir = join(dir, 'projects');
+  mkdirSync(projectDir);
+  const record = {
+    id: 'streamed-response', type: 'message', role: 'assistant',
+    timestamp: '2026-09-05T15:24:00Z', sessionId: 'session',
+    providerData: {
+      messageId: 'streamed-response', model: 'glm-5.3-flash', requestModelId: 'auto',
+      usage: { requests: 1, inputTokens: 100, outputTokens: 20, totalTokens: 120 }
+    }
+  };
+  writeFileSync(join(projectDir, 'session.jsonl'), [record, {
+    ...record, providerData: { ...record.providerData, usage: { ...record.providerData.usage, outputTokens: 5, totalTokens: 105 } }
+  }].map(row => JSON.stringify(row)).join('\n'));
+  const span = makeGenerationSpan('span-partial', null, 'auto', { prompt_tokens: 100, completion_tokens: 5 });
+  const response = JSON.parse(span.toolOutput);
+  response[0].id = record.id;
+  span.toolOutput = JSON.stringify(response);
+  makeTraceFile(tracesDir, 12345, 'trace_partial', [span], { models: ['hy3'] });
+  process.env.TOKEN_WORK_CONFIG = configPath;
+  resetConfigCache();
+  try {
+    const result = await collect();
+    assert.equal(result.tokenEvents.length, 1);
+    assert.equal(result.tokenEvents[0].model, 'glm-5.3-flash');
+    assert.equal(result.tokenEvents[0].inputTokens + result.tokenEvents[0].outputTokens, 120);
+    assert.equal(result.tokenEvents[0].sessionId, 'workbuddy:trace_partial');
+    assert.equal(result.tokenEvents[0].legacyEventIds.length, 1);
+  } finally {
+    delete process.env.TOKEN_WORK_CONFIG;
+    resetConfigCache();
+    rmSync(baseDir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('WorkBuddy collector returns empty result when traces dir does not exist', async () => {
   const { dir, configPath } = makeConfig('/nonexistent/traces', '/nonexistent/sessions');
   process.env.TOKEN_WORK_CONFIG = configPath;

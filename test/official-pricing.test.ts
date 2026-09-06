@@ -98,6 +98,19 @@ test('recognizes refreshed OpenAI GPT-5.6 models and aliases', () => {
   assert.equal(luna.resolvedModel, 'gpt-5.6-luna');
 });
 
+test('calculates the official GPT-6 Astra API rate', () => {
+  const astra = calculateOfficialCost('openai/gpt-6-astra', {
+    input: 1_000_000,
+    cacheRead: 1_000_000,
+    cacheWrite: 1_000_000,
+    output: 1_000_000
+  });
+
+  assert.equal(astra.priced, true);
+  assert.equal(astra.resolvedModel, 'gpt-6-astra');
+  assert.equal(astra.totalUSD, 73.5);
+});
+
 test('keeps normalized official pricing aliases unique', () => {
   for (const rate of OFFICIAL_PRICE_TABLE) {
     assert.equal(new Set(rate.aliases).size, rate.aliases.length, rate.model);
@@ -244,6 +257,8 @@ test('prices GLM-5.3 and GLM-5.3-Flash from current official RMB rates', () => {
   assert.equal(glm53.resolvedModel, 'glm-5.3');
   assert.equal(flash.priced, true);
   assert.equal(flash.resolvedModel, 'glm-5.3-flash');
+  assert.equal(flash.model, 'glm-5.3-flash');
+  assert.equal(calculateOfficialCost('glm-99-1-flash', {}).model, 'glm-99.1-flash');
   assert.equal(rate.officialRatesPerMTok.currency, 'CNY');
 
   const exchangeRate = Number(rate.officialRatesPerMTok.exchangeRate);

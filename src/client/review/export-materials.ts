@@ -139,7 +139,7 @@ export function buildProfessionalEvidencePack({
 }
 
 export function buildTechnicalBlogDraft({
-  period = {},
+  period: _period = {},
   sessions = [],
   totals = {},
   localTrust = null,

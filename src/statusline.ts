@@ -7,16 +7,20 @@ export function buildStatuslineSnapshot(db, {
   source = 'all'
 } = {}) {
   const sourceFilter = normalizeSourceFilter(source);
-  const tokenEvents = listTokenEvents(db, { limit: 5000 })
-    .filter(event => sourceMatches(event.source, sourceFilter));
+  const safeWindowMinutes = Math.max(1, Number(windowMinutes) || 15);
+  const nowMs = new Date(now).getTime();
   const budgetProfiles = listBudgetProfiles(db)
     .filter(profile => profile.enabled)
     .filter(profile => sourceFilter === 'all' || !profile.source || sourceMatches(profile.source, sourceFilter));
+  const queryWindowMinutes = Math.max(safeWindowMinutes, ...budgetProfiles.map(profile => profile.windowMinutes));
+  const since = new Date(nowMs - queryWindowMinutes * 60 * 1000).toISOString();
+  const tokenEvents = listTokenEvents(db, { limit: null, since })
+    .filter(event => sourceMatches(event.source, sourceFilter));
   const live = buildLiveSnapshot({
     tokenEvents,
     budgetProfiles,
     now,
-    windowMinutes
+    windowMinutes: safeWindowMinutes
   });
   const openAdvisorActions = listAdvisorActions(db)
     .filter(action => action.status === 'open')

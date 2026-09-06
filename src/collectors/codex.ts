@@ -89,14 +89,6 @@ function getHeadlessRoots() {
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function safeReaddir(dir) {
-  try {
-    return await readdir(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-}
-
 function pos(v) {
   const n = Number(v ?? 0);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
@@ -382,7 +374,7 @@ function collectFromSessionFiles(sessionFiles, pricingData, metadataSourcePrefix
     rememberSessionSourcePrefix(prefix, source);
   }
 
-  for (const { filePath, fileSessionId, lineage, events } of sessionFiles) {
+  for (const { fileSessionId, lineage, events } of sessionFiles) {
     const metadataSessionPrefix = `local:${CLIENT_KEY}:${hashableSessionPart(lineage.sessionId)}:`;
     rememberSessionSourcePrefix(metadataSessionPrefix, lineage.source);
     if (lineage.parentSessionId) {

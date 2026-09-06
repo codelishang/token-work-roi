@@ -213,17 +213,6 @@ function delay(milliseconds) {
   return new Promise(resolve => window.setTimeout(resolve, milliseconds));
 }
 
-function FreshnessNotice({ snapshot }) {
-  const freshness = snapshot.dataFreshness || 'empty';
-  return (
-    <section className={`pulse-freshness status-${freshness}`} aria-label="实时数据新鲜度">
-      <strong>{freshnessTitle(freshness)}</strong>
-      <span>{freshnessMessage(snapshot)}</span>
-      <small>上次刷新：{formatChinaStandardTime(snapshot.latestCollectionRunAt)} · 最新 token 事件：{formatChinaStandardTime(snapshot.latestEventAt)}</small>
-    </section>
-  );
-}
-
 function KpiCard({ accent, label, value, detail, trend = [] }) {
   return (
     <article className={`pulse-kpi accent-${accent}`}>
@@ -429,13 +418,13 @@ function buildTrendChart(data) {
   const innerHeight = height - top - bottom;
   const maxTokens = Math.max(1, ...rows.map(row => Number(row.totalTokens || 0)));
   const maxCost = Math.max(1, ...rows.map(row => Number(row.costUSD || 0)));
-  const coordFor = (row, index, value, max) => {
+  const coordFor = (index, value, max) => {
     const x = left + (rows.length === 1 ? innerWidth : (index / (rows.length - 1)) * innerWidth);
     const y = top + innerHeight - (Number(value || 0) / max) * innerHeight;
     return { x, y };
   };
-  const tokenCoords = rows.map((row, index) => coordFor(row, index, row.totalTokens, maxTokens));
-  const costCoords = rows.map((row, index) => coordFor(row, index, row.costUSD, maxCost));
+  const tokenCoords = rows.map((row, index) => coordFor(index, row.totalTokens, maxTokens));
+  const costCoords = rows.map((row, index) => coordFor(index, row.costUSD, maxCost));
   const tokenPoints = tokenCoords.map(pointText);
   const costPoints = costCoords.map(pointText);
   const firstX = tokenPoints[0].split(',')[0];
@@ -571,24 +560,6 @@ function freshnessLabel(value) {
   if (value === 'error') return '采集失败';
   if (value === 'empty') return '空数据';
   return '加载中';
-}
-
-function freshnessTitle(value) {
-  if (value === 'fresh') return 'FRESH';
-  if (value === 'collecting') return 'REFRESHING';
-  if (value === 'stale') return 'STALE';
-  if (value === 'error') return 'ERROR';
-  if (value === 'empty') return 'EMPTY';
-  return 'LOADING';
-}
-
-function freshnessMessage(snapshot) {
-  if (snapshot.dataFreshness === 'collecting') return '正在把本机可信来源的结构化 token 元数据刷新进 SQLite。';
-  if (snapshot.dataFreshness === 'stale') return snapshot.staleReason || '最近窗口没有事件，且后台刷新可能过期。';
-  if (snapshot.dataFreshness === 'error') return snapshot.staleReason || '最近一次刷新失败，请打开 /trust 查看采集状态。';
-  if (snapshot.dataFreshness === 'empty') return snapshot.staleReason || '当前 SQLite 没有 event 级 token 数据。';
-  if (Number(snapshot?.totals?.totalTokens || 0) === 0) return snapshot.staleReason || '最近 24 小时没有新 token；历史 token 仍可在看板和复盘页查看。';
-  return '最近 24 小时已有 event 级 token，可用于 burn rate、模型消耗和预算窗口判断。';
 }
 
 function formatNumber(value) {

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { request, type IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import test from 'node:test';
 import { spawnTestServer, startTestServer, stopTestServer, waitForTestServer } from '../test-support/server.ts';
 
@@ -59,6 +59,20 @@ test('malformed Host header returns 400 instead of crashing server', async () =>
     assert.equal(stillAlive.status, 200);
   } finally {
     await server.stop();
+  }
+});
+
+test('static directory requests return 404 and keep the API available', async () => {
+  const dir = mkdtempSync(join(existsSync('dist') ? 'dist' : 'public', 'static-test-'));
+  const server = await startServer();
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/${basename(dir)}`);
+    assert.equal(response.status, 404);
+    const alive = await fetch(`http://127.0.0.1:${server.port}/api/data`);
+    assert.equal(alive.status, 200);
+  } finally {
+    await server.stop();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

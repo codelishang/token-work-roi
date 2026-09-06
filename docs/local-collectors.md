@@ -39,11 +39,11 @@ If explicit token fields are missing, Yuanheng reports detection status only and
 
 ## WorkBuddy 说明 / WorkBuddy Note
 
-WorkBuddy 采集器扫描 `~/.workbuddy/traces/<pid>/trace_*.json` 中的结构化 trace 文件。每个 trace 包含多个 span，其中 `generation` 类型的 span 携带 `toolOutput`（JSON 字符串），内含 OpenAI 兼容的 chat completion 响应和 `usage` 对象。
+WorkBuddy 采集器读取 `~/.workbuddy/projects/**/*.jsonl` 中实时写入的 `providerData.rawUsage`，并兼容 `~/.workbuddy/traces/<pid>/trace_*.json`。任务尚未结束、trace 尚未落盘时也能采集。两种格式按响应 ID 去重。
 
-采集器只提取 `usage` 中的 `prompt_tokens`、`completion_tokens`、`cached_tokens` 和 `reasoning_tokens`，不保存 prompt、response 或对话正文。`auto` 模式优先使用 trace 标明的唯一实际模型；缺失时，依次使用同一 worker 重叠 trace 的唯一模型和 WorkBuddy session 元数据中的具体模型。仍无法确定时不导入该记录，也不会把 `auto` 当作模型名称。trace ID 是本软件的稳定会话标识；`~/.workbuddy/sessions/<pid>.json` 仅用于补充工作目录元数据。
+模型优先取每次响应的实际模型字段，支持 `auto` 路由和同会话切换模型，不依赖模型白名单。旧 trace 缺少实际模型时，依次尝试 trace 的唯一模型、同一 worker 重叠 trace 的唯一模型和 session 元数据。证据不足的记录不会猜测归属。只保存结构化用量和必要标识，不保存 prompt、response 或对话正文。
 
-`prompt_tokens` 是 cache-inclusive 的（OpenAI 惯例），采集器会减去 `cached_tokens` 得到净输入 token 数。定时采集仅重读上次采集后变化的 trace；单个超过 32 MiB 的 trace 会跳过并在采集结果中计数，避免异常日志持续占用资源。
+输入总量已包含缓存，输出总量已包含 reasoning，拆分后不会重复计数。定时采集按文件修改时间筛选；JSONL 变化时会同时核对已有 trace，避免重复统计。JSONL 逐行读取；超过 32 MiB 的 trace 会跳过并在采集结果中计数。
 
 启用方式：
 
@@ -52,11 +52,11 @@ node src/cli.ts collect --dry-run --sources=workbuddy
 node src/cli.ts collect --apply --yes --sources=workbuddy
 ```
 
-The WorkBuddy collector scans `~/.workbuddy/traces/<pid>/trace_*.json` for structured trace files. Each trace contains spans; generation spans carry a `toolOutput` JSON string with an OpenAI-compatible chat completion response including a `usage` object.
+The WorkBuddy collector reads live `providerData.rawUsage` records from `~/.workbuddy/projects/**/*.jsonl` and completed `~/.workbuddy/traces/<pid>/trace_*.json` files. Collection does not have to wait for the task to finish. Response IDs deduplicate records across both formats.
 
-Only `prompt_tokens`, `completion_tokens`, `cached_tokens`, and `reasoning_tokens` from the `usage` object are extracted. No prompt, response, or conversation content is stored. For auto mode, the collector uses a unique model named by the trace, then a unique model named by an overlapping trace from the same worker, then a concrete WorkBuddy session model. Records without enough evidence are not imported and never use `auto` as a model name. Trace ID is the stable session identity; `~/.workbuddy/sessions/<pid>.json` only supplements workspace metadata.
+The actual model in each response takes precedence, including auto routing and model changes within a session. No model allowlist is required. Older traces fall back to a unique trace model, an overlapping trace from the same worker, then session metadata. Unresolved models are not guessed. Only usage fields and necessary identifiers are stored, never prompts, responses, or conversation text.
 
-`prompt_tokens` is cache-inclusive (OpenAI convention); the collector subtracts `cached_tokens` to derive net input tokens. Scheduled collection rereads only traces changed since the previous run. A trace larger than 32 MiB is skipped and reported in the collection result so an abnormal log cannot keep consuming resources.
+Input totals include cache tokens; output totals include reasoning tokens. Splitting these counters does not increase the total. Scheduled collection selects changed files by modification time and checks existing traces when JSONL changes. JSONL is streamed line by line; traces larger than 32 MiB are skipped and reported.
 
 ## CodeBuddy 说明 / CodeBuddy Note
 

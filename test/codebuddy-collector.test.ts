@@ -58,9 +58,9 @@ test('CodeBuddy imports explicit completion usage once without reading a model o
   }
 });
 
-test('scheduled CodeBuddy collection adds a new request without recounting the log', () => {
+test('scheduled CodeBuddy collection preserves session totals across model switches and repeated refreshes', () => {
   const data = fixture();
-  writeFileSync(data.logPath, line('request-a'), 'utf8');
+  writeFileSync(data.logPath, `${modelLine()}${line('request-a')}`, 'utf8');
   const env = { ...process.env, TOKEN_WORK_CONFIG: data.configPath, NODE_OPTIONS: '--no-warnings' };
   const run = (scheduled = false) => execFileSync(process.execPath, [
     'src/collect.ts', '--sources=codebuddy', '--db', join(data.dir, 'usage.sqlite'), '--apply', '--yes', '--json'
@@ -74,13 +74,17 @@ test('scheduled CodeBuddy collection adds a new request without recounting the l
     const old = new Date(Date.now() - 60_000);
     utimesSync(data.logPath, old, old);
     run(true);
-    writeFileSync(data.logPath, `${line('request-a')}${line('request-b')}`, 'utf8');
+    writeFileSync(data.logPath, `${modelLine()}${line('request-a')}${modelLine('glm-5.3-flash')}${line('request-b')}`, 'utf8');
+    run(true);
     run(true);
 
     const db = new DatabaseSync(join(data.dir, 'usage.sqlite'), { readOnly: true });
     try {
       assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE source = 'CodeBuddy'`).get().count, 2);
-      assert.equal(db.prepare(`SELECT total_tokens AS totalTokens FROM daily_usage WHERE device = ? AND source = 'CodeBuddy'`).get(hostname()).totalTokens, 280);
+      for (const table of ['daily_usage', 'session_usage']) {
+        assert.equal(db.prepare(`SELECT SUM(total_tokens) AS totalTokens FROM ${table} WHERE device = ? AND source = 'CodeBuddy'`).get(hostname()).totalTokens, 280);
+      }
+      assert.deepEqual(db.prepare("SELECT DISTINCT model FROM token_events WHERE source = 'CodeBuddy' ORDER BY model").all().map(row => row.model), ['deepseek-v4-flash', 'glm-5.3-flash']);
     } finally {
       db.close();
     }

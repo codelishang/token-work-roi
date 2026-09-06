@@ -103,3 +103,31 @@ test('budget windows can target heavy model groups and hard thresholds', () => {
   assert.equal(windows[0].hardThreshold, 1.2);
   assert.equal(windows[0].status, 'over-pace');
 });
+
+test('Codex budgets include generic, CLI and Desktop sources without matching other tools', () => {
+  const nowMs = Date.parse('2026-09-05T12:00:00Z');
+  const rows = ['Codex', 'Codex CLI', 'Codex Desktop', 'Codex (unidentified client)', 'CodexOther', 'Claude Code']
+    .map(source => ({ source, timestampMs: nowMs, totalTokens: 100 }));
+  const [budget] = buildBudgetWindows({
+    rows, nowMs,
+    budgetProfiles: [{ source: 'Codex', windowMinutes: 15, tokenBudget: 400 }]
+  });
+  assert.equal(budget.totalTokens, 400);
+  assert.equal(budget.status, 'exceeded');
+});
+
+test('rolling budgets handle large event windows without truncation', () => {
+  const nowMs = Date.parse('2026-09-05T12:00:00Z');
+  const rows = Array.from({ length: 150_000 }, (_, index) => ({
+    timestampMs: nowMs - (index % 60 + 1) * 60_000,
+    inputTokens: 1, outputTokens: 0, cacheReadTokens: 0,
+    cacheCreationTokens: 0, reasoningTokens: 0, totalTokens: 1, costUSD: 0
+  }));
+  const [budget] = buildBudgetWindows({
+    rows, nowMs, budgetProfiles: [{ windowMinutes: 300, tokenBudget: 150_000 }]
+  });
+  assert.equal(budget.totalTokens, 150_000);
+  assert.equal(budget.burnRateTokensPerHour, 150_000);
+  assert.equal(budget.projectedTokens, 750_000);
+  assert.equal(budget.status, 'exceeded');
+});

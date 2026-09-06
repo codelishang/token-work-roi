@@ -21,7 +21,7 @@ import { buildSessionKey, buildTableRowKey, createUniqueRowKeyFactory } from './
 import type { UsageRow } from '../shared/types.ts';
 
 // Generic data table
-function DataTable({ rows, columns, initialSort, search, onSearch = null, onRowClick, selectedKey = null, getKey, height, emptyText }) {
+function DataTable({ rows, columns, initialSort, search, onRowClick, selectedKey = null, getKey, height, emptyText }) {
   const [sortBy, setSortBy] = useState(initialSort || { field: null, dir: 'desc' });
 
   const filtered = useMemo(() => {
@@ -118,7 +118,6 @@ function TablePanel({
   sessions,
   unattributedSessions,
   runs,
-  sources,
   totalTokens,
   sessionTotalTokens,
   taskTypes,

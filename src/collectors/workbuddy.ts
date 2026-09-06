@@ -1,31 +1,21 @@
 /**
  * WorkBuddy data collector.
  *
- * Scans ~/.workbuddy/traces/<pid>/trace_*.json for structured trace files
- * produced by the WorkBuddy desktop app. Each trace contains spans; generation
- * spans carry a `toolOutput` JSON string with an OpenAI-compatible chat
- * completion response that includes a `usage` object.
- *
- * PID-to-session mapping is resolved via ~/.workbuddy/sessions/<pid>.json
- * only for workspace metadata. Trace IDs remain the persisted identity because
- * WorkBuddy removes PID session files after a session ends.
- *
- * Token semantics:
- *   prompt_tokens is cache-inclusive (OpenAI convention), so:
- *     net_input  = prompt_tokens - cached_tokens  (clamped to >= 0)
- *     cache_read = cached_tokens
- *     output     = completion_tokens
- *     reasoning  = completion_tokens_details.reasoning_tokens
+ * Reads completed traces and in-progress projects JSONL. Response IDs dedupe
+ * the two formats; legacy trace event IDs are migrated during collection.
+ * OpenAI-compatible input/output totals include cache/reasoning tokens, which
+ * are split into separate counters without increasing the total.
  *
  * Only structured token fields are imported. No prompt, response, conversation
  * content, diff, or transcript is ever stored.
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import { basename, join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { configuredPath, expandPath } from '../collector-config.ts';
 import { calculateCost } from '../pricing.ts';
 import { localDateFromTimestamp, normalizeModelForGrouping } from './utils.ts';
@@ -37,6 +27,10 @@ const INCREMENTAL_MTIME_SLOP_MS = 2_000;
 
 interface WorkBuddyCollectOptions {
   changedAfterMs?: number;
+  getStoredResponse?: (eventId: string) => {
+    model: string;
+    tokens: ReturnType<typeof zero>;
+  } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -53,6 +47,10 @@ function getSessionsDir() {
 
 function getWorkbuddyDir() {
   return expandPath(configuredPath('workbuddy', 'root', '~/.workbuddy'));
+}
+
+function getProjectsDir() {
+  return configuredPath('workbuddy', 'projectsDir', join(getWorkbuddyDir(), 'projects'));
 }
 
 // ---------------------------------------------------------------------------
@@ -91,8 +89,28 @@ function sanitizeSmallText(value, maxLength) {
 }
 
 function actualModel(value) {
+  if (typeof value !== 'string') return null;
   const model = sanitizeSmallText(value, 160);
-  return model && !/^(auto|default|unknown)$/i.test(model) ? model : null;
+  return model && !/^(auto|default|inherit|unknown)$/i.test(model) ? model : null;
+}
+
+function responseEventId(id) {
+  return `${CLIENT_KEY}:response:${stableEventId(String(id))}`;
+}
+
+function responseTokens(usage) {
+  if (usage.requests != null && Number(usage.requests) !== 1) return null;
+  const prompt = pos(usage.prompt_tokens ?? usage.promptTokens ?? usage.inputTokens);
+  const completion = pos(usage.completion_tokens ?? usage.completionTokens ?? usage.outputTokens);
+  const promptDetails = usage.prompt_tokens_details || usage.promptTokensDetails
+    || (Array.isArray(usage.inputTokensDetails) ? usage.inputTokensDetails[0] : usage.inputTokensDetails) || {};
+  const completionDetails = usage.completion_tokens_details || usage.completionTokensDetails
+    || (Array.isArray(usage.outputTokensDetails) ? usage.outputTokensDetails[0] : usage.outputTokensDetails) || {};
+  const cacheRead = pos(promptDetails.cached_tokens ?? promptDetails.cachedTokens ?? usage.prompt_cache_hit_tokens);
+  const cacheWrite = pos(usage.prompt_cache_write_tokens ?? usage.cache_creation_input_tokens ?? usage.cacheCreationInputTokens);
+  const reasoning = pos(completionDetails.reasoning_tokens ?? completionDetails.reasoningTokens ?? usage.completion_thinking_tokens);
+  if (cacheRead + cacheWrite > prompt || reasoning > completion) return null;
+  return { input: prompt - cacheRead - cacheWrite, output: completion - reasoning, cacheRead, cacheWrite, reasoning };
 }
 
 function traceModel(trace) {
@@ -213,7 +231,7 @@ async function loadDbSessionMetadata() {
  *
  * @returns {Array} Array of event objects with { eventId, sessionId, timestamp, model, tokens, workspace }
  */
-function parseTraceFile(traceJson, sessionMap, dbSessionMap, audit, inheritedTraceModel = null) {
+function parseTraceFile(traceJson, sessionMap, dbSessionMap, audit, inheritedTraceModel = null, knownResponses = new Map(), getStoredResponse: WorkBuddyCollectOptions['getStoredResponse'] = undefined) {
   const events = [];
 
   const trace = traceJson.trace;
@@ -275,27 +293,13 @@ function parseTraceFile(traceJson, sessionMap, dbSessionMap, audit, inheritedTra
         continue;
       }
 
-      const promptTokens = pos(usage.prompt_tokens ?? usage.promptTokens);
-      const completionTokens = pos(usage.completion_tokens ?? usage.completionTokens);
-
-      const promptDetails = usage.prompt_tokens_details || usage.promptTokensDetails || {};
-      const completionDetails = usage.completion_tokens_details || usage.completionTokensDetails || {};
-
-      const cachedTokens = pos(promptDetails.cached_tokens ?? promptDetails.cachedTokens);
-      const outputReasoning = pos(completionDetails.reasoning_tokens ?? completionDetails.reasoningTokens);
-
       // prompt_tokens is cache-inclusive, and reasoning_tokens is included in
       // completion_tokens. Store the latter separately without counting it twice.
-      const netInput = Math.max(0, promptTokens - cachedTokens);
-      const output = Math.max(0, completionTokens - outputReasoning);
-
-      const tokens = {
-        input: netInput,
-        output,
-        cacheRead: cachedTokens,
-        cacheWrite: 0,
-        reasoning: outputReasoning
-      };
+      let tokens = responseTokens(usage);
+      if (!tokens) {
+        audit.parseErrors += 1;
+        continue;
+      }
 
       // Skip if no usable tokens
       if (tokens.input === 0 && tokens.output === 0 &&
@@ -305,7 +309,12 @@ function parseTraceFile(traceJson, sessionMap, dbSessionMap, audit, inheritedTra
         continue;
       }
 
-      const resolvedModel = actualModel(resp.model) || resolvedTraceModel || inheritedTraceModel || sessionModel;
+      const stored = resp.id ? getStoredResponse?.(responseEventId(resp.id)) : null;
+      if (stored && tokenTotal(stored.tokens) > tokenTotal(tokens)) tokens = stored.tokens;
+      const resolvedModel = actualModel(resp.model)
+        || (resp.id ? knownResponses.get(responseEventId(resp.id))?.model : null)
+        || actualModel(stored?.model)
+        || resolvedTraceModel || inheritedTraceModel || sessionModel;
       if (!resolvedModel) {
         audit.skippedUnresolvedModel += 1;
         continue;
@@ -321,7 +330,8 @@ function parseTraceFile(traceJson, sessionMap, dbSessionMap, audit, inheritedTra
       })}`;
 
       events.push({
-        eventId,
+        eventId: resp.id ? responseEventId(resp.id) : eventId,
+        legacyEventIds: resp.id ? [eventId] : [],
         sessionId,
         timestamp,
         date: localDateFromTimestamp(timestamp),
@@ -415,6 +425,88 @@ async function listTraceFiles(tracesDir) {
   return files;
 }
 
+async function listProjectFiles(dir = getProjectsDir()) {
+  const files = [];
+  for (const entry of await safeReaddir(dir, { withFileTypes: true }) as Dirent[]) {
+    const filePath = join(dir, entry.name);
+    if (entry.isDirectory() && entry.name !== 'tool-results') {
+      for (const file of await listProjectFiles(filePath)) files.push(file);
+    } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+      try {
+        const info = await stat(filePath);
+        files.push({ filePath, mtimeMs: info.mtimeMs });
+      } catch { /* The app may rotate a session during discovery. */ }
+    }
+  }
+  return files;
+}
+
+async function readProjectEvents(file, audit) {
+  const events = new Map();
+  const input = createReadStream(file.filePath, { encoding: 'utf8' });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (!line.trim()) continue;
+      let row;
+      try { row = JSON.parse(line); } catch {
+        audit.parseErrors += 1;
+        continue;
+      }
+      if (!['function_call', 'reasoning', 'assistant'].includes(row.type)
+        && !(row.type === 'message' && row.role === 'assistant')) continue;
+      const provider = row.providerData;
+      const usage = provider?.rawUsage || provider?.usage;
+      if (!usage || typeof usage !== 'object') continue;
+      const model = actualModel(provider.model) || actualModel(row.message?.model);
+      const id = provider.messageId || row.id;
+      const timestampMs = typeof row.timestamp === 'number' ? row.timestamp : Date.parse(row.timestamp);
+      if (!id || !row.sessionId || !Number.isFinite(new Date(timestampMs).getTime())) {
+        audit.parseErrors += 1;
+        continue;
+      }
+      if (!model) {
+        audit.skippedUnresolvedModel += 1;
+        continue;
+      }
+      // Both OpenAI and SDK totals include cache/reasoning. The mirrored
+      // message.usage is not an additional call.
+      const tokens = responseTokens(usage);
+      if (!tokens) {
+        audit.parseErrors += 1;
+        continue;
+      }
+      if (!tokenTotal(tokens)) {
+        audit.skippedNoTokenRecords += 1;
+        continue;
+      }
+      const timestamp = new Date(timestampMs).toISOString();
+      const eventId = responseEventId(id);
+      const event = {
+        eventId, legacyEventIds: [],
+        sessionId: `workbuddy:project:${stableEventId(String(row.sessionId))}`,
+        timestamp, date: localDateFromTimestamp(timestamp),
+        model: normalizeModelForGrouping(model),
+        tokens,
+        workspace: sanitizeSmallText(basename(String(row.cwd || '').replace(/\\/g, '/')), 120),
+        repoPathHash: hashPath(row.cwd)
+      };
+      const previous = events.get(eventId);
+      if (!previous || tokenTotal(event.tokens) >= tokenTotal(previous.tokens)) events.set(eventId, event);
+    }
+  } catch {
+    audit.parseErrors += 1;
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+  return [...events.values()];
+}
+
+function tokenTotal(tokens) {
+  return tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite + tokens.reasoning;
+}
+
 function shouldReadTrace(file, changedAfterMs) {
   return !Number.isFinite(changedAfterMs)
     || file.mtimeMs >= changedAfterMs - INCREMENTAL_MTIME_SLOP_MS;
@@ -476,38 +568,24 @@ function emptyAuditSummary(candidateFiles = 0) {
 }
 
 export async function audit() {
-  const tracesDir = getTracesDir();
-  if (!existsSync(tracesDir)) return emptyAuditSummary();
-
-  const files = await listTraceFiles(tracesDir);
-  const summary = emptyAuditSummary(files.length);
-
-  const sessionMap = await loadSessionMap();
-  const dbSessionMap = await loadDbSessionMetadata();
-
-  for (const file of files) {
-    const traceFile = await readTraceFile(file, summary);
-    if (traceFile) parseTraceFile(traceFile.traceJson, sessionMap, dbSessionMap, summary);
-  }
-
-  return summary;
+  return (await collect()).audit;
 }
 
 // ---------------------------------------------------------------------------
 // Main collector
 // ---------------------------------------------------------------------------
 
-export async function collect(pricingData = null, { changedAfterMs }: WorkBuddyCollectOptions = {}) {
+export async function collect(pricingData = null, { changedAfterMs, getStoredResponse }: WorkBuddyCollectOptions = {}) {
   const tracesDir = getTracesDir();
-  if (!existsSync(tracesDir)) {
-    return { graphJson: { contributions: [] }, modelsJson: { entries: [] }, tokenEvents: [], audit: emptyAuditSummary() };
-  }
-
   const files = await listTraceFiles(tracesDir);
+  const projectFiles = await listProjectFiles();
+  const selectedProjects = projectFiles.filter(file => shouldReadTrace(file, changedAfterMs));
   const sessionMap = await loadSessionMap();
   const dbSessionMap = await loadDbSessionMetadata();
-  const auditSummary = emptyAuditSummary(files.length);
-  let selectedFiles = files.filter(file => shouldReadTrace(file, changedAfterMs));
+  const auditSummary = emptyAuditSummary(files.length + projectFiles.length);
+  // A changed project may contain calls already saved in older traces. Read
+  // those traces too so their existing session identities remain preferred.
+  let selectedFiles = selectedProjects.length ? files : files.filter(file => shouldReadTrace(file, changedAfterMs));
   let traceFiles = [];
 
   for (const file of selectedFiles) {
@@ -532,9 +610,27 @@ export async function collect(pricingData = null, { changedAfterMs }: WorkBuddyC
   }
 
   const inheritedModels = inheritedTraceModels(traceFiles);
-  const allEvents = traceFiles.flatMap(file =>
-    parseTraceFile(file.traceJson, sessionMap, dbSessionMap, auditSummary, inheritedModels.get(file.filePath))
-  );
+  const eventsById = new Map();
+  for (const file of selectedProjects) {
+    for (const event of await readProjectEvents(file, auditSummary)) {
+      const stored = getStoredResponse?.(event.eventId);
+      if (stored && tokenTotal(stored.tokens) > tokenTotal(event.tokens)) event.tokens = stored.tokens;
+      const previous = eventsById.get(event.eventId);
+      if (!previous || tokenTotal(event.tokens) >= tokenTotal(previous.tokens)) eventsById.set(event.eventId, event);
+    }
+  }
+  for (const file of traceFiles) {
+    for (const event of parseTraceFile(file.traceJson, sessionMap, dbSessionMap, auditSummary, inheritedModels.get(file.filePath), eventsById, getStoredResponse)) {
+      const previous = eventsById.get(event.eventId);
+      if (previous) {
+        if (tokenTotal(previous.tokens) > tokenTotal(event.tokens)) event.tokens = previous.tokens;
+        event.legacyEventIds = [...new Set([...previous.legacyEventIds, ...event.legacyEventIds])];
+      }
+      eventsById.set(event.eventId, event);
+    }
+  }
+  const allEvents = [...eventsById.values()];
+  auditSummary.usableTokenRecords = allEvents.length;
 
   const output = buildOutput(allEvents, pricingData, auditSummary);
   return {
@@ -573,8 +669,7 @@ function buildOutput(events, pricingData, auditSummary) {
     addInto(daily, event.tokens);
     daily.cost += calculateCost(event.model, event.tokens, pricingData);
 
-    // Session aggregation by sessionId + model
-    const sessionKey = `${event.sessionId}::${event.model}`;
+    const sessionKey = event.sessionId;
     if (!sessionMap.has(sessionKey)) {
       sessionMap.set(sessionKey, {
         workspace: event.workspace || event.sessionId,
@@ -591,6 +686,7 @@ function buildOutput(events, pricingData, auditSummary) {
     sess.cost += calculateCost(event.model, event.tokens, pricingData);
     if (event.timestamp > (sess.lastActivity || '')) {
       sess.lastActivity = event.timestamp;
+      sess.model = event.model;
     }
   }
 
@@ -638,6 +734,7 @@ function buildOutput(events, pricingData, auditSummary) {
   // Build tokenEvents
   const tokenEvents = events.map(event => ({
     eventId: event.eventId,
+    legacyEventIds: event.legacyEventIds,
     source: CLIENT_KEY,
     sessionId: event.sessionId,
     timestamp: event.timestamp,
@@ -664,5 +761,5 @@ function buildOutput(events, pricingData, auditSummary) {
 // ---------------------------------------------------------------------------
 
 export function roots() {
-  return [getTracesDir()];
+  return [getTracesDir(), getProjectsDir()];
 }

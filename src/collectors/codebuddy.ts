@@ -246,7 +246,7 @@ function buildOutput(events: CodeBuddyEvent[], pricingData, audit: ReturnType<ty
     day.cost += calculateCost(event.model, event.tokens, pricingData);
     daily.set(dayKey, day);
 
-    const sessionKey = `${event.sessionId}:${event.model}`;
+    const sessionKey = event.sessionId;
     const session = sessions.get(sessionKey) || {
       sessionId: event.sessionId,
       model: event.model,
@@ -256,7 +256,10 @@ function buildOutput(events: CodeBuddyEvent[], pricingData, audit: ReturnType<ty
     };
     addInto(session, event.tokens);
     session.cost += calculateCost(event.model, event.tokens, pricingData);
-    if (event.timestamp > session.lastActivity) session.lastActivity = event.timestamp;
+    if (event.timestamp >= session.lastActivity) {
+      session.lastActivity = event.timestamp;
+      session.model = event.model;
+    }
     sessions.set(sessionKey, session);
   }
 

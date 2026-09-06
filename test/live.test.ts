@@ -74,6 +74,19 @@ test('live snapshot builds 24h pulse metrics from event-level rows', () => {
   assert.equal(snapshot.byModel[0].requests, 1);
 });
 
+test('live snapshot uses the same valid window for totals, burn rate and timeline', () => {
+  for (const [requested, expected] of [[0, 15], [-1, 15], [NaN, 15], [Infinity, 15], [0.5, 1]]) {
+    const snapshot = buildLiveSnapshot({
+      now: new Date('2026-09-05T12:00:00Z'), windowMinutes: requested,
+      tokenEvents: [{ timestamp: '2026-09-05T12:00:00Z', inputTokens: 100 }]
+    });
+    assert.equal(snapshot.windowMinutes, expected);
+    assert.equal(snapshot.pulse.windowMinutes, expected);
+    assert.equal(snapshot.totals.burnRateTokensPerHour, Math.round(6000 / expected));
+    assert.equal(snapshot.pulse.timeline.reduce((total, row) => total + row.totalTokens, 0), 100);
+  }
+});
+
 test('live snapshot reports idle empty state', () => {
   const snapshot = buildLiveSnapshot({
     now: new Date('2026-06-17T02:15:00Z'),
@@ -84,6 +97,27 @@ test('live snapshot reports idle empty state', () => {
   assert.equal(snapshot.totals.totalTokens, 0);
   assert.equal(snapshot.dataFreshness, 'empty');
   assert.deepEqual(snapshot.byModel, []);
+});
+
+test('live snapshot does not count cumulative sessions when the current window has no events', () => {
+  const snapshot = buildLiveSnapshot({
+    now: new Date('2026-09-05T12:00:00Z'),
+    windowMinutes: 1440,
+    latestEventAt: '2026-09-04T00:00:00Z',
+    sessions: [{
+      source: 'Codex',
+      sessionId: 'long-running-session',
+      model: 'gpt-5.5',
+      lastActivity: '2026-09-05T11:00:00Z',
+      totalTokens: 200_000_000
+    }],
+    tokenEvents: []
+  });
+
+  assert.equal(snapshot.totals.totalTokens, 0);
+  assert.equal(snapshot.totals.requestCount, 0);
+  assert.equal(snapshot.pulse.requestCount, 0);
+  assert.equal(snapshot.byModel.length, 0);
 });
 
 test('live snapshot excludes zero-token synthetic model placeholders', () => {
@@ -111,6 +145,28 @@ test('live snapshot excludes zero-token synthetic model placeholders', () => {
   assert.equal(snapshot.totals.totalTokens, 1100);
   assert.deepEqual(snapshot.byModel.map(row => row.key), ['glm-5.2']);
   assert.deepEqual(snapshot.activeSessions.map(row => row.model), ['glm-5.2']);
+});
+
+test('live snapshot recalculates a zero stored cost for a priced session', () => {
+  const snapshot = buildLiveSnapshot({
+    now: new Date('2026-09-04T16:00:00Z'),
+    windowMinutes: 60,
+    sessions: [{
+      device: 'macbook',
+      source: 'WorkBuddy',
+      sessionId: 'hy3-session',
+      lastActivity: '2026-09-04T15:50:00Z',
+      model: 'hy3',
+      inputTokens: 1_000_000,
+      outputTokens: 1_000_000,
+      totalTokens: 2_000_000,
+      costUSD: 0
+    }]
+  });
+
+  assert.equal(snapshot.byModel[0].key, 'hy3');
+  assert.ok(snapshot.byModel[0].costUSD > 0);
+  assert.ok(snapshot.activeSessions[0].costUSD > 0);
 });
 
 test('live data freshness explains collecting, stale and empty states', () => {
@@ -608,6 +664,13 @@ test('live API returns guardrails and warnings from temporary SQLite', async () 
     assert.equal(body.collectionState.status, 'idle');
     assert.equal(body.warnings.some(item => item.type === 'high-burn-rate'), false);
     assert.ok(body.warnings.some(item => item.type === 'low-cache-hit'));
+    for (const window of ['0', '-1', '0.5', 'NaN', 'Infinity', '10081']) {
+      const invalid = await fetch(`http://127.0.0.1:${port}/api/live?windowMinutes=${window}`);
+      assert.equal(invalid.status, 400, window);
+    }
+    const daily = await fetch(`http://127.0.0.1:${port}/api/live?windowMinutes=1440`);
+    assert.equal(daily.status, 200);
+    assert.equal((await daily.json()).windowMinutes, 1440);
   } finally {
     await stopTestServer(server.child);
     await removeTempDir(dir);

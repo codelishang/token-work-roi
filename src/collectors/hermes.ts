@@ -37,11 +37,6 @@ function pos(value) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-function posFloat(value) {
-  const n = Number(value ?? 0);
-  return Number.isFinite(n) && n > 0 ? n : 0;
-}
-
 /** Convert a Hermes started_at float (seconds or ms) to a YYYY-MM-DD string. */
 function tsToDate(started_at) {
   if (!started_at) return 'unknown';

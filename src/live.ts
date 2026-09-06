@@ -72,7 +72,8 @@ export function buildLiveSnapshot({
   demoMode = false
 }: BuildLiveSnapshotInput = {}) {
   const nowMs = new Date(now).getTime();
-  const windowMs = Math.max(1, Number(windowMinutes) || DEFAULT_WINDOW_MINUTES) * 60 * 1000;
+  windowMinutes = Math.max(1, positiveNumber(windowMinutes, DEFAULT_WINDOW_MINUTES));
+  const windowMs = windowMinutes * 60 * 1000;
   const sinceMs = nowMs - windowMs;
   const normalizedEvents = tokenEvents
     .map(normalizeEvent)
@@ -85,7 +86,12 @@ export function buildLiveSnapshot({
   const recentSessions = normalizedSessions
     .filter(session => session.lastActivityMs >= sinceMs && session.lastActivityMs <= nowMs);
 
-  const metricRows = recentEvents.length ? recentEvents : recentSessions;
+  // Session totals are cumulative. Once event history exists, an empty current
+  // window must stay empty instead of turning a whole session into recent use.
+  const hasEventHistory = normalizedEvents.length > 0 || dateMs(latestEventAt) > 0;
+  const metricRows = recentEvents.length
+    ? recentEvents
+    : hasEventHistory ? [] : recentSessions;
   const sourceRows = aggregate(metricRows, 'source');
   const modelRows = aggregate(metricRows, 'model')
     .filter(row => row.key !== '<synthetic>' && number(row.totalTokens) > 0);
@@ -105,11 +111,11 @@ export function buildLiveSnapshot({
     }));
 
   const totals = sumRows(metricRows);
-  const requestCount = recentEvents.length || recentSessions.length;
+  const requestCount = recentEvents.length || (!hasEventHistory ? recentSessions.length : 0);
   const cacheDenominator = totals.inputTokens + totals.cacheReadTokens + totals.cacheCreationTokens;
 
   const budgetWindows = buildBudgetWindows({
-    rows: normalizedEvents.length ? normalizedEvents : normalizedSessions,
+    rows: hasEventHistory ? normalizedEvents : normalizedSessions,
     budgetProfiles,
     nowMs
   });
@@ -538,7 +544,7 @@ export function buildBudgetWindows({ rows = [], budgetProfiles = [], nowMs = Dat
       const firstMs = frame.windowType === 'fixed'
         ? frame.startMs
         : matching.length
-        ? Math.min(...matching.map(row => row.timestampMs ?? row.lastActivityMs ?? nowMs).filter(Number.isFinite))
+        ? matching.reduce((earliest, row) => Math.min(earliest, row.timestampMs ?? row.lastActivityMs ?? nowMs), nowMs)
         : frame.startMs;
       const elapsedMinutes = Math.max(1, Math.min(windowMinutes, (nowMs - firstMs) / 60000 || windowMinutes));
       const burnRateTokensPerHour = Math.round((totals.totalTokens / elapsedMinutes) * 60);
@@ -588,7 +594,7 @@ export function buildBudgetWindows({ rows = [], budgetProfiles = [], nowMs = Dat
 }
 
 function budgetSourceMatches(source, budgetSource) {
-  if (budgetSource === 'Codex') return /^Codex(?:\s|\()/i.test(String(source || ''));
+  if (budgetSource === 'Codex') return /^Codex(?:$|\s|\()/i.test(String(source || ''));
   return source === budgetSource;
 }
 
@@ -638,21 +644,35 @@ export function liveGuardrailConfig(overrides: GuardrailOverrides = {}) {
 
 function normalizeSession(session) {
   const lastActivity = session.lastActivity || session.last_activity || null;
+  const model = session.model || 'unknown';
+  const inputTokens = number(session.inputTokens ?? session.input_tokens);
+  const outputTokens = number(session.outputTokens ?? session.output_tokens);
+  const cacheReadTokens = number(session.cacheReadTokens ?? session.cache_read_tokens);
+  const cacheCreationTokens = number(session.cacheCreationTokens ?? session.cache_creation_tokens);
+  const reasoningTokens = number(session.reasoningOutputTokens ?? session.reasoningTokens ?? session.reasoning_output_tokens);
+  const storedCostUSD = number(session.costUSD ?? session.cost_usd);
+  const costUSD = storedCostUSD || calculateOfficialCost(model, {
+    input: inputTokens,
+    output: outputTokens,
+    cacheRead: cacheReadTokens,
+    cacheWrite: cacheCreationTokens,
+    reasoning: reasoningTokens
+  }, { provider: providerFromSource(session.source) }).totalUSD;
   return {
     device: session.device || '',
     source: session.source || 'unknown',
     sessionId: session.sessionId || session.session_id || 'unknown-session',
-    model: session.model || 'unknown',
+    model,
     projectPath: session.projectPath || session.project_path || null,
     lastActivity,
     lastActivityMs: dateMs(lastActivity),
-    inputTokens: number(session.inputTokens ?? session.input_tokens),
-    outputTokens: number(session.outputTokens ?? session.output_tokens),
-    cacheReadTokens: number(session.cacheReadTokens ?? session.cache_read_tokens),
-    cacheCreationTokens: number(session.cacheCreationTokens ?? session.cache_creation_tokens),
-    reasoningTokens: number(session.reasoningOutputTokens ?? session.reasoningTokens ?? session.reasoning_output_tokens),
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
+    reasoningTokens,
     totalTokens: number(session.totalTokens ?? session.total_tokens),
-    costUSD: number(session.costUSD ?? session.cost_usd)
+    costUSD
   };
 }
 
@@ -863,7 +883,7 @@ function isUnpricedModel(model) {
 
 function isHeavyModel(model) {
   const value = String(model || '').toLowerCase();
-  return value.includes('mythos') || value.includes('fable') || value.includes('opus') || value.includes('gpt-5.6-sol') || value.includes('gpt-5.5') || value.includes('gemini-2.5-pro-long-context');
+  return value.includes('mythos') || value.includes('fable') || value.includes('opus') || /(?:^|[/:\s])gpt-6-astra(?:$|[-:])/.test(value) || value.includes('gpt-5.6-sol') || value.includes('gpt-5.5') || value.includes('gemini-2.5-pro-long-context');
 }
 
 function isLightModel(model) {

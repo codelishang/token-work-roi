@@ -347,7 +347,6 @@ function ReviewDashboard({ rawData, onReloadData }) {
       sessions,
       workItems: rawData.workItems || [],
       roiAdvice,
-      insights,
       savingsSimulation,
       advisorActions,
       actionMeasurements,
@@ -358,7 +357,6 @@ function ReviewDashboard({ rawData, onReloadData }) {
   , [period, daily, sessions, rawData.workItems, roiAdvice, insights, savingsSimulation, advisorActions, actionMeasurements, coverageBridge, evidenceFlywheel, localTrust]);
 
   const blogMaterial = useMemo(() => buildTechnicalBlogDraft({
-    period,
     sessions,
     totals,
     localTrust,

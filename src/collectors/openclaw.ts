@@ -339,7 +339,7 @@ export async function collect(pricingData = null) {
   const wmMap    = new Map();   // "agentPath::model" → aggregated
 
   function accumulate(events) {
-    for (const { sessionId, agentPath, date, model, provider, tokens, cost } of events) {
+    for (const { sessionId, agentPath, date, model, provider, tokens } of events) {
       const calculatedCost = calculateCost(model, tokens, pricingData, provider);
       const effectiveCost = calculatedCost;
 

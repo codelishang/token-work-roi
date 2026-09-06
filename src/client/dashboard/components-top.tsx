@@ -2,7 +2,7 @@
    Filter bar, KPI cards, sparklines — top of dashboard
    ============================================================= */
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { U } from '../shared/utils.ts';
 
 // ───────────────────────────────────────────────────────────────

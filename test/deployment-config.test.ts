@@ -43,6 +43,9 @@ test('runtime package build does not emit declaration files as modules', () => {
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.match(readFileSync(resolve(root, 'dist-runtime', 'cli.mjs'), 'utf8'), /^#!\/usr\/bin\/env node/);
     assert.doesNotMatch(readFileSync(resolve(root, 'dist-runtime', 'collector-registry.mjs'), 'utf8'), /\.\/collectors\/[^'"]+\.ts/);
+    const serverRuntime = readFileSync(resolve(root, 'dist-runtime', 'server.mjs'), 'utf8');
+    assert.match(serverRuntime, /const runtimeEntry = resolve\(SERVER_DIR, 'collect\.mjs'\)/);
+    assert.match(serverRuntime, /resolve\(SERVER_DIR, '\.\.', 'src', 'collect\.ts'\)/);
     for (const module of ['cli.mjs', 'server.mjs', 'client/shared/types.mjs']) {
       const syntax = spawnSync(process.execPath, ['--check', resolve(root, 'dist-runtime', module)], { encoding: 'utf8' });
       assert.equal(syntax.status, 0, syntax.stderr || syntax.stdout);

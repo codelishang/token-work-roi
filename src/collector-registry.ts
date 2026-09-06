@@ -101,7 +101,10 @@ export const COLLECTOR_REGISTRY = [
   }),
   stableCollector('workbuddy', 'WorkBuddy', './collectors/workbuddy.ts', {
     privacyLevel: 'metadata-only',
-    roots: () => [configuredPath('workbuddy', 'tracesDir', '~/.workbuddy/traces')]
+    roots: () => [
+      configuredPath('workbuddy', 'tracesDir', '~/.workbuddy/traces'),
+      configuredPath('workbuddy', 'projectsDir', join(configuredPath('workbuddy', 'root', '~/.workbuddy'), 'projects'))
+    ]
   }),
   stableCollector('codebuddy', 'CodeBuddy', './collectors/codebuddy.ts', {
     privacyLevel: 'metadata-only',

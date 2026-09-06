@@ -1,13 +1,16 @@
-import { listAdvisorActions, listBudgetProfiles } from './db.ts';
+import { listAdvisorActions, listBudgetProfiles, listTokenEvents } from './db.ts';
 import { buildLiveSnapshot } from './live.ts';
 
 export function buildTerminalReport(db, { period = 'week', now = new Date() } = {}) {
   const range = periodRange(period, now);
   const daily = queryDaily(db, range);
   const sessions = querySessions(db, range);
-  const tokenEvents = queryTokenEvents(db);
   const budgetProfiles = listBudgetProfiles(db).filter(profile => profile.enabled);
-  const live = buildLiveSnapshot({ sessions, tokenEvents, budgetProfiles, now });
+  const queryWindowMinutes = Math.max(15, ...budgetProfiles.map(profile => profile.windowMinutes));
+  const since = new Date(new Date(now).getTime() - queryWindowMinutes * 60 * 1000).toISOString();
+  const tokenEvents = listTokenEvents(db, { limit: null, since });
+  const latestEventAt = db.prepare('SELECT MAX(timestamp) AS timestamp FROM token_events').get()?.timestamp;
+  const live = buildLiveSnapshot({ sessions, tokenEvents, budgetProfiles, now, latestEventAt });
   const advisorActions = listAdvisorActions(db, {
     periodStart: range.start,
     periodEnd: range.end
@@ -76,23 +79,6 @@ function querySessions(db, range) {
   if (range.id === 'all') return db.prepare(base).all();
   return db.prepare(`${base} WHERE substr(last_activity, 1, 10) >= ? AND substr(last_activity, 1, 10) <= ?`)
     .all(range.start, range.end);
-}
-
-function queryTokenEvents(db) {
-  return db.prepare(`
-    SELECT event_id AS eventId, device, source, session_id AS sessionId,
-      timestamp, model,
-      input_tokens AS inputTokens,
-      output_tokens AS outputTokens,
-      cache_read_tokens AS cacheReadTokens,
-      cache_creation_tokens AS cacheCreationTokens,
-      reasoning_tokens AS reasoningTokens,
-      tool_category AS toolCategory,
-      file_extension AS fileExtension
-    FROM token_events
-    ORDER BY timestamp DESC
-    LIMIT 5000
-  `).all();
 }
 
 function periodRange(period, now) {
