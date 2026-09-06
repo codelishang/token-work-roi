@@ -24,7 +24,7 @@ Yuanheng imports usage only when explicit token fields exist. It prefers missing
 | OpenCode | stable | 本机数据目录 | 否 | 是 | 是 | 否 | 否 |
 | OpenClaw | stable | 本机 agent 元数据 | 否 | 是 | 是 | 否 | 否 |
 | Hermes Agent | stable | 本机 SQLite 元数据 | 否 | 是 | 是 | 否 | 否 |
-| WorkBuddy | stable | 本机 trace 文件中的结构化 token usage | 否 | 是 | 是 | 是 | 是 |
+| WorkBuddy | stable | 本机 projects JSONL 和 trace 中的结构化 token usage | 否 | 是 | 是 | 是 | 是 |
 | CodeBuddy | stable | 腾讯云代码助手扩展日志中的 `notifyStepEnd` 结构化 token usage | 否 | 是 | 是 | 是 | 是 |
 | GitHub Copilot CLI | experimental | 明确的结构化 usage JSON/JSONL | 否 | 是 | 仅明确词元字段 | 否 | 否 |
 | Qwen Code | experimental | 明确的结构化 usage JSON/JSONL | 否 | 是 | 仅明确词元字段 | 否 | 否 |

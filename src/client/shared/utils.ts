@@ -53,6 +53,7 @@ const fmt   = new Intl.NumberFormat('zh-CN');
 const fmtUS = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtUS4 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 });
 const fmtCNY = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtCNY4 = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY', minimumFractionDigits: 2, maximumFractionDigits: 4 });
 const FALLBACK_USD_CNY_RATE = 7.2;
 const EXCHANGE_RATE_REFRESH_MS = 60 * 60 * 1000;
 const LEGAL_NOTICE = 'AGPL-3.0-only 协议，版权所有 © 2026 coderlishang，All rights reserved.';
@@ -85,7 +86,9 @@ function money(value) {
 
 function money4(value) {
   const n = Number(value || 0);
-  return `${fmtUS4.format(n)} / ${fmtCNY.format(n * exchangeRate.rate)}`;
+  const cny = n * exchangeRate.rate;
+  if (n >= 0.01 && cny >= 0.01) return money(n);
+  return `${fmtUS4.format(n)} / ${fmtCNY4.format(cny)}`;
 }
 
 function compact(v) {

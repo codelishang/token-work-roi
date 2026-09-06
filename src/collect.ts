@@ -5,7 +5,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, wri
 import { dirname, resolve } from 'node:path';
 import { createSqliteBackup, defaultDbPath, openDb, recordRun, repairUsageTotals, upsertDaily, upsertSession, upsertTokenEvent, usageTotalsNeedRepair } from './db.ts';
 import { calculateCost, loadPricing } from './pricing.ts';
-import { localDateFromTimestamp } from './collectors/utils.ts';
+import { canonicalModelName, localDateFromTimestamp } from './collectors/utils.ts';
 import { collectableCollectors, collectorLabel, enabledCollectorIds } from './collector-registry.ts';
 
 type InputRecord = Record<string, unknown>;
@@ -266,9 +266,19 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
       const metadataSessionPrefixes = incrementalRefresh && db && id === 'codex'
         ? codexUnknownSessionPrefixes(db, device)
         : [];
-      const collectorOptions = Number.isFinite(changedAfterMs) || metadataSessionPrefixes.length
-        ? { changedAfterMs, metadataSessionPrefixes }
-        : undefined;
+      const storedResponse = id === 'workbuddy' && db ? db.prepare(`
+        SELECT model, input_tokens AS inputTokens, output_tokens AS outputTokens,
+          cache_read_tokens AS cacheReadTokens, cache_creation_tokens AS cacheCreationTokens,
+          reasoning_tokens AS reasoningTokens
+        FROM token_events WHERE event_id = ? AND device = ? AND source = ?
+      `) : null;
+      const collectorOptions = {
+        changedAfterMs, metadataSessionPrefixes,
+        getStoredResponse: storedResponse ? eventId => {
+          const row = storedResponse.get(eventId, device, label);
+          return row ? { model: row.model, tokens: eventTokens(row) } : null;
+        } : undefined
+      };
       if (typeof collectorModule.collectWithAudit === 'function') {
         const result = await collectorModule.collectWithAudit(pricingData, collectorOptions);
         audit = normalizeAuditSummary(result.audit);
@@ -307,16 +317,15 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
     addCoverageReconciliation(sourceSummary, dailyRows, sessionRows, eventRows);
     addSummary(summary, sourceSummary);
 
-    exportPayload.daily.push(...dailyRows);
-    exportPayload.sessions.push(...sessionRows);
-    exportPayload.tokenEvents.push(...eventRows);
+    for (const row of dailyRows) exportPayload.daily.push(row);
+    for (const row of sessionRows) exportPayload.sessions.push(row);
+    for (const row of eventRows) exportPayload.tokenEvents.push(row);
 
     payloads.push({
       type: 'data', device, source: label, sourceSummary, label, module,
       dailyRows, sessionRows, eventRows, reconciliation,
-      // CodeBuddy logs are append-only and may rotate. Its stable event IDs
-      // must be merged without treating a missing old line as a deletion.
-      incremental: incrementalRefresh || id === 'codebuddy'
+      // Buddy project/log records may rotate; merge their stable event IDs.
+      incremental: incrementalRefresh || id === 'codebuddy' || id === 'workbuddy'
     });
   }
 
@@ -329,9 +338,11 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
   const needsStoredUsageRepair = mode === 'apply' && db && usageTotalsNeedRepair(db);
   if (mode === 'apply' && db) {
     const hasClaudePlaceholders = !incrementalRefresh && payloads.some(payload => payload.type === 'data'
+      && payload.sourceSummary.candidateFiles > 0
       && payload.sourceSummary.id === 'claude'
       && hasClaudeSyntheticPlaceholders(db, payload));
     const hasCodexMigration = payloads.some(payload => payload.type === 'data'
+      && payload.sourceSummary.candidateFiles > 0
       && payload.sourceSummary.id === 'codex'
       && codexSourceMigrationWouldChange(db, payload));
     const deletesStoredUsage = storedUsageWouldBeDeleted(db, payloads);
@@ -354,13 +365,14 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
 
   if (mode === 'apply' && db) {
     for (const payload of payloads) {
-      if (!incrementalRefresh && payload.type === 'data' && payload.sourceSummary.id === 'claude') {
+      if (!incrementalRefresh && payload.type === 'data'
+        && payload.sourceSummary.candidateFiles > 0 && payload.sourceSummary.id === 'claude') {
         removeClaudeSyntheticPlaceholders(db, payload);
       }
-      if (payload.type === 'data' && payload.sourceSummary.id === 'codex') {
+      if (payload.type === 'data' && payload.sourceSummary.candidateFiles > 0
+        && payload.sourceSummary.id === 'codex') {
         runInTransaction(db, () => {
           migrateLegacyCodexClientSources(db, payload);
-          removeOrphanedCodexDailyUsage(db, payload.device);
         });
       }
     }
@@ -388,7 +400,7 @@ async function collectLocal({ collectors, mode, db, dbPath, pricingData, device,
         exportPayload.runs.push(run);
         continue;
       }
-      const { sourceSummary, label, module, dailyRows, sessionRows, eventRows, reconciliation } = payload;
+      const { sourceSummary, label, module, dailyRows, sessionRows, eventRows } = payload;
       const run = runRecord({
         device,
         label,
@@ -474,13 +486,14 @@ function workBuddyLegacyEventCopies(db, payload) {
 function workBuddyEventModelsWouldChange(db, payload) {
   if (payload.type !== 'data' || payload.sourceSummary.id !== 'workbuddy') return false;
   const existing = db.prepare(`
-    SELECT model FROM token_events
+    SELECT model, session_id AS sessionId FROM token_events
     WHERE event_id = ? AND device = ? AND source = ?
     LIMIT 1
   `);
   return payload.eventRows.some(row => {
     const stored = existing.get(row.eventId, row.device, row.source);
-    return stored && stored.model !== row.model;
+    return (stored && (stored.model !== row.model || stored.sessionId !== row.sessionId))
+      || row.legacyEventIds.some(id => existing.get(id, row.device, row.source));
   });
 }
 
@@ -545,7 +558,7 @@ function rebuildNativeEventUsage(db, payload, pricingData) {
   }
 
   const sessionRows = db.prepare(`
-    SELECT session_id AS sessionId, MAX(timestamp) AS lastActivity,
+    SELECT session_id AS sessionId, model, MAX(timestamp) AS lastActivity,
       COALESCE(SUM(input_tokens), 0) AS inputTokens,
       COALESCE(SUM(output_tokens), 0) AS outputTokens,
       COALESCE(SUM(cache_read_tokens), 0) AS cacheReadTokens,
@@ -553,7 +566,7 @@ function rebuildNativeEventUsage(db, payload, pricingData) {
       COALESCE(SUM(reasoning_tokens), 0) AS reasoningOutputTokens
     FROM token_events
     WHERE device = ? AND source = ?
-    GROUP BY session_id
+    GROUP BY session_id, model
   `).all(payload.device, source);
   const latestModel = db.prepare(`
     SELECT model FROM token_events
@@ -568,16 +581,19 @@ function rebuildNativeEventUsage(db, payload, pricingData) {
       total_tokens = 0, cost_usd = 0, updated_at = datetime('now')
     WHERE device = ? AND source = ?
   `).run(payload.device, source);
+  const sessions = new Map();
   for (const row of sessionRows) {
     const model = latestModel.get(payload.device, source, row.sessionId)?.model || '';
     const tokens = eventTokens(row);
-    const session = usageRow({
+    const session = sessions.get(row.sessionId) || usageRow({
       device: payload.device, source, sessionId: row.sessionId,
       lastActivity: row.lastActivity, projectPath: null, model
     });
-    addUsage(session, tokens, calculateCost(model, tokens, pricingData));
-    upsertSession(db, session);
+    addUsage(session, tokens, calculateCost(row.model, tokens, pricingData));
+    if (row.lastActivity > session.lastActivity) session.lastActivity = row.lastActivity;
+    sessions.set(row.sessionId, session);
   }
+  for (const session of sessions.values()) upsertSession(db, session);
   db.prepare(`
     DELETE FROM session_usage
     WHERE device = ? AND source = ?
@@ -598,6 +614,11 @@ function rebuildNativeEventUsage(db, payload, pricingData) {
         WHERE output.device = session_usage.device
           AND output.source = session_usage.source
           AND output.session_id = session_usage.session_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM work_item_sessions AS link
+        WHERE link.device = session_usage.device AND link.source = session_usage.source
+          AND link.session_id = session_usage.session_id
       )
   `).run(payload.device, source);
 }
@@ -812,7 +833,7 @@ function codexSourceMigrationWouldChange(db, payload) {
     return codexSourceForSession(row.sessionId, sessionSources.get(row.sessionId), metadataSourcePrefixes, fallback) !== row.source;
   })) return true;
 
-  if (payload.incremental) return hasOrphanedCodexDailyUsage(db, payload.device);
+  if (payload.incremental) return false;
 
   const currentLegacyDaily = new Set(payload.dailyRows
     .filter(row => row.source === LEGACY_CODEX_SOURCE)
@@ -822,29 +843,7 @@ function codexSourceMigrationWouldChange(db, payload) {
     FROM daily_usage
     WHERE device = ? AND source = ?
   `).all(payload.device, LEGACY_CODEX_SOURCE)
-    .some(row => !currentLegacyDaily.has(dailyUsageKey(LEGACY_CODEX_SOURCE, row.usageDate, row.model)))
-    || hasOrphanedCodexDailyUsage(db, payload.device);
-}
-
-function hasOrphanedCodexDailyUsage(db, device) {
-  return Boolean(db.prepare(`
-    SELECT 1
-    FROM daily_usage
-    WHERE device = ? AND source = ?
-      AND NOT EXISTS (SELECT 1 FROM token_events WHERE device = ? AND source = ?)
-      AND NOT EXISTS (SELECT 1 FROM session_usage WHERE device = ? AND source = ?)
-    LIMIT 1
-  `).get(device, UNKNOWN_CODEX_SOURCE, device, UNKNOWN_CODEX_SOURCE, device, UNKNOWN_CODEX_SOURCE));
-}
-
-function removeOrphanedCodexDailyUsage(db, device) {
-  if (!hasOrphanedCodexDailyUsage(db, device)) return;
-  db.prepare(`
-    DELETE FROM daily_usage
-    WHERE device = ? AND source = ?
-      AND NOT EXISTS (SELECT 1 FROM token_events WHERE device = ? AND source = ?)
-      AND NOT EXISTS (SELECT 1 FROM session_usage WHERE device = ? AND source = ?)
-  `).run(device, UNKNOWN_CODEX_SOURCE, device, UNKNOWN_CODEX_SOURCE, device, UNKNOWN_CODEX_SOURCE);
+    .some(row => !currentLegacyDaily.has(dailyUsageKey(LEGACY_CODEX_SOURCE, row.usageDate, row.model)));
 }
 
 function migrateCodexSource(db, payload, oldSource, eventSources, sessionSources, metadataSourcePrefixes, incremental = false) {
@@ -1220,6 +1219,12 @@ function mergeHistoricalEventUsage(db, payload, pricingData) {
   }
 }
 
+function replacedWorkBuddyEventIds(payload) {
+  return JSON.stringify(payload.sourceSummary.id === 'workbuddy'
+    ? payload.eventRows.flatMap(row => [row.eventId, ...row.legacyEventIds])
+    : []);
+}
+
 function rebuildIncrementalEventUsage(db, payload, source, pricingData) {
   const eventIdPrefix = normalizedReconciliationPrefix(payload.reconciliation?.managedEventIdPrefix);
   if (!eventIdPrefix) return;
@@ -1241,8 +1246,9 @@ function rebuildIncrementalEventUsage(db, payload, source, pricingData) {
       COALESCE(SUM(reasoning_tokens), 0) AS reasoningOutputTokens
     FROM token_events
     WHERE device = ? AND source = ? AND event_id LIKE ? ESCAPE '\\'
+      AND event_id NOT IN (SELECT value FROM json_each(?))
     GROUP BY session_id, usageDate, model
-  `).all(payload.device, source, sqlLikePrefix(eventIdPrefix))
+  `).all(payload.device, source, sqlLikePrefix(eventIdPrefix), replacedWorkBuddyEventIds(payload))
     .filter(row => !replacesChangedSessions || !isCurrentSession(row.sessionId));
   const eventExists = db.prepare(`
     SELECT 1 FROM token_events
@@ -1256,7 +1262,7 @@ function rebuildIncrementalEventUsage(db, payload, source, pricingData) {
   const days = new Map();
 
   const addEvent = ({ sessionId, usageDate, lastActivity, model, tokens, projectPath = null }) => {
-    const sessionKey = `${sessionId}::${model}`;
+    const sessionKey = ['workbuddy', 'codebuddy'].includes(payload.sourceSummary.id) ? sessionId : `${sessionId}::${model}`;
     const session = sessions.get(sessionKey) || usageRow({
       device: payload.device, source, sessionId,
       lastActivity: lastActivity || null, projectPath, model: model || ''
@@ -1264,6 +1270,7 @@ function rebuildIncrementalEventUsage(db, payload, source, pricingData) {
     addUsage(session, tokens, calculateCost(model || '', tokens, pricingData));
     if (lastActivity && (!session.lastActivity || lastActivity > session.lastActivity)) {
       session.lastActivity = lastActivity;
+      session.model = model || '';
     }
     sessions.set(sessionKey, session);
 
@@ -1318,8 +1325,9 @@ function mergeHistoricalEventUsageForSource(db, payload, source, pricingData) {
       COALESCE(SUM(reasoning_tokens), 0) AS reasoningOutputTokens
     FROM token_events
     WHERE device = ? AND source = ? AND event_id LIKE ? ESCAPE '\\'
+      AND event_id NOT IN (SELECT value FROM json_each(?))
     GROUP BY session_id, usageDate, model
-  `).all(payload.device, source, sqlLikePrefix(eventIdPrefix))
+  `).all(payload.device, source, sqlLikePrefix(eventIdPrefix), replacedWorkBuddyEventIds(payload))
     .filter(row => !currentPrefixes.some(prefix => row.sessionId.startsWith(prefix))
       && !currentSessionIds.includes(row.sessionId));
   if (!historicalRows.length) return;
@@ -1343,7 +1351,7 @@ function mergeHistoricalEventUsageForSource(db, payload, source, pricingData) {
     addUsage(day, tokens, calculateCost(row.model || '', tokens, pricingData));
     days.set(dayKey, day);
   }
-  payload.sessionRows.push(...sessions.values());
+  for (const session of sessions.values()) payload.sessionRows.push(session);
 
   const dailyByKey = new Map(payload.dailyRows.map(row => [dailyUsageKey(row.source, row.usageDate, row.model), row]));
   for (const [key, historical] of days) {
@@ -1614,7 +1622,7 @@ function countRows(db) {
 
 function normalizeDailyRows(json, deviceName) {
   const days = Array.isArray(json.contributions) ? json.contributions : [];
-  return days.flatMap((day) => {
+  const rows = days.flatMap((day) => {
     const clients = Array.isArray(day.clients) ? day.clients : [];
     return clients.map((entry) => {
       const tokens = normalizeTokens(entry.tokens);
@@ -1622,7 +1630,7 @@ function normalizeDailyRows(json, deviceName) {
         device: deviceName,
         source: sourceLabel(entry.client),
         usageDate: day.date,
-        model: entry.modelId || entry.model_id || 'unknown',
+        model: canonicalModelName(entry.modelId || entry.model_id || 'unknown'),
         inputTokens: tokens.input,
         outputTokens: tokens.output,
         cacheCreationTokens: tokens.cacheWrite,
@@ -1633,6 +1641,14 @@ function normalizeDailyRows(json, deviceName) {
       };
     });
   });
+  const grouped = new Map();
+  for (const row of rows) {
+    const key = JSON.stringify([row.source, row.usageDate, row.model]);
+    const previous = grouped.get(key);
+    if (previous) addUsage(previous, eventTokens(row), row.costUSD);
+    else grouped.set(key, row);
+  }
+  return [...grouped.values()];
 }
 
 function normalizeSessionRows(json, deviceName) {
@@ -1654,7 +1670,7 @@ function normalizeSessionRows(json, deviceName) {
       sessionId: entry.sessionId || ['local', entry.client || 'unknown', workspace || 'no-workspace', model].join(':'),
       lastActivity: entry.lastActivity || null,
       projectPath: workspace || null,
-      model,
+      model: canonicalModelName(model),
       inputTokens: tokens.input,
       outputTokens: tokens.output,
       cacheCreationTokens: tokens.cacheWrite,
@@ -1675,7 +1691,7 @@ function normalizeTokenEventRows(events, deviceName, collectedAt) {
       source: sourceLabel(event.source || event.client),
       sessionId: event.sessionId || event.session_id || 'unknown-session',
       timestamp: event.timestamp || collectedAt,
-      model: event.model || 'unknown',
+      model: canonicalModelName(event.model || 'unknown'),
       inputTokens: positiveNumber(event.inputTokens ?? event.input_tokens),
       outputTokens: positiveNumber(event.outputTokens ?? event.output_tokens),
       cacheReadTokens: positiveNumber(event.cacheReadTokens ?? event.cache_read_tokens),

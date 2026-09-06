@@ -21,7 +21,6 @@ export function buildMarkdownReviewReport({
   savingsSimulation = null,
   advisorActions = [],
   actionMeasurements = [],
-  insights = [],
   coverageBridge = null,
   evidenceFlywheel = null,
   localTrust = null,

@@ -66,7 +66,6 @@ body.desktop-pulse-body::before {
 .pulse-nav,
 .pulse-kpi,
 .pulse-panel,
-.pulse-freshness,
 .pulse-error {
   box-sizing: border-box;
 }
@@ -204,8 +203,7 @@ body.desktop-pulse-body::before {
   cursor: not-allowed;
 }
 
-.pulse-error,
-.pulse-freshness {
+.pulse-error {
   margin: 16px 0 0;
   padding: 13px 15px;
   border: 1px solid color-mix(in srgb, var(--pulse-danger), transparent 45%);
@@ -216,21 +214,9 @@ body.desktop-pulse-body::before {
   gap: 5px;
 }
 
-.pulse-error span,
-.pulse-freshness span,
-.pulse-freshness small {
+.pulse-error span {
   color: var(--pulse-muted);
   line-height: 1.45;
-}
-
-.pulse-freshness {
-  border-color: color-mix(in srgb, var(--pulse-cyan), transparent 64%);
-  background: var(--pulse-panel);
-  box-shadow: var(--pulse-shadow);
-}
-
-.pulse-freshness.status-fresh {
-  border-color: color-mix(in srgb, var(--pulse-green), transparent 55%);
 }
 
 .pulse-kpi-grid {

@@ -7,7 +7,7 @@ const DEFAULT_WORK_PURPOSE = '未说明';
 const DEFAULT_WORK_STAGE = '未说明';
 const DEFAULT_VALUE_LEVEL = '未评估';
 
-const HEAVY_MODEL_PATTERNS = [/^gpt-5\.6-sol/i, /^gpt-5\.5/i, /claude-(?:mythos|fable)/i, /claude-opus/i, /gemini-2\.5-pro-long-context/i];
+const HEAVY_MODEL_PATTERNS = [/(?:^|[/:\s])gpt-6-astra(?:$|[-:])/i, /^gpt-5\.6-sol/i, /^gpt-5\.5/i, /claude-(?:mythos|fable)/i, /claude-opus/i, /gemini-2\.5-pro-long-context/i];
 const MID_MODEL_PATTERNS = [/^gpt-5\.6-terra/i, /^grok-4[.-]5/i, /^gpt-5\.3-codex$/i, /claude-sonnet/i, /gemini-2\.5-pro/i, /kimi-k2[.-][67]/i];
 const LIGHT_MODEL_PATTERNS = [/^gpt-5\.6-luna$/i, /claude-haiku/i, /deepseek/i, /mimo/i, /gemini-2\.5-flash/i, /kimi-k2[.-]5/i];
 const EXPLORATION_PURPOSES = new Set(['测试验证', '上下文整理']);
@@ -24,8 +24,8 @@ export function buildRoiAdvisor({ sessions = [], daily = [] }: { sessions?: Usag
     buildHeavyModelExplorationSuggestion(sessions, total),
     buildWasteSuggestion(sessions, total),
     buildHighValueKeepSuggestion(sessions, total),
-    buildInputRatioSuggestion(sessions, daily, total),
-    buildCacheSuggestion(sessions, daily, total),
+    buildInputRatioSuggestion(sessions, daily),
+    buildCacheSuggestion(sessions, daily),
     buildUnpricedSuggestion(sessions, daily, total)
   ].filter(Boolean);
 
@@ -143,7 +143,7 @@ function isLowCostSession(session, total) {
   return cost <= 1 || (total.costUSD > 0 && cost / total.costUSD <= 0.05);
 }
 
-function buildInputRatioSuggestion(sessions, daily, total) {
+function buildInputRatioSuggestion(sessions, daily) {
   const aggregate = aggregateRows(sessions.length ? sessions : daily);
   const ratio = aggregate.outputTokens ? aggregate.inputTokens / aggregate.outputTokens : 0;
   const cacheRate = U.cacheHitRate(aggregate.inputTokens, aggregate.cacheReadTokens);
@@ -162,7 +162,7 @@ function buildInputRatioSuggestion(sessions, daily, total) {
   });
 }
 
-function buildCacheSuggestion(sessions, daily, total) {
+function buildCacheSuggestion(sessions, daily) {
   const aggregate = aggregateRows(sessions.length ? sessions : daily);
   const cacheRate = U.cacheHitRate(aggregate.inputTokens, aggregate.cacheReadTokens);
   if (cacheRate >= 10 || aggregate.inputTokens < 100_000) return null;

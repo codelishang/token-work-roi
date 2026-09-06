@@ -323,7 +323,7 @@ function parseServerPort(stdout) {
 }
 
 function liveCollectEnv({ enabled = false } = {}) {
-  if (!enabled) return {};
+  if (!enabled) return { SCHEDULED_COLLECT_ENABLED: '0' };
   const intervalSeconds = envLiveCollectIntervalSeconds();
   return {
     SCHEDULED_COLLECT_ENABLED: '1',
@@ -813,8 +813,19 @@ function sleep(ms) {
 
 function childExitCode(child) {
   return new Promise<number>(resolveRun => {
-    child.on('exit', code => resolveRun(code ?? 0));
-    child.on('error', () => resolveRun(1));
+    let settled = false;
+    const finish = code => {
+      if (settled) return;
+      settled = true;
+      process.removeListener('SIGINT', stop);
+      process.removeListener('SIGTERM', stop);
+      stopCliChild(child).finally(() => resolveRun(code));
+    };
+    const stop = () => finish(130);
+    child.once('exit', code => finish(code ?? 0));
+    child.once('error', () => finish(1));
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
   });
 }
 

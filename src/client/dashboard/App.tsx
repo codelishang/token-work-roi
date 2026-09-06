@@ -952,7 +952,6 @@ function Dashboard({
           <SourceDonut
             rows={filtered}
             sources={Array.from(new Set(filtered.map(r => r.source)))}
-            total={totals.totalTokens}
             focused={focusedSource}
             onFocusSource={setFocusedSource} />
         </div>
@@ -965,7 +964,6 @@ function Dashboard({
             rate={totals.cacheHitRate}
             cacheRead={totals.cacheReadTokens}
             cacheCreation={totals.cacheCreationTokens}
-            total={totals.totalTokens}
             prevRate={compareData.totals?.cacheHitRate} />
         </div>
         <div className="col-3">
@@ -1165,7 +1163,6 @@ function Dashboard({
             outputTypes={outputTypes}
             projectAliasRules={M.meta?.projectAliasRules || []}
             projectAliasMatchTypes={M.meta?.projectAliasMatchTypes || ['prefix']}
-            sources={presentSources}
             totalTokens={totals.totalTokens}
             sessionTotalTokens={sessionTotals.totalTokens}
             onSaveAnnotation={onSaveAnnotation}

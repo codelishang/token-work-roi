@@ -33,6 +33,7 @@ interface PricingAsset {
   body?: string;
 }
 const STABLE_ALIASES = new Map([
+  ['openai::gpt-6-astra', ['gpt-6-astra', 'gpt_6_astra']],
   ['openai::gpt-5-6-sol', ['gpt-5.6-sol', 'gpt-5-6-sol']],
   ['openai::gpt-5-6-terra', ['gpt-5.6-terra', 'gpt-5-6-terra']],
   ['openai::gpt-5-6-luna', ['gpt-5.6-luna', 'gpt-5-6-luna']],
@@ -445,6 +446,7 @@ function discoverAssetUrls(source, body) {
 }
 
 function parseSourceModels(source, body, exchangeRate) {
+  if (isOpenAiGpt6AstraSource(source)) return parseOpenAiGpt6AstraModel(body);
   if (isOpenAiGpt56Source(source)) return parseOpenAiGpt56Models(body);
   if (source.provider === 'xai') return parseXaiModels(body);
   if (source.provider === 'anthropic-mythos') return parseAnthropicMythosModels(body);
@@ -466,7 +468,8 @@ function parseSourceModels(source, body, exchangeRate) {
 }
 
 function sourceHasPricingParser(source) {
-  return isOpenAiGpt56Source(source)
+  return isOpenAiGpt6AstraSource(source)
+    || isOpenAiGpt56Source(source)
     || source.provider === 'xai'
     || source.provider === 'anthropic-mythos'
     || source.provider === 'anthropic'
@@ -480,6 +483,24 @@ function sourceHasPricingParser(source) {
     || isTencentHunyuanSource(source);
 }
 
+function parseOpenAiGpt6AstraModel(body) {
+  const text = tableText(body).toLowerCase();
+  const expectedRates = [
+    /\binput\s*\$\s*10(?:\.00)?\b/,
+    /\bcached input\s*\$\s*1(?:\.00)?\b/,
+    /\bcache writes?\s*\$\s*12\.50\b/,
+    /\boutput\s*\$\s*50(?:\.00)?\b/
+  ];
+  if (!text.includes('gpt-6-astra') || !expectedRates.every(pattern => pattern.test(text))) return [];
+  return [rateModel('openai', 'gpt-6-astra', {
+    input: 10,
+    cachedInput: 1,
+    cacheWrite5m: 12.5,
+    cacheWrite1h: 12.5,
+    output: 50
+  }, 'openai-gpt-6-astra', 'official-page', null, 'OpenAI GPT-6 Astra standard API rate. Cache write is input x 1.25; cached input is input x 0.1.')];
+}
+
 function parseOpenAiGpt56Models(body) {
   const text = tableText(body).toLowerCase();
   const expected: Array<[string, number, number, string]> = [
@@ -490,7 +511,7 @@ function parseOpenAiGpt56Models(body) {
   const pageMentionsAllModels = expected.every(([model]) => text.includes(model));
   const pageMentionsCacheRules = mentionsPercent(text, 90) && mentionsPercent(text, 25);
   return expected
-    .filter(([model, input, output]) => {
+    .filter(([, input, output]) => {
       if (!pageMentionsAllModels || !pageMentionsCacheRules) return false;
       return mentionsUsdPrice(text, input) && mentionsUsdPrice(text, output);
     })
@@ -1027,6 +1048,10 @@ function isQwenSource(source) {
 
 function isOpenAiGpt56Source(source) {
   return providerKey(source?.provider) === 'openai gpt 5.6';
+}
+
+function isOpenAiGpt6AstraSource(source) {
+  return providerKey(source?.provider) === 'openai gpt 6 astra';
 }
 
 function providerKey(provider) {

@@ -111,6 +111,30 @@ test('collect dry-run scans fixtures and does not write SQLite', async () => {
   }
 });
 
+test('collect handles a large event history without truncating totals', async () => {
+  const fixture = createCollectorFixture();
+  // A smaller V8 stack reproduces the large-history failure with less test data.
+  const count = 20_000;
+  try {
+    writeFileSync(join(fixture.dir, 'claude', 'projects', 'token-work', 'large.jsonl'),
+      Array.from({ length: count }, (_, index) => JSON.stringify({
+        type: 'assistant', timestamp: '2026-06-17T02:00:00Z',
+        message: { id: `large-${index}`, model: 'claude-sonnet-4-5', usage: { input_tokens: 1, output_tokens: 1 } }
+      })).join('\n'));
+    const result = await runNode([
+      '--stack-size=128', 'src/collect.ts', '--sources=claude', '--db', fixture.dbPath, '--dry-run', '--json'
+    ], fixture.env);
+    assert.equal(result.code, 0, result.stderr);
+    const summary = JSON.parse(result.stdout);
+    assert.equal(summary.totals.tokenEvents, count + 3);
+    assert.equal(summary.totals.eventTotalTokens, count * 2 + 293);
+    assert.equal(summary.totals.dailyTotalTokens, summary.totals.eventTotalTokens);
+    assert.equal(existsSync(fixture.dbPath), false);
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
 test('collect replaces transient WorkBuddy event identities without adding tokens twice', async () => {
   const fixture = createWorkBuddyIdentityFixture();
   try {
@@ -205,6 +229,106 @@ test('WorkBuddy model correction rebuilds event, session, and daily usage', asyn
   } finally {
     cleanupFixture(fixture);
   }
+});
+
+test('Claude GLM aliases keep event identities and daily totals after refresh', async () => {
+  const fixture = createCollectorFixture();
+  try {
+    const file = join(fixture.claudeRoot, 'projects', 'token-work', 'glm.jsonl');
+    writeFileSync(file, ['glm-5-3-flash', 'glm-5.3-flash'].map((model, i) => JSON.stringify({
+      type: 'assistant', timestamp: '2026-09-05T12:00:00Z',
+      message: { id: `response-${i}`, model, usage: { input_tokens: 100, output_tokens: 20 } }
+    })).join('\n'));
+    let identities;
+    for (let i = 0; i < 2; i++) {
+      const result = await runNode(['src/collect.ts', '--sources=claude', '--db', fixture.dbPath, '--apply', '--yes', '--json'], fixture.env);
+      assert.equal(result.code, 0, result.stderr);
+      const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        const events = db.prepare("SELECT event_id,session_id,model FROM token_events WHERE model LIKE 'glm%' ORDER BY event_id").all();
+        assert.equal(events.length, 2);
+        assert.ok(events.every(row => row.model === 'glm-5.3-flash'));
+        if (identities) assert.deepEqual(events, identities);
+        identities = events;
+        assert.equal(db.prepare("SELECT SUM(total_tokens) n FROM daily_usage WHERE model='glm-5.3-flash'").get().n, 240);
+      } finally { db.close(); }
+    }
+  } finally { cleanupFixture(fixture); }
+});
+
+test('WorkBuddy refresh imports active usage once when its trace arrives later', async () => {
+  const fixture = createWorkBuddyIdentityFixture();
+  const command = ['src/collect.ts', '--sources=workbuddy', '--db', fixture.dbPath, '--apply', '--yes', '--json'];
+  try {
+    const trace = JSON.parse(readFileSync(fixture.tracePath, 'utf8'));
+    const response = { id: 'completed-response', model: 'glm-5.2', usage: { prompt_tokens: 100, completion_tokens: 20 } };
+    trace.spans[0].toolOutput = JSON.stringify(response);
+    writeFileSync(fixture.tracePath, JSON.stringify(trace));
+    let result = await runNode(command, fixture.env);
+    assert.equal(result.code, 0, result.stderr);
+    const db = new DatabaseSync(fixture.dbPath);
+    const oldEventId = 'workbuddy:' + createHash('sha256').update(JSON.stringify({
+      traceId: trace.trace.traceId, spanId: trace.spans[0].spanId, respIndex: 0
+    })).digest('hex').slice(0, 32);
+    db.prepare("UPDATE token_events SET event_id = ? WHERE source = 'WorkBuddy'").run(oldEventId);
+    db.close();
+
+    const projectDir = join(fixture.dir, 'workbuddy', 'projects', 'workspace');
+    mkdirSync(projectDir, { recursive: true });
+    const projectPath = join(projectDir, 'session.jsonl');
+    const pending = { id: 'active-response', model: 'glm-5-3-flash', usage: { prompt_tokens: 200, completion_tokens: 30 } };
+    const switched = { id: 'switched-response', model: 'hy4-preview', usage: { prompt_tokens: 40, completion_tokens: 10 } };
+    const rows = [response, pending, pending, switched].map(value => ({
+      id: value.id, type: 'function_call', sessionId: 'active-session',
+      timestamp: Date.parse('2026-06-17T02:02:00Z'),
+      providerData: { messageId: value.id, model: value.model, requestModelId: 'auto', rawUsage: value.usage }
+    }));
+    writeFileSync(projectPath, rows.map(row => JSON.stringify(row)).join('\n'));
+    const scheduledEnv = { ...fixture.env, TOKEN_WORK_COLLECT_REASON: 'scheduled', TOKEN_WORK_SCHEDULED_INCREMENTAL: '1' };
+    const verify = () => {
+      const check = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        assert.equal(check.prepare("SELECT COUNT(*) n FROM token_events WHERE source = 'WorkBuddy'").get().n, 3);
+        for (const table of ['daily_usage', 'session_usage']) {
+          assert.equal(check.prepare(`SELECT SUM(total_tokens) n FROM ${table} WHERE source = 'WorkBuddy'`).get().n, 400);
+        }
+        const dailyCost = Number(check.prepare("SELECT SUM(cost_usd) cost FROM daily_usage WHERE source = 'WorkBuddy'").get().cost);
+        const sessionCost = Number(check.prepare("SELECT SUM(cost_usd) cost FROM session_usage WHERE source = 'WorkBuddy'").get().cost);
+        assert.ok(Math.abs(dailyCost - sessionCost) < 1e-10);
+        assert.equal(check.prepare("SELECT COUNT(*) n FROM token_events WHERE model = 'glm-5.3-flash'").get().n, 1);
+      } finally { check.close(); }
+    };
+    result = await runNode(command, scheduledEnv);
+    assert.equal(result.code, 0, result.stderr);
+    verify();
+    const oldTime = new Date(Date.now() - 60_000);
+    utimesSync(projectPath, oldTime, oldTime);
+    utimesSync(fixture.tracePath, oldTime, oldTime);
+    trace.trace.traceId = 'trace_late';
+    trace.spans[0].spanId = 'late-span';
+    trace.spans[0].toolOutput = JSON.stringify({
+      ...pending, model: 'auto', usage: { prompt_tokens: 200, completion_tokens: 5 }
+    });
+    writeFileSync(fixture.siblingTracePath, JSON.stringify(trace));
+    result = await runNode(command, scheduledEnv);
+    assert.equal(result.code, 0, result.stderr);
+    verify();
+    result = await runNode(command, fixture.env);
+    assert.equal(result.code, 0, result.stderr);
+    verify();
+    rmSync(join(fixture.dir, 'workbuddy', 'traces'), { recursive: true });
+    writeFileSync(projectPath, rows.map(row => JSON.stringify({
+      ...row,
+      providerData: { ...row.providerData, rawUsage: { prompt_tokens: 1, completion_tokens: 1 } }
+    })).join('\n'));
+    result = await runNode(command, scheduledEnv);
+    assert.equal(result.code, 0, result.stderr);
+    verify();
+    rmSync(join(fixture.dir, 'workbuddy'), { recursive: true });
+    result = await runNode(command, fixture.env);
+    assert.equal(result.code, 0, result.stderr);
+    verify();
+  } finally { cleanupFixture(fixture); }
 });
 
 test('scheduled WorkBuddy collection updates only changed traces without losing a similarly named trace', async () => {
@@ -428,7 +552,7 @@ test('collect reclassifies zero-token Codex sessions from session metadata', asy
   }
 });
 
-test('collect removes local Codex daily rows without matching events or sessions', async () => {
+test('collect preserves local Codex daily records without matching events or sessions', async () => {
   const fixture = createCollectorFixture();
   try {
     const first = await runNode(['src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'], fixture.env);
@@ -443,7 +567,7 @@ test('collect removes local Codex daily rows without matching events or sessions
     assert.equal(second.code, 0, second.stderr);
     const repaired = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      assert.equal(repaired.prepare(`SELECT COUNT(*) AS count FROM daily_usage WHERE source = 'Codex (unidentified client)'`).get().count, 0);
+      assert.equal(repaired.prepare(`SELECT COUNT(*) AS count FROM daily_usage WHERE source = 'Codex (unidentified client)'`).get().count, 1);
     } finally { repaired.close(); }
   } finally { cleanupFixture(fixture); }
 });
@@ -774,7 +898,7 @@ test('scheduled Codex collection reclassifies a session without duplicating its 
   }
 });
 
-test('scheduled Codex collection repairs known historical client metadata without rescanning transcripts', async () => {
+test('scheduled Codex collection preserves history after local session logs are deleted', async () => {
   const fixture = createCollectorFixture();
   try {
     const initial = await runNode([
@@ -790,6 +914,7 @@ test('scheduled Codex collection repairs known historical client metadata withou
     } finally {
       db.close();
     }
+    rmSync(fixture.codexHome, { recursive: true, force: true });
 
     const refreshed = await runNode([
       'src/collect.ts', '--sources=codex', '--db', fixture.dbPath, '--apply', '--yes', '--json'
@@ -799,14 +924,16 @@ test('scheduled Codex collection repairs known historical client metadata withou
       TOKEN_WORK_SCHEDULED_INCREMENTAL: '1'
     });
     assert.equal(refreshed.code, 0, refreshed.stderr);
-    assert.equal(JSON.parse(refreshed.stdout).sources[0].candidateFiles, 0);
+    const refreshSummary = JSON.parse(refreshed.stdout);
+    assert.equal(refreshSummary.sources[0].candidateFiles, 0);
+    assert.equal(refreshSummary.backup, null);
 
     const repaired = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
-      assert.equal(repaired.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE source = 'Codex (unidentified client)'`).get().count, 0);
+      assert.ok(Number(repaired.prepare(`SELECT COUNT(*) AS count FROM token_events WHERE source = 'Codex (unidentified client)'`).get().count) > 0);
       assert.equal(repaired.prepare(`
         SELECT total_tokens AS totalTokens FROM daily_usage
-        WHERE source = 'Codex CLI' AND model = 'gpt-5.4-mini'
+        WHERE source = 'Codex (unidentified client)' AND model = 'gpt-5.4-mini'
       `).get().totalTokens, 52);
     } finally {
       repaired.close();

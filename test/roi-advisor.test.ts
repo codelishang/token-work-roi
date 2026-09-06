@@ -7,6 +7,8 @@ import {
 } from '../src/client/review/roi-advisor.ts';
 
 test('modelTier classifies heavy, mid, light and unpriced models', () => {
+  assert.equal(modelTier('gpt-6-astra-20260903', 'priced'), 'heavy');
+  assert.equal(modelTier('gpt-6-astral', 'priced'), 'unknown');
   assert.equal(modelTier('gpt-5.5', 'priced'), 'heavy');
   assert.equal(modelTier('claude-fable-5', 'priced'), 'heavy');
   assert.equal(modelTier('claude-mythos-5', 'priced'), 'heavy');

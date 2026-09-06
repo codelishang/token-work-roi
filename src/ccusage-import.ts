@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { calculateOfficialCost } from './pricing.ts';
 import { providerFromSource } from './provider.ts';
+import { canonicalModelName } from './collectors/utils.ts';
 import { recordRun, scopedTokenEventId, upsertDaily, upsertSession, upsertTokenEvent } from './db.ts';
 
 const UNSAFE_KEYS = new Set([
@@ -81,9 +82,10 @@ export function planCcusageImport(payload, options: ImportOptions = {}) {
       const source = sourceFromRow(part);
       const usageDate = usageDateFromRow(part);
       const timestamp = timestampFromRow(part, usageDate, now);
-      const model = cleanText(part.model, 160) || '<unknown>';
+      const originalModel = cleanText(part.model, 160) || '<unknown>';
+      const model = canonicalModelName(originalModel);
       const projectPath = cleanText(part.projectPath || part.project || part.projectName, 240) || null;
-      const sessionId = sessionIdFromRow(part, detectedShape, usageDate, model, projectPath);
+      const sessionId = sessionIdFromRow(part, detectedShape, usageDate, originalModel, projectPath);
       const tokens = tokenFields(part);
       const cost = calculateOfficialCost(model, {
         input: tokens.inputTokens,
@@ -128,7 +130,7 @@ export function planCcusageImport(payload, options: ImportOptions = {}) {
       mergeSessionRow(sessionsByKey, sessionKey, sessionRow);
 
       const eventRow = {
-        eventId: eventIdFor({ detectedShape, source, sessionId, model }),
+        eventId: eventIdFor({ detectedShape, source, sessionId, model: originalModel }),
         device,
         source,
         sessionId,

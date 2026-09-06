@@ -82,13 +82,6 @@ function syncMacIcon() {
   syncElectronIcns();
 }
 
-function run(command, args) {
-  const result = spawnSync(command, args, { cwd: root, stdio: 'inherit' });
-  if (result.status !== 0) {
-    throw new Error(`${command} failed with status ${result.status ?? 'unknown'}`);
-  }
-}
-
 function runOptional(command, args) {
   const result = spawnSync(command, args, { cwd: root, stdio: 'pipe', encoding: 'utf8' });
   if (result.status !== 0) {

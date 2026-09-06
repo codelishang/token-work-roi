@@ -12,6 +12,7 @@ import {
   upsertTokenEvent
 } from '../src/db.ts';
 import { buildStatuslineSnapshot, formatStatuslineText } from '../src/statusline.ts';
+import { buildTerminalReport } from '../src/terminal-report.ts';
 
 test('statusline snapshot summarizes recent tokens, budget and advisor actions', () => {
   const { dir, dbPath } = seedStatuslineDb('2026-06-17T02:12:00Z');
@@ -35,6 +36,58 @@ test('statusline snapshot summarizes recent tokens, budget and advisor actions',
     assert.match(text, /^TS /);
     assert.match(text, /tok=1\.6k/);
     assert.match(text, /actions=1/);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('statusline and terminal report include every event in their windows', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'token-work-statusline-volume-'));
+  const dbPath = join(dir, 'usage.sqlite');
+  const db = openDb(dbPath);
+  try {
+    const timestamp = new Date().toISOString();
+    const insert = db.prepare(`
+      INSERT INTO token_events
+        (event_id, device, source, session_id, timestamp, model, input_tokens, output_tokens)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    db.exec('BEGIN');
+    for (let index = 0; index < 5_001; index += 1) {
+      insert.run(`statusline-volume-${index}`, 'devbox', 'Codex CLI', 'volume', timestamp, 'gpt-5.3-codex', 1, 0);
+    }
+    db.exec('COMMIT');
+    const snapshot = buildStatuslineSnapshot(db, { now: new Date(timestamp), windowMinutes: 15, source: 'codex' });
+    assert.equal(snapshot.totals.totalTokens, 5_001);
+    assert.equal(snapshot.totals.burnRateTokensPerHour, 20_004);
+    upsertBudgetProfile(db, { label: 'volume', windowMinutes: 300, tokenBudget: 5_001 });
+    const report = buildTerminalReport(db, { now: new Date(timestamp) });
+    assert.equal(report.budgetWindows[0].totalTokens, 5_001);
+    assert.equal(report.budgetWindows[0].status, 'exceeded');
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('statusline keeps full fixed and rolling budgets outside its activity window', () => {
+  const { dir, dbPath } = seedStatuslineDb('2026-06-17T02:12:00Z');
+  const db = openDb(dbPath);
+  try {
+    for (const windowType of ['fixed', 'rolling']) {
+      upsertBudgetProfile(db, {
+        label: windowType, source: 'Codex CLI', windowType, windowMinutes: 300,
+        resetAnchor: '2026-06-17T00:00:00Z', tokenBudget: 1000
+      });
+    }
+    const snapshot = buildStatuslineSnapshot(db, {
+      now: new Date('2026-06-17T03:00:00Z'), windowMinutes: 15, source: 'codex'
+    });
+    assert.equal(snapshot.totals.totalTokens, 0);
+    const budgets = snapshot.budget.windows.filter(window => window.windowMinutes === 300);
+    assert.deepEqual(budgets.map(window => window.totalTokens), [1600, 1600]);
+    assert.equal(snapshot.budget.status, 'exceeded');
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });

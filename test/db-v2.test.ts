@@ -18,6 +18,50 @@ import {
   upsertSessionAnnotation,
   upsertSessionOutput
 } from '../src/db.ts';
+import { upsertDailyBatch, upsertTokenEvent } from '../src/db.ts';
+import { canonicalModelName } from '../src/collectors/utils.ts';
+
+test('GLM aliases normalize without changing other model families', () => {
+  for (const [input, expected] of [
+    ['glm-5-3-flash', 'glm-5.3-flash'], ['GLM-5.3-FLASH', 'glm-5.3-flash'],
+    ['glm-5-2', 'glm-5.2'], ['glm-4-7-flashx', 'glm-4.7-flashx'],
+    ['glm-5v-turbo', 'glm-5v-turbo'], ['claude-opus-4-7', 'claude-opus-4-7'],
+    ['gpt-5.3-codex', 'gpt-5.3-codex'], ['custom-glm-5-3', 'custom-glm-5-3']
+  ]) assert.equal(canonicalModelName(input), expected);
+});
+
+test('GLM history repair preserves identities and counters across reopen and repeated writes', () => {
+  withDb((db, dbPath) => {
+    upsertDailyBatch(db, [
+      { device: 'test', source: 'WorkBuddy', usageDate: '2026-09-05', model: 'glm-5-3-flash', inputTokens: 100 },
+      { device: 'test', source: 'WorkBuddy', usageDate: '2026-09-05', model: 'glm-5.3-flash', inputTokens: 200 }
+    ]);
+    assert.equal(db.prepare("SELECT total_tokens FROM daily_usage WHERE device='test'").get().total_tokens, 300);
+    db.exec("UPDATE daily_usage SET model='glm-5-3-flash' WHERE device='test'");
+    db.exec(`INSERT INTO daily_usage (device,source,usage_date,model,input_tokens,total_tokens)
+      VALUES ('test','WorkBuddy','2026-09-05','glm-5.3-flash',50,50)`);
+    upsertSession(db, { device: 'test', source: 'WorkBuddy', sessionId: 'original-session', model: 'glm-5-3-flash', inputTokens: 350 });
+    upsertSessionAnnotation(db, { device: 'test', source: 'WorkBuddy', sessionId: 'original-session', note: 'keep annotation' });
+    upsertTokenEvent(db, { device: 'test', source: 'WorkBuddy', sessionId: 'original-session', eventId: 'original-event', timestamp: '2026-09-05T12:00:00Z', model: 'glm-5-3-flash', inputTokens: 350 });
+    db.exec("UPDATE session_usage SET model='glm-5-3-flash' WHERE device='test'; UPDATE token_events SET model='glm-5-3-flash' WHERE device='test'");
+    for (let i = 0; i < 2; i++) {
+      const reopened = openDb(dbPath);
+      try {
+        for (const table of ['daily_usage', 'session_usage', 'token_events']) {
+          const rows = reopened.prepare(`SELECT model,input_tokens FROM ${table} WHERE device='test'`).all();
+          assert.deepEqual(rows.map(row => ({ ...row })), [{ model: 'glm-5.3-flash', input_tokens: 350 }]);
+        }
+        assert.equal(reopened.prepare("SELECT event_id FROM token_events WHERE device='test'").get().event_id, 'original-event');
+        assert.equal(reopened.prepare("SELECT note FROM session_annotations WHERE device='test'").get().note, 'keep annotation');
+      } finally { reopened.close(); }
+    }
+    for (let i = 0; i < 2; i++) upsertDailyBatch(db, [
+      { device: 'test', source: 'WorkBuddy', usageDate: '2026-09-05', model: 'glm-5-3-flash', inputTokens: 300 },
+      { device: 'test', source: 'WorkBuddy', usageDate: '2026-09-05', model: 'glm-5.3-flash', inputTokens: 50 }
+    ]);
+    assert.equal(db.prepare("SELECT total_tokens FROM daily_usage WHERE device='test'").get().total_tokens, 350);
+  });
+});
 
 function withDb(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-db-'));
@@ -57,7 +101,7 @@ function seedSessions(db) {
   }
 }
 
-test('v2 schema migration is repeatable', () => withDb((db, dbPath) => {
+test('v2 schema migration is repeatable', () => withDb((_db, dbPath) => {
   const reopened = openDb(dbPath);
   try {
     const tables = reopened.prepare(`

@@ -46,7 +46,7 @@ const TREND_MODES = [
   { id: 'bar',     label: '柱状' }
 ];
 
-function TrendChart({ rows, dates, sources, compareRows, compareDates, mode, onModeChange, totals, prevTotals = null, onExport, density = null }) {
+function TrendChart({ rows, dates, sources, compareRows, compareDates, mode, onModeChange, totals, onExport, density = null }) {
   // build series
   const byKey = useMemo(() => {
     const m = new Map();
@@ -260,7 +260,7 @@ function TrendChart({ rows, dates, sources, compareRows, compareDates, mode, onM
 // ───────────────────────────────────────────────────────────────
 // Donut chart — source share
 // ───────────────────────────────────────────────────────────────
-function SourceDonut({ rows, sources, total, onFocusSource, focused }) {
+function SourceDonut({ rows, sources, onFocusSource, focused }) {
   const data = sources.map(src => {
     let v = 0;
     for (const r of rows) if (r.source === src) v += r.totalTokens;
@@ -416,7 +416,7 @@ function TopModels({ rows, onDrillModel }) {
             </div>
             <div className="bar-value">
               {U.compactCN(m.total)}
-              <small>{m.cost > 0 ? U.money(m.cost) : '—'}</small>
+              <small>{m.cost > 0 ? U.money4(m.cost) : '—'}</small>
             </div>
           </div>
         ))}
@@ -521,7 +521,7 @@ function Heatmap({ rows, dates, hourlyPattern }) {
 // ───────────────────────────────────────────────────────────────
 // Gauge / arc — cache hit rate
 // ───────────────────────────────────────────────────────────────
-function Gauge({ rate, cacheRead, cacheCreation, total, prevRate }) {
+function Gauge({ rate, cacheRead, cacheCreation, prevRate }) {
   const r = Math.max(0, Math.min(100, rate));
   const C = Math.PI * 70;
   const dash = (r / 100) * C;

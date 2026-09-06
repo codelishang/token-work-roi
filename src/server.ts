@@ -1,9 +1,9 @@
-import { createReadStream, existsSync, readFileSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
-import { basename, extname, join, resolve } from 'node:path';
-import { URL } from 'node:url';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
+import { fileURLToPath, URL } from 'node:url';
 import {
   attachOfficialPricing,
   loadPricing,
@@ -50,7 +50,7 @@ import {
   undoAutoSessionAnnotations,
   upsertAdvisorAction,
   upsertBudgetProfile,
-  upsertDaily,
+  upsertDailyBatch,
   upsertProjectAliasRule,
   upsertSession,
   upsertSessionAnnotation,
@@ -90,6 +90,7 @@ interface CollectionState {
 
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || process.env.BIND_HOST || '127.0.0.1';
+const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 validateHostConfiguration(host, {
   allowRemote: remoteAccessEnabled(),
   ingestToken: process.env.INGEST_TOKEN
@@ -586,6 +587,10 @@ async function handleApi(req, url, res) {
     const schedule = scheduledCollectConfig();
     const latestRun = latestCollectionRun();
     const windowMinutes = Number(url.searchParams.get('windowMinutes') || 15);
+    if (!Number.isFinite(windowMinutes) || windowMinutes < 1 || windowMinutes > 10_080) {
+      sendJson(res, { error: 'windowMinutes must be between 1 and 10080.' }, 400);
+      return;
+    }
     const budgetProfiles = listBudgetProfiles(db).filter(profile => profile.enabled);
     sendJson(res, buildLiveSnapshot({
       sessions: liveSessions(),
@@ -1100,7 +1105,7 @@ function startCollection({ reason = 'manual' } = {}) {
   }
 
   const sources = 'claude,codex,workbuddy,codebuddy';
-  const args = ['src/collect.ts', '--apply', '--yes', '--sources', sources, '--json'];
+  const args = [collectionEntryPoint(), '--apply', '--yes', '--sources', sources, '--json'];
   const device = collectionDevice();
   if (device) args.push('--device', device);
   if (process.env.DB_PATH) args.push('--db', process.env.DB_PATH);
@@ -1208,6 +1213,13 @@ function startCollection({ reason = 'manual' } = {}) {
   });
 
   return true;
+}
+
+function collectionEntryPoint() {
+  const runtimeEntry = resolve(SERVER_DIR, 'collect.mjs');
+  return existsSync(runtimeEntry)
+    ? runtimeEntry
+    : resolve(SERVER_DIR, '..', 'src', 'collect.ts');
 }
 
 function collectionResultMessage({ code, stderr }) {
@@ -1324,7 +1336,7 @@ async function handleIngest(req, res) {
 
     db.exec('BEGIN');
     try {
-      dailyRows.forEach((row) => upsertDaily(db, row));
+      upsertDailyBatch(db, dailyRows);
       sessionRows.forEach((row) => upsertSession(db, row));
       runRows.forEach((row) => recordRun(db, row));
       db.exec('COMMIT');
@@ -1343,13 +1355,28 @@ function serveStatic(pathname, res) {
   const filePath = SPA_ROUTES.has(pathname)
     ? join(staticDir, 'index.html')
     : join(staticDir, pathname);
-  if (!filePath.startsWith(staticDir) || !existsSync(filePath)) {
+  let isFile = false;
+  try {
+    isFile = filePath.startsWith(`${staticDir}${sep}`) && statSync(filePath).isFile();
+  } catch {
+    // Missing or inaccessible assets are not served.
+  }
+  if (!isFile) {
     res.writeHead(404);
     res.end('Not found');
     return;
   }
   res.writeHead(200, { 'content-type': contentType(filePath) });
-  createReadStream(filePath).pipe(res);
+  const stream = createReadStream(filePath);
+  stream.on('error', () => {
+    if (res.headersSent) res.destroy();
+    else {
+      res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('Unable to read asset');
+    }
+  });
+  res.once('close', () => stream.destroy());
+  stream.pipe(res);
 }
 
 function one(sql) {
@@ -1729,7 +1756,7 @@ function summarizeCollectState(summary) {
 function collectionCoverageDryRun({ sources = 'claude,codex,workbuddy,codebuddy,cursor' } = {}) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [
-      resolve(process.cwd(), 'src', 'collect.ts'),
+      collectionEntryPoint(),
       '--dry-run',
       '--sources',
       sources,

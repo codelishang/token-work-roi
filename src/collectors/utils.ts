@@ -62,6 +62,13 @@ export function normalizeModelForGrouping(modelId) {
   return name;
 }
 
+// Keep vendor model names separate from the IDs used to deduplicate records.
+export function canonicalModelName(model: string) {
+  return /^glm-\d+[.-]\d+(?:-|$)/i.test(model)
+    ? model.toLowerCase().replace(/^(glm-\d+)[.-](\d+)(?=-|$)/, '$1.$2')
+    : model;
+}
+
 export function canonicalProvider(raw) {
   if (typeof raw !== 'string') return null;
   const parts = raw.trim().replace(/-/g, '_').split(/[/.]/);

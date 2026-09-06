@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { canonicalModelName } from './collectors/utils.ts';
 
 type InputRecord = Record<string, unknown>;
 
@@ -50,7 +51,42 @@ export function openDb(dbPath = defaultDbPath) {
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   initSchema(db);
+  repairModelNames(db, dbPath);
   return db;
+}
+
+function repairModelNames(db, dbPath) {
+  const aliases = db.prepare(`
+    SELECT model FROM daily_usage WHERE lower(model) LIKE 'glm-%'
+    UNION SELECT model FROM session_usage WHERE lower(model) LIKE 'glm-%'
+    UNION SELECT model FROM token_events WHERE lower(model) LIKE 'glm-%'
+  `).all().filter(row => canonicalModelName(row.model) !== row.model);
+  if (!aliases.length) return;
+  createSqliteBackup(db, dbPath, { reason: 'model-name-repair' });
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const counters = ['input_tokens', 'output_tokens', 'cache_creation_tokens', 'cache_read_tokens',
+      'cached_input_tokens', 'reasoning_output_tokens', 'total_tokens', 'cost_usd'];
+    const mergeDaily = db.prepare(`
+      INSERT INTO daily_usage (device, source, usage_date, model, ${counters.join(',')}, updated_at)
+      SELECT device, source, usage_date, ?, ${counters.join(',')}, updated_at
+      FROM daily_usage WHERE model = ?
+      ON CONFLICT(device, source, usage_date, model) DO UPDATE SET
+        ${counters.map(column => `${column} = daily_usage.${column} + excluded.${column}`).join(',')},
+        updated_at = MAX(daily_usage.updated_at, excluded.updated_at)
+    `);
+    for (const { model } of aliases) {
+      const canonical = canonicalModelName(model);
+      mergeDaily.run(canonical, model);
+      db.prepare('DELETE FROM daily_usage WHERE model = ?').run(model);
+      db.prepare('UPDATE session_usage SET model = ? WHERE model = ?').run(canonical, model);
+      db.prepare('UPDATE token_events SET model = ? WHERE model = ?').run(canonical, model);
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function openReadOnlyDb(dbPath = defaultDbPath) {
@@ -390,6 +426,23 @@ export function upsertDaily(db, row) {
   );
 }
 
+export function upsertDailyBatch(db, rows) {
+  const snapshots = new Map();
+  for (const row of rows) {
+    const usage = normalizeDailyUsage(row);
+    snapshots.set(JSON.stringify([usage.device, usage.source, usage.usageDate, row.model]), usage);
+  }
+  const grouped = new Map();
+  for (const row of snapshots.values()) {
+    const key = JSON.stringify([row.device, row.source, row.usageDate, row.model]);
+    const previous = grouped.get(key);
+    if (!previous) grouped.set(key, row);
+    else for (const field of ['inputTokens', 'outputTokens', 'cacheCreationTokens', 'cacheReadTokens',
+      'cachedInputTokens', 'reasoningOutputTokens', 'totalTokens', 'costUSD']) previous[field] += row[field];
+  }
+  for (const row of grouped.values()) upsertDaily(db, row);
+}
+
 export function upsertSession(db, row) {
   const session = normalizeSessionUsage(row);
   db.prepare(`
@@ -461,7 +514,7 @@ export function normalizeDailyUsage(row: InputRecord = {}) {
     device: normalizedRequiredMax(row.device, 'device', 120),
     source: normalizedRequiredMax(row.source, 'source', 120),
     usageDate: normalizeUsageDate(row.usageDate ?? row.usage_date),
-    model: normalizeOptionalText(row.model, 'model', 160) || '',
+    model: canonicalModelName(normalizeOptionalText(row.model, 'model', 160) || ''),
     ...tokens,
     totalTokens: normalizeUsageTotal(row.totalTokens ?? row.total_tokens, tokens),
     costUSD: normalizeNonNegativeNumber(row.costUSD ?? row.cost_usd, 'costUSD')
@@ -476,7 +529,7 @@ export function normalizeSessionUsage(row: InputRecord = {}) {
     sessionId: normalizedRequiredMax(row.sessionId ?? row.session_id, 'sessionId', 300),
     lastActivity: normalizeOptionalTimestamp(row.lastActivity ?? row.last_activity, 'lastActivity'),
     projectPath: normalizeOptionalRawText(row.projectPath ?? row.project_path, 'projectPath', 1000),
-    model: normalizeOptionalText(row.model, 'model', 160) || '',
+    model: canonicalModelName(normalizeOptionalText(row.model, 'model', 160) || ''),
     ...tokens,
     totalTokens: normalizeUsageTotal(row.totalTokens ?? row.total_tokens, tokens),
     costUSD: normalizeNonNegativeNumber(row.costUSD ?? row.cost_usd, 'costUSD')
@@ -949,7 +1002,8 @@ export function normalizeTokenEvent(row: InputRecord = {}) {
   const source = normalizedRequired(row.source, 'source');
   const sessionId = normalizedRequired(row.sessionId ?? row.session_id, 'sessionId');
   const timestamp = normalizedRequiredMax(row.timestamp ?? row.createdAt ?? row.created_at, 'timestamp', 80);
-  const model = normalizeOptionalText(row.model, 'model', 120) || '';
+  const originalModel = normalizeOptionalText(row.model, 'model', 120) || '';
+  const model = canonicalModelName(originalModel);
   const inputTokens = normalizeTokenCount(row.inputTokens ?? row.input_tokens, 'inputTokens');
   const outputTokens = normalizeTokenCount(row.outputTokens ?? row.output_tokens, 'outputTokens');
   const cacheReadTokens = normalizeTokenCount(row.cacheReadTokens ?? row.cache_read_tokens, 'cacheReadTokens');
@@ -965,7 +1019,7 @@ export function normalizeTokenEvent(row: InputRecord = {}) {
       source,
       sessionId,
       timestamp,
-      model,
+      originalModel,
       inputTokens,
       outputTokens,
       cacheReadTokens,
@@ -1101,8 +1155,14 @@ export function scopedTokenEventId(event) {
   return `${event.eventId.slice(0, 214)}::${suffix}`;
 }
 
-export function listTokenEvents(db, { limit = 500 } = {}) {
-  const safeLimit = Math.max(1, Math.min(5000, Number(limit) || 500));
+export function listTokenEvents(db, { limit = 500, since = null } = {}) {
+  const safeLimit = limit == null ? null : Math.max(1, Math.min(5000, Number(limit) || 500));
+  const sinceValue = typeof since === 'string' && since ? since : null;
+  const where = sinceValue ? 'WHERE timestamp >= ?' : '';
+  const limitClause = safeLimit == null ? '' : 'LIMIT ?';
+  const parameters = safeLimit == null
+    ? sinceValue ? [sinceValue] : []
+    : sinceValue ? [sinceValue, safeLimit] : [safeLimit];
   return db.prepare(`
     SELECT event_id AS eventId, device, source, session_id AS sessionId,
       timestamp, model,
@@ -1117,9 +1177,10 @@ export function listTokenEvents(db, { limit = 500 } = {}) {
       privacy_level AS privacyLevel,
       updated_at AS updatedAt
     FROM token_events
+    ${where}
     ORDER BY timestamp DESC
-    LIMIT ?
-  `).all(safeLimit);
+    ${limitClause}
+  `).all(...parameters);
 }
 
 export function normalizeWorkItem(row: InputRecord = {}) {

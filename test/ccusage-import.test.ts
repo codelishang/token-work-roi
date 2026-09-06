@@ -45,6 +45,24 @@ test('ccusage import supports documented daily and project daily shapes', () => 
   assert.equal(projectDaily.sessions[0].projectPath, 'token-work-roi');
 });
 
+test('ccusage merges GLM alias names without changing import identities or repeating totals', () => {
+  const plan = planCcusageImport({ session: [
+    { sessionId: 'a', lastActivity: '2026-09-05T10:00:00Z', model: 'glm-5-3-flash', inputTokens: 100 },
+    { sessionId: 'b', lastActivity: '2026-09-05T10:00:00Z', model: 'glm-5.3-flash', inputTokens: 200 }
+  ] }, { device: 'other-computer' });
+  assert.equal(plan.daily.length, 1);
+  assert.equal(plan.daily[0].model, 'glm-5.3-flash');
+  assert.equal(plan.daily[0].totalTokens, 300);
+  const db = tempDb();
+  try {
+    applyCcusageImport(db, plan);
+    applyCcusageImport(db, plan);
+    assert.equal(db.prepare('SELECT SUM(total_tokens) tokens FROM daily_usage').get().tokens, 300);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM token_events').get().n, 2);
+    assert.equal(ccusageImportWouldChange(db, plan), false);
+  } finally { db.close(); }
+});
+
 test('ccusage import supports session, blocks and monthly reports', () => {
   for (const payload of [
     {

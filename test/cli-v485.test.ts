@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,7 +42,9 @@ test('bare CLI starts the UI before its scheduled collection begins', async () =
 
 test('bare CLI dry-run-only starts UI without writing usage', async () => {
   const fixture = createAutoFixture();
-  const { child, output } = startBareCli(fixture, ['--dry-run-only']);
+  const { child, output } = startBareCli({
+    ...fixture, env: { ...fixture.env, SCHEDULED_COLLECT_ENABLED: '1' }
+  }, ['--dry-run-only']);
 
   try {
     const apiPort = await waitForCliApiPort(child, output);
@@ -61,7 +63,7 @@ test('bare CLI dry-run-only starts UI without writing usage', async () => {
 });
 
 test('bare CLI no-collect starts UI without scanning or writing usage', async () => {
-  const fixture = createAutoFixture();
+  const fixture = createAutoFixture({ enabled: true });
   const { child, output } = startBareCli(fixture, ['--no-collect']);
 
   try {
@@ -163,7 +165,7 @@ test('live command opens the live route without starting an immediate collection
   }
 });
 
-function createAutoFixture() {
+function createAutoFixture(scheduledCollect = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'token-work-auto-cli-'));
   const claudeRoot = join(dir, 'claude');
   const codexHome = join(dir, 'codex');
@@ -192,6 +194,7 @@ function createAutoFixture() {
 
   const configPath = join(dir, 'collectors.json');
   writeFileSync(configPath, JSON.stringify({
+    scheduledCollect,
     collectors: {
       claude: { roots: [claudeRoot], includeDesktopLocalAgent: false },
       codex: { homes: [codexHome], sessionSubdirs: ['sessions'] },

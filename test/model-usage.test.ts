@@ -5,6 +5,7 @@ import {
   filterSessionsByDashboardFilters,
   sessionModel
 } from '../src/client/dashboard/model-usage.ts';
+import { U } from '../src/client/shared/utils.ts';
 
 const sessions = [
   {
@@ -96,4 +97,9 @@ test('buildModelUsageRows aggregates token cost and session counts by model', ()
 
   assert.equal(byModel['gpt-5.3-codex'].totalTokens, 30);
   assert.equal(byModel['gpt-5.3-codex'].sessionCount, 1);
+});
+
+test('money4 keeps ordinary amounts compact and shows tiny priced amounts', () => {
+  assert.equal(U.money4(114.2414), '$114.24 / ¥822.54');
+  assert.equal(U.money4(0.0005389338907760648), '$0.0005 / ¥0.0039');
 });
